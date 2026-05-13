@@ -1,0 +1,2565 @@
+import { useState, useEffect, useMemo, ReactNode, useRef, ChangeEvent } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import confetti from 'canvas-confetti';
+import { 
+  Wallet, 
+  TrendingUp, 
+  History, 
+  Settings, 
+  DollarSign, 
+  ArrowUpRight, 
+  ArrowDownLeft, 
+  CheckCircle2, 
+  XCircle, 
+  Clock,
+  AlertCircle,
+  Menu,
+  X,
+  Volume2,
+  VolumeX,
+  Flame,
+  Zap,
+  Trophy,
+  RotateCcw,
+  LogOut,
+  Trash2,
+  ShieldAlert,
+  Construction,
+  Share2,
+  UserPlus,
+  QrCode,
+  Image as ImageIcon,
+  Copy,
+  Info,
+  Lock,
+  LockOpen
+} from 'lucide-react';
+import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings } from './types.ts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+
+// High-fidelity modern sound effects
+const SOUNDS = {
+  WIN: 'https://cdn.freesound.org/previews/511/511484_6835050-lq.mp3',
+  LOSE: 'https://cdn.freesound.org/previews/415/415209_5121236-lq.mp3',
+  SPIN: 'https://cdn.freesound.org/previews/146/146718_2437358-lq.mp3',
+  BET: 'https://cdn.freesound.org/previews/442/442127_7431267-lq.mp3',
+  CLICK: 'https://cdn.freesound.org/previews/264/264761_4546410-lq.mp3',
+  TICK: 'https://cdn.freesound.org/previews/264/264761_4546410-lq.mp3',
+};
+
+// Mock Initial Data
+const INITIAL_STATE: AppState = {
+  players: [
+    { id: 'u1', name: 'User 1293', balance: 50.00, override: 'none', referralCode: 'FIRST100', referralCount: 0 },
+    { id: 'u2', name: 'John Admin', email: 'futurebillionairehrx@gmail.com', balance: 1000.00, override: 'none', referralCode: 'ADMINVIP', referralCount: 0 },
+    { id: 'u3', name: 'John Doe', balance: 120.50, override: 'none', referralCode: 'DOE2024', referralCount: 0 },
+    { id: 'u4', name: 'Sarah Wilson', balance: 15.00, override: 'lose', referralCode: 'SARAH77', referralCount: 0 },
+  ],
+  currentPlayerId: 'u1',
+  transactions: [
+    { id: '1', playerId: 'u1', type: 'deposit', amount: 50.00, timestamp: Date.now() - 86400000, status: 'completed' }
+  ],
+  withdrawals: [],
+  deposits: [],
+  winRate: 0.45, // 45% win rate by default
+  totalEarned: 0,
+  manualMode: false,
+  maxBet: 500,
+  isBetLimitEnabled: true,
+  maintenanceMode: false,
+  paymentSettings: {
+    upiId: 'ALEEMKA14@OKHDFC',
+    additionalInstructions: 'Send screenshot after payment for fast approval.'
+  },
+  isPaymentLocked: false
+};
+
+export default function App() {
+  const [state, setState] = useState<AppState>(() => {
+    const saved = localStorage.getItem('windouble_state');
+    if (!saved) return INITIAL_STATE;
+    try {
+      const parsed = JSON.parse(saved);
+      // Migration: Merge with INITIAL_STATE to ensure all fields like winRate and maxBet are present
+      const merged = { ...INITIAL_STATE, ...parsed };
+      if (!merged.players || merged.players.length === 0) {
+        merged.players = INITIAL_STATE.players;
+      }
+      if (!merged.players.find(p => p.id === merged.currentPlayerId)) {
+        merged.currentPlayerId = merged.players[0].id;
+      }
+      return merged;
+    } catch (e) {
+      console.error('Error parsing state from storage:', e);
+      return INITIAL_STATE;
+    }
+  });
+  const lastStateRef = useRef(state);
+  useEffect(() => {
+    lastStateRef.current = state;
+  }, [state]);
+
+  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'leaderboard'>('play');
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [adminEmailInput, setAdminEmailInput] = useState('');
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const adminEmails = ['futurebillionairehrx@gmail.com', 'aleemka14@gmail.com'];
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registerReferral, setRegisterReferral] = useState('');
+
+  const currentPlayer = useMemo(() => {
+    return state.players.find(p => p.id === state.currentPlayerId) || state.players[0];
+  }, [state.players, state.currentPlayerId]);
+
+  // Sound Controller
+  const playSound = (soundKey: keyof typeof SOUNDS) => {
+    if (isMuted) return;
+    const audio = new Audio(SOUNDS[soundKey]);
+    audio.volume = soundKey === 'WIN' ? 1.0 : 0.6; // Higher volume for wins
+    audio.play().catch((err) => {
+      console.warn('Audio playback inhibited:', err);
+    });
+  };
+
+  const triggerConfetti = () => {
+    const duration = 3 * 1000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+
+    const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+
+    const interval = window.setInterval(() => {
+      const timeLeft = animationEnd - Date.now();
+
+      if (timeLeft <= 0) {
+        return clearInterval(interval);
+      }
+
+      const particleCount = 50 * (timeLeft / duration);
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+    }, 250);
+  };
+
+  useEffect(() => {
+    localStorage.setItem('windouble_state', JSON.stringify(state));
+  }, [state]);
+
+  const addTransaction = (txn: Omit<Transaction, 'id' | 'timestamp' | 'playerId'>) => {
+    const newTxn: Transaction = {
+      ...txn,
+      id: Math.random().toString(36).substr(2, 9),
+      playerId: lastStateRef.current.currentPlayerId,
+      timestamp: Date.now()
+    };
+    setState(prev => ({
+      ...prev,
+      transactions: [newTxn, ...prev.transactions],
+      players: prev.players.map(p => p.id === prev.currentPlayerId ? {
+        ...p,
+        balance: txn.type === 'win' || txn.type === 'deposit' 
+          ? p.balance + txn.amount 
+          : p.balance - txn.amount
+      } : p),
+      totalEarned: txn.type === 'win' ? prev.totalEarned + txn.amount : prev.totalEarned
+    }));
+  };
+
+  const handleDeposit = (amount: number, method: string, details: string, screenshotUrl?: string) => {
+    if (amount < 10) return;
+    playSound('BET'); 
+    
+    const newRequest: DepositRequest = {
+      id: Math.random().toString(36).substr(2, 9),
+      playerId: state.currentPlayerId,
+      amount,
+      method,
+      details,
+      screenshotUrl,
+      status: 'pending',
+      timestamp: Date.now(),
+      playerBalanceAtRequest: currentPlayer.balance
+    };
+
+    const txn: Transaction = {
+      id: Math.random().toString(36).substr(2, 9),
+      playerId: state.currentPlayerId,
+      type: 'deposit',
+      amount,
+      timestamp: Date.now(),
+      status: 'pending'
+    };
+
+    setState(prev => ({
+      ...prev,
+      deposits: [newRequest, ...prev.deposits],
+      transactions: [txn, ...prev.transactions]
+    }));
+  };
+
+  const handleWithdraw = (amount: number, method: string, details: string) => {
+    if (amount < 10 || amount > currentPlayer.balance) return;
+
+    const newRequest: WithdrawalRequest = {
+      id: Math.random().toString(36).substr(2, 9),
+      playerId: state.currentPlayerId,
+      amount,
+      method,
+      details,
+      status: 'pending',
+      timestamp: Date.now(),
+      playerBalanceAtRequest: currentPlayer.balance
+    };
+
+    const txn: Transaction = {
+      id: Math.random().toString(36).substr(2, 9),
+      playerId: state.currentPlayerId,
+      type: 'withdrawal',
+      amount,
+      timestamp: Date.now(),
+      status: 'pending'
+    };
+
+    setState(prev => ({
+      ...prev,
+      players: prev.players.map(p => p.id === prev.currentPlayerId ? { ...p, balance: p.balance - amount } : p),
+      withdrawals: [newRequest, ...prev.withdrawals],
+      transactions: [txn, ...prev.transactions]
+    }));
+  };
+
+  const updateWithdrawalStatus = (id: string, status: 'completed' | 'rejected') => {
+    setState(prev => {
+      const withdrawals = prev.withdrawals.map(w => w.id === id ? { ...w, status } : w);
+      // Also update the corresponding transaction status
+      const transactions = prev.transactions.map(t => {
+        const relatedWithdrawal = prev.withdrawals.find(w => w.id === id);
+        if (t.type === 'withdrawal' && t.amount === relatedWithdrawal?.amount && t.status === 'pending') {
+          return { ...t, status };
+        }
+        return t;
+      });
+
+      return { ...prev, withdrawals, transactions };
+    });
+  };
+
+  const updateDepositStatus = (id: string, status: 'completed' | 'rejected') => {
+    setState(prev => {
+      const deposit = prev.deposits.find(d => d.id === id);
+      if (!deposit) return prev;
+
+      const deposits = prev.deposits.map(d => d.id === id ? { ...d, status } : d);
+      
+      const transactions = prev.transactions.map(t => {
+        if (t.type === 'deposit' && t.amount === deposit.amount && t.status === 'pending' && t.playerId === deposit.playerId) {
+          return { ...t, status: status === 'completed' ? 'completed' : 'failed' };
+        }
+        return t;
+      });
+
+      const players = prev.players.map(p => {
+        if (status === 'completed' && p.id === deposit.playerId) {
+          return { ...p, balance: p.balance + deposit.amount };
+        }
+        return p;
+      });
+
+      return { ...prev, deposits, transactions, players };
+    });
+    if (status === 'completed') playSound('WIN');
+  };
+
+  const resultBet = (playerId: string, outcome: 'win' | 'lose') => {
+    setState(prev => {
+      const player = prev.players.find(p => p.id === playerId);
+      if (!player || !player.pendingBet) return prev;
+
+      const amount = player.pendingBet.amount;
+      const isWin = outcome === 'win';
+      const winAmount = amount * 2;
+      
+      const transactions = [...prev.transactions];
+      // Find the pending bet and complete it
+      const pendingTxnIndex = transactions.findIndex(t => t.type === 'bet' && t.status === 'pending' && t.amount === amount);
+      if (pendingTxnIndex > -1) {
+        transactions[pendingTxnIndex] = { ...transactions[pendingTxnIndex], status: 'completed' };
+      }
+
+      if (isWin) {
+        const winTxn: Transaction = {
+          id: Math.random().toString(36).substr(2, 9),
+          playerId: playerId,
+          type: 'win',
+          amount: winAmount,
+          timestamp: Date.now(),
+          status: 'completed'
+        };
+        transactions.unshift(winTxn);
+      }
+
+      return {
+        ...prev,
+        transactions,
+        players: prev.players.map(p => p.id === playerId ? { 
+          ...p, 
+          balance: isWin ? (p.balance + winAmount) : p.balance,
+          pendingBet: undefined 
+        } : p),
+        totalEarned: isWin ? prev.totalEarned + winAmount : prev.totalEarned
+      };
+    });
+
+    if (outcome === 'win') {
+      playSound('WIN');
+      triggerConfetti();
+    } else {
+      playSound('LOSE');
+    }
+  };
+
+  const resetPlayerGraph = (playerId: string) => {
+    setState(prev => ({
+      ...prev,
+      transactions: prev.transactions.filter(t => t.playerId !== playerId)
+    }));
+  };
+
+  const onToggleMaintenanceMode = () => {
+    setState(prev => ({ ...prev, maintenanceMode: !prev.maintenanceMode }));
+    playSound('CLICK');
+  };
+
+  const onUpdatePlayerOverride = (id: string, override: 'win' | 'lose' | 'none') => {
+    setState(prev => ({
+      ...prev,
+      players: prev.players.map(p => p.id === id ? { ...p, override } : p)
+    }));
+    playSound('CLICK');
+  };
+
+  const handleRegisterPlayer = (name: string, referralCode?: string) => {
+    const newId = `u${state.players.length + 1}`;
+    const personalReferralCode = (name.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+    
+    let bonusAmount = 0;
+    let referrerId: string | undefined = undefined;
+
+    if (referralCode) {
+      const referrer = state.players.find(p => p.referralCode === referralCode.toUpperCase());
+      if (referrer) {
+        bonusAmount = 10; // Bonus for referee
+        referrerId = referrer.id;
+      } else {
+        alert('Invalid referral code. Registering without bonus.');
+      }
+    }
+
+    const newPlayer: Player = {
+      id: newId,
+      name,
+      balance: bonusAmount,
+      override: 'none',
+      referralCode: personalReferralCode,
+      referredBy: referrerId,
+      referralCount: 0
+    };
+
+    const transactions: Transaction[] = [];
+    if (bonusAmount > 0 && referrerId) {
+       // Referee bonus
+       transactions.push({
+         id: Math.random().toString(36).substr(2, 9),
+         playerId: newId,
+         type: 'deposit',
+         amount: bonusAmount,
+         timestamp: Date.now(),
+         status: 'completed'
+       });
+       // Referrer bonus
+       transactions.push({
+         id: Math.random().toString(36).substr(2, 9),
+         playerId: referrerId,
+         type: 'deposit',
+         amount: 10,
+         timestamp: Date.now(),
+         status: 'completed'
+       });
+    }
+
+    setState(prev => ({
+      ...prev,
+      players: [
+        ...prev.players.map(p => p.id === referrerId ? { ...p, balance: p.balance + 10, referralCount: p.referralCount + 1 } : p),
+        newPlayer
+      ],
+      transactions: [...transactions, ...prev.transactions],
+      currentPlayerId: newId
+    }));
+
+    if (bonusAmount > 0) {
+      playSound('WIN');
+      triggerConfetti();
+    } else {
+      playSound('CLICK');
+    }
+    
+    setShowRegisterModal(false);
+    setRegisterName('');
+    setRegisterReferral('');
+    setActiveTab('play');
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] text-slate-100 font-sans selection:bg-emerald-500/30">
+      {/* Navbar / Mobile Header */}
+      <header className="lg:hidden flex items-center justify-between p-4 border-b border-white/10 sticky top-0 bg-[#0a0a0a]/80 backdrop-blur-md z-50">
+        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+          <Menu className="w-6 h-6" />
+        </button>
+        <div className="flex flex-col items-center">
+          <div className="flex items-center gap-2">
+            <div className="bg-emerald-500 p-1 rounded-lg">
+              <TrendingUp className="w-4 h-4 text-black" />
+            </div>
+            <span className="font-bold tracking-tight text-lg">WIN<span className="text-emerald-400">DOUBLE</span></span>
+          </div>
+          <span className="text-lg font-mono font-bold text-emerald-400">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
+        </div>
+        <button 
+          onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
+          className="p-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl transition-all relative"
+        >
+          <Wallet className="w-5 h-5 text-emerald-400" />
+          {currentPlayer?.balance > 0 && (
+            <div className="absolute top-1 right-1 w-2 h-2 bg-emerald-500 rounded-full border border-[#0a0a0a]" />
+          )}
+        </button>
+      </header>
+
+      <div className="flex">
+        {/* Sidebar */}
+        <aside className={`
+          fixed inset-y-0 left-0 z-50 w-72 bg-[#0d0d0d] border-r border-white/5 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}>
+          <div className="p-6 flex flex-col h-full">
+            <div className="hidden lg:flex items-center gap-3 mb-10">
+              <div className="bg-emerald-500 p-2 rounded-xl shadow-lg shadow-emerald-500/20">
+                <TrendingUp className="w-6 h-6 text-black" />
+              </div>
+              <span className="font-bold tracking-tight text-2xl">WIN<span className="text-emerald-400">DOUBLE</span></span>
+            </div>
+
+            <div className="flex justify-between items-center lg:hidden mb-10">
+               <span className="font-bold tracking-tight text-xl">MENU</span>
+               <button onClick={() => setIsSidebarOpen(false)}><X className="w-6 h-6"/></button>
+            </div>
+
+            <nav className="space-y-1.5 flex-1">
+              <NavItem 
+                active={activeTab === 'play'} 
+                onClick={() => { setActiveTab('play'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                icon={<TrendingUp className="w-5 h-5" />}
+                label="DOUBLE OR DONATE"
+              />
+              <NavItem 
+                active={activeTab === 'wallet'} 
+                onClick={() => { setActiveTab('wallet'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                icon={<Wallet className="w-5 h-5" />}
+                label="My Wallet"
+              />
+              <NavItem 
+                active={activeTab === 'leaderboard'} 
+                onClick={() => { setActiveTab('leaderboard'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                icon={<Trophy className="w-5 h-5" />}
+                label="Leaderboard"
+              />
+
+              <div className="pt-4 mt-4 border-t border-white/5">
+                {isAdminLoggedIn ? (
+                  <NavItem 
+                    active={activeTab === 'admin'} 
+                    onClick={() => { setActiveTab('admin'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                    icon={<Settings className="w-5 h-5" />}
+                    label="Admin Panel"
+                  />
+                ) : (
+                  <button 
+                    onClick={() => { setShowAdminLogin(true); setIsSidebarOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-slate-500 hover:text-slate-100 hover:bg-white/5 transition-all"
+                  >
+                    <Settings className="w-5 h-5" />
+                    <span className="font-display tracking-tight">Admin Login</span>
+                  </button>
+                )}
+              </div>
+            </nav>
+
+            <div className="mt-4 pb-4 space-y-3">
+              <button 
+                onClick={() => setIsMuted(!isMuted)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-white/5 rounded-xl border border-white/5 text-slate-400 hover:text-white transition-colors"
+              >
+                <div className="flex items-center gap-3 italic text-sm">
+                  {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  {isMuted ? 'Muted' : 'Sound On'}
+                </div>
+                <div className={`w-8 h-4 rounded-full relative transition-colors ${!isMuted ? 'bg-emerald-500/40' : 'bg-white/10'}`}>
+                  <motion.div 
+                    animate={{ x: !isMuted ? 16 : 0 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                    className={`w-4 h-4 rounded-full absolute top-0 left-0 shadow-sm ${!isMuted ? 'bg-emerald-400' : 'bg-slate-600'}`} 
+                  />
+                </div>
+              </button>
+
+              <button 
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to logout and reset?')) {
+                    setIsAdminLoggedIn(false);
+                    setActiveTab('play');
+                    setState(INITIAL_STATE); // Full reset to initial state
+                    localStorage.removeItem('windouble_state');
+                    playSound('CLICK');
+                  }
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-rose-500/10 text-rose-500 rounded-xl border border-rose-500/20 hover:bg-rose-500/20 transition-all font-bold text-sm tracking-tight"
+              >
+                <LogOut className="w-4 h-4" />
+                Logout
+              </button>
+            </div>
+
+            <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-4 mt-auto">
+              <p className="text-emerald-400/60 text-xs font-semibold uppercase tracking-wider mb-1">Total Balance</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
+                <span className="text-xs text-emerald-400/40 font-mono">INR</span>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-2 font-mono truncate opacity-60">User: {currentPlayer?.name}</p>
+              {isAdminLoggedIn && (
+                <button 
+                  onClick={() => { setIsAdminLoggedIn(false); setActiveTab('play'); }}
+                  className="mt-3 w-full py-2 bg-rose-500/10 text-rose-500 text-[10px] font-bold rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-colors uppercase tracking-widest"
+                >
+                  Logout Admin
+                </button>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        {/* Backdrop for mobile */}
+        <AnimatePresence>
+          {isSidebarOpen && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Main Content */}
+        <main className="flex-1 min-h-screen">
+          {/* Top Bar for Desktop */}
+          <div className="hidden lg:grid grid-cols-3 items-center p-6 max-w-5xl mx-auto">
+            <div className="flex justify-start">
+              {/* Left empty or for other elements */}
+            </div>
+            
+            <div className="flex justify-center">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="flex items-center gap-3"
+              >
+                <div className="bg-emerald-500 p-2.5 rounded-2xl shadow-xl shadow-emerald-500/20">
+                  <TrendingUp className="w-7 h-7 text-black" />
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="font-bold tracking-tighter text-3xl leading-none">WIN<span className="text-emerald-400">DOUBLE</span></span>
+                  <span className="text-2xl font-mono font-bold text-emerald-400/80 mt-1">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
+                </div>
+              </motion.div>
+            </div>
+
+            <div className="flex justify-end">
+              <button 
+                onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
+                className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl transition-all hover:scale-110 relative"
+              >
+                <Wallet className="w-6 h-6 text-emerald-400" />
+                {currentPlayer?.balance > 0 && (
+                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#0a0a0a]" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="max-w-5xl mx-auto p-4 lg:px-10 lg:pb-10 pt-0">
+            <AnimatePresence mode="wait">
+              {showAdminLogin && !isAdminLoggedIn && (
+                <div className="fixed inset-0 flex items-center justify-center p-4 z-[100]">
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setShowAdminLogin(false)}
+                    className="fixed inset-0 bg-black/90 backdrop-blur-md"
+                  />
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-[#0f0f0f] border border-white/10 w-full max-w-sm rounded-[2rem] p-8 relative z-[101] shadow-2xl"
+                  >
+                    <h2 className="text-2xl font-bold mb-6 text-center">Admin Access</h2>
+                    <input 
+                      type="email" 
+                      placeholder="Admin Email"
+                      value={adminEmailInput || ''}
+                      onChange={(e) => setAdminEmailInput(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 mb-4 focus:outline-none focus:border-emerald-500 text-white"
+                    />
+                    <input 
+                      type="password" 
+                      placeholder="Admin Password"
+                      value={adminPasswordInput || ''}
+                      onChange={(e) => setAdminPasswordInput(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 mb-6 focus:outline-none focus:border-emerald-500 text-white"
+                    />
+                    <button 
+                      onClick={() => {
+                        if (adminEmails.includes(adminEmailInput.toLowerCase()) && adminPasswordInput === '9113278916') {
+                          setIsAdminLoggedIn(true);
+                          setShowAdminLogin(false);
+                          setActiveTab('admin');
+                          setAdminEmailInput('');
+                          setAdminPasswordInput('');
+                        } else {
+                          alert('Invalid Admin Credentials');
+                        }
+                      }}
+                      className="w-full py-4 bg-emerald-500 text-black font-bold rounded-xl shadow-lg hover:scale-[1.02] transition-all"
+                    >
+                      Login as Admin
+                    </button>
+                    <button 
+                      onClick={() => setShowAdminLogin(false)}
+                      className="w-full py-3 mt-2 text-slate-500 text-sm hover:text-white transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </motion.div>
+                </div>
+              )}
+
+              {showRegisterModal && (
+                <div className="fixed inset-0 flex items-center justify-center p-4 z-[100]">
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setShowRegisterModal(false)}
+                    className="fixed inset-0 bg-black/90 backdrop-blur-md"
+                  />
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-[#0f0f0f] border border-white/10 w-full max-w-sm rounded-[2rem] p-8 relative z-[101] shadow-2xl"
+                  >
+                    <div className="text-center mb-8">
+                       <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-emerald-500/20">
+                         <UserPlus className="w-8 h-8 text-emerald-400" />
+                       </div>
+                       <h2 className="text-2xl font-bold">New Player Profile</h2>
+                       <p className="text-slate-500 text-sm mt-1">Create a profile to start playing.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2 px-1">Display Name</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. LuckyGamer"
+                          value={registerName}
+                          onChange={(e) => setRegisterName(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 focus:outline-none focus:border-emerald-500 text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2 px-1">Referral Code (Optional)</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. VIP123"
+                          value={registerReferral}
+                          onChange={(e) => setRegisterReferral(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 focus:outline-none focus:border-emerald-500 text-emerald-400 font-mono"
+                        />
+                        <p className="text-[9px] text-slate-600 mt-2 px-1 italic">Enter a friend's code to get ₹10 starting bonus!</p>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => handleRegisterPlayer(registerName, registerReferral)}
+                      disabled={!registerName.trim()}
+                      className="w-full py-4 mt-8 bg-emerald-500 text-black font-bold rounded-xl shadow-lg hover:scale-[1.02] transition-all disabled:opacity-50 disabled:grayscale"
+                    >
+                      Join Arena
+                    </button>
+                    <button 
+                      onClick={() => setShowRegisterModal(false)}
+                      className="w-full py-3 mt-2 text-slate-500 text-sm hover:text-white transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </motion.div>
+                </div>
+              )}
+
+              {state.maintenanceMode && activeTab !== 'admin' && (
+                <motion.div
+                  key="maintenance"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex-1 flex flex-col items-center justify-center text-center p-8 min-h-[60vh]"
+                >
+                  <div className="w-24 h-24 bg-rose-500/10 rounded-full flex items-center justify-center mb-8 border border-rose-500/20">
+                    <Construction className="w-12 h-12 text-rose-500 animate-pulse" />
+                  </div>
+                  <h2 className="text-4xl font-display font-bold mb-4">Emergency Maintenance</h2>
+                  <p className="text-slate-400 max-w-md text-lg leading-relaxed mb-8">
+                    We are currently performing an emergency system upgrade. All systems are temporarily paused for your security.
+                  </p>
+                  <div className="flex items-center gap-2 px-6 py-3 bg-white/5 rounded-2xl border border-white/5">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-xs font-mono uppercase tracking-widest text-slate-500">Back Online Soon</span>
+                  </div>
+                </motion.div>
+              )}
+
+              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'play' && (
+                <motion.div
+                  key="play"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <GameView 
+                    state={state}
+                    currentPlayer={currentPlayer}
+                    playSound={playSound}
+                    onResetGraph={() => currentPlayer?.id && resetPlayerGraph(currentPlayer.id)}
+                    onPlaceBet={(amt) => {
+                      // Always start as pending in state
+                      addTransaction({ type: 'bet', amount: amt, status: 'pending' });
+                      setState(prev => ({
+                        ...prev,
+                        players: prev.players.map(p => p.id === prev.currentPlayerId ? {
+                          ...p,
+                          pendingBet: { amount: amt, timestamp: Date.now() }
+                        } : p)
+                      }));
+
+                      // If not in manual mode, resolve with algorithm after a delay
+                      if (!state.manualMode) {
+                        setTimeout(() => {
+                          const latestState = lastStateRef.current;
+                          const player = latestState.players.find(p => p.id === latestState.currentPlayerId);
+                          let win = Math.random() < latestState.winRate;
+                          if (player?.override === 'win') win = true;
+                          if (player?.override === 'lose') win = false;
+                          
+                          resultBet(latestState.currentPlayerId, win ? 'win' : 'lose');
+                        }, 1500);
+                      }
+                    }}
+                  />
+                </motion.div>
+              )}
+
+              
+              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'leaderboard' && (
+                <motion.div
+                  key="leaderboard"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <LeaderboardView state={state} />
+                </motion.div>
+              )}
+
+              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'wallet' && (
+                <motion.div
+                  key="wallet"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <WalletView 
+                    state={state} 
+                    currentPlayer={currentPlayer}
+                    onWithdraw={handleWithdraw} 
+                    onDeposit={handleDeposit} 
+                    playSound={playSound}
+                  />
+                </motion.div>
+              )}
+
+              {activeTab === 'admin' && (
+                <motion.div
+                  key="admin"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <AdminView 
+                    state={state} 
+                    onUpdateWinRate={(rate) => setState(prev => ({ ...prev, winRate: rate }))}
+                    onUpdateMaxBet={(max) => setState(prev => ({ ...prev, maxBet: max }))}
+                    onToggleBetLimit={() => setState(prev => ({ ...prev, isBetLimitEnabled: !prev.isBetLimitEnabled }))}
+                    onToggleManualMode={() => setState(prev => ({ ...prev, manualMode: !prev.manualMode }))}
+                    onUpdatePlayerOverride={onUpdatePlayerOverride}
+                    onSwitchPlayer={(id) => setState(prev => ({ ...prev, currentPlayerId: id }))}
+                    onResultBet={resultBet}
+                    onUpdateWithdrawalStatus={updateWithdrawalStatus}
+                    onUpdateDepositStatus={updateDepositStatus}
+                    onToggleMaintenanceMode={onToggleMaintenanceMode}
+                    onUpdatePaymentSettings={(settings) => setState(prev => ({ ...prev, paymentSettings: settings }))}
+                    onTogglePaymentLock={() => setState(prev => ({ ...prev, isPaymentLocked: !prev.isPaymentLocked }))}
+                    onReset={() => setState(prev => {
+                      if (prev.isPaymentLocked) {
+                        return { ...INITIAL_STATE, paymentSettings: prev.paymentSettings, isPaymentLocked: true };
+                      }
+                      return INITIAL_STATE;
+                    })}
+                    onResetHouseStats={() => setState(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.type === 'deposit' || t.type === 'withdrawal') }))}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function NavItem({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: ReactNode; label: string }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`
+        w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 relative group glass-button
+        ${active 
+          ? 'bg-emerald-500 text-black font-bold shadow-lg shadow-emerald-500/20' 
+          : 'text-slate-500 hover:text-slate-100 hover:bg-white/5'}
+      `}
+    >
+      <div className={`transition-transform duration-300 ${active ? 'scale-110' : 'group-hover:scale-110'}`}>
+        {icon}
+      </div>
+      <span className="font-display tracking-tight">{label}</span>
+      {active && (
+        <motion.div 
+          layoutId="activeTabIndicator"
+          className="ml-auto w-1.5 h-1.5 rounded-full bg-black/40"
+        />
+      )}
+    </button>
+  );
+}
+
+// Sub-components (Views)
+
+function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }: { 
+  state: AppState, 
+  currentPlayer: Player, 
+  onPlaceBet: (amt: number) => void, 
+  playSound: (key: keyof typeof SOUNDS) => void,
+  onResetGraph: () => void 
+}) {
+  const [betAmount, setBetAmount] = useState(10);
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [result, setResult] = useState<'win' | 'lose' | null>(null);
+
+  const playerTransactions = useMemo(() => 
+    currentPlayer ? state.transactions.filter(t => t.playerId === currentPlayer.id) : [], 
+    [state.transactions, currentPlayer?.id]
+  );
+
+  const bets = playerTransactions.filter(t => t.type === 'bet' && t.status === 'completed');
+  const wins = playerTransactions.filter(t => t.type === 'win');
+  const totalWins = wins.length;
+  const totalLoss = Math.max(0, bets.length - wins.length);
+  const amountWagered = bets.reduce((sum, t) => sum + t.amount, 0);
+
+  const { winStreak, lossStreak } = useMemo(() => {
+    const completedBets = [...playerTransactions]
+      .filter(t => t.type === 'bet' && t.status === 'completed')
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    const winTxns = playerTransactions.filter(t => t.type === 'win');
+
+    const matchResults: ('W' | 'L')[] = completedBets.map(bet => {
+      const isWin = winTxns.some(win => Math.abs(win.timestamp - bet.timestamp) < 2000);
+      return isWin ? 'W' : 'L';
+    });
+
+    let w = 0, l = 0;
+    if (matchResults.length > 0) {
+      if (matchResults[0] === 'W') {
+        for (const r of matchResults) {
+          if (r === 'W') w++;
+          else break;
+        }
+      } else {
+        for (const r of matchResults) {
+          if (r === 'L') l++;
+          else break;
+        }
+      }
+    }
+    return { winStreak: w, lossStreak: l };
+  }, [playerTransactions]);
+
+  const chartData = useMemo(() => {
+    const sorted = [...playerTransactions]
+      .filter(t => (t.type === 'win' || t.type === 'bet') && t.status === 'completed')
+      .sort((a, b) => a.timestamp - b.timestamp);
+    
+    let currentProfit = 0;
+    const data = sorted.map(t => {
+      if (t.type === 'win') currentProfit += t.amount;
+      if (t.type === 'bet') currentProfit -= t.amount;
+      return {
+        time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        profit: Number(currentProfit.toFixed(2))
+      };
+    });
+    return [{ time: 'Init', profit: 0 }, ...data];
+  }, [playerTransactions]);
+
+  const gradientOffset = useMemo(() => {
+    const dataMax = Math.max(...chartData.map((i) => i.profit));
+    const dataMin = Math.min(...chartData.map((i) => i.profit));
+
+    if (dataMax <= 0) return 0;
+    if (dataMin >= 0) return 1;
+
+    return dataMax / (dataMax - dataMin);
+  }, [chartData]);
+
+  // Detect when bet is resolved by admin
+  useEffect(() => {
+     if (isSpinning && currentPlayer && !currentPlayer.pendingBet) {
+       setIsSpinning(false);
+       // The result would be the last transaction
+       const lastTxn = state.transactions.find(t => t.playerId === currentPlayer.id);
+       if (lastTxn && (lastTxn.type === 'win' || (lastTxn.type === 'bet' && lastTxn.status === 'completed'))) {
+         setResult(lastTxn.type === 'win' ? 'win' : 'lose');
+       }
+     }
+  }, [currentPlayer?.pendingBet, isSpinning, state.transactions, currentPlayer?.id]);
+
+  const handlePlay = () => {
+    if (betAmount > currentPlayer.balance || betAmount <= 0) return;
+    
+    setIsSpinning(true);
+    setResult(null);
+    playSound('BET');
+    
+    // Start spin loop sound after a tiny delay
+    setTimeout(() => {
+      playSound('SPIN');
+    }, 100);
+
+    onPlaceBet(betAmount);
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Game Main Area */}
+        <div className="lg:col-span-2 bg-[#0b0b0b] border border-white/5 rounded-[2rem] p-8 lg:p-12 text-center relative overflow-hidden shadow-2xl flex flex-col justify-center min-h-[500px]">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent opacity-30" />
+          
+          <h2 className="text-4xl lg:text-5xl font-display font-bold mb-4 tracking-tight">Double Your <span className="text-emerald-400">Cash</span></h2>
+          <p className="text-slate-400 mb-12 max-w-sm mx-auto">Enter an amount and try your luck. High risk, high reward.</p>
+
+          <div className="max-w-xs mx-auto w-full space-y-8 relative">
+            <AnimatePresence>
+              {result === 'win' && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: [0, 0.2, 0] }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.5 }}
+                  className="absolute inset-0 bg-emerald-500 rounded-3xl pointer-events-none z-0"
+                />
+              )}
+            </AnimatePresence>
+
+            <div className="relative z-10 space-y-4">
+              <div className="flex justify-between items-end mb-2">
+                <div className="flex flex-col">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Bet Amount</label>
+                  {state.isBetLimitEnabled && (
+                    <span className="text-[8px] text-slate-600 uppercase font-bold tracking-tighter">Max Bet: ₹{state.maxBet}</span>
+                  )}
+                </div>
+                <span className="text-2xl font-mono font-bold text-emerald-400">₹{betAmount}</span>
+              </div>
+                <input 
+                type="range" 
+                min="1" 
+                max={Math.min(Math.max(1, Math.floor(currentPlayer?.balance || 0)), state.isBetLimitEnabled ? (state.maxBet || 500) : 1000000)}
+                value={betAmount || 0} 
+                onChange={(e) => {
+                  setBetAmount(Number(e.target.value));
+                  playSound('CLICK'); 
+                }}
+                disabled={isSpinning}
+                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              />
+            </div>
+
+            <div className="relative">
+               <button 
+                onClick={handlePlay}
+                disabled={isSpinning || (currentPlayer?.balance ?? 0) < 1}
+                className={`
+                  w-full py-5 rounded-2xl text-xl font-bold transition-all duration-300 relative z-10
+                  ${isSpinning ? 'bg-white/5 text-slate-500 cursor-not-allowed' : 'bg-emerald-500 text-black hover:transform hover:scale-[1.02] shadow-2xl shadow-emerald-500/20'}
+                `}
+              >
+                {isSpinning ? 'PLAYING...' : 'DOUBLE OR DONATE'}
+              </button>
+              
+              <AnimatePresence>
+                {result && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.5, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: -100 }}
+                    exit={{ opacity: 0, y: -120 }}
+                    className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center whitespace-nowrap z-50 pointer-events-none"
+                  >
+                    {result === 'win' ? (
+                      <span className="font-black text-7xl italic tracking-tighter text-emerald-400 drop-shadow-[0_0_30px_rgba(52,211,153,0.8)] animate-pulse">
+                        WINNER!
+                      </span>
+                    ) : (
+                      <div className="flex flex-col items-center">
+                        <span className="font-black text-6xl italic tracking-tighter text-rose-500 mb-2 drop-shadow-[0_0_20px_rgba(244,63,94,0.4)]">
+                          DONATED
+                        </span>
+                        <span className="text-white font-bold tracking-[0.2em] text-[10px] uppercase">
+                          Your Money Has Been Donated To The Poor ❤️
+                        </span>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            
+            {(currentPlayer?.balance ?? 0) < 1 && (
+               <div className="flex items-center justify-center gap-2 text-rose-400 text-xs bg-rose-400/10 py-3 rounded-xl border border-rose-400/20">
+                 <AlertCircle className="w-4 h-4" />
+                 <span>Insufficient balance in vault.</span>
+               </div>
+            )}
+          </div>
+        </div>
+
+        {/* Profit Graph Column */}
+        <div className="flex flex-col gap-6">
+          <div className="glass-card p-6 rounded-[2.5rem] flex-1 min-h-[350px] flex flex-col">
+            <div className="flex justify-between items-center mb-10 px-2">
+              <h3 className="font-display font-bold text-lg flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Live Matrix
+              </h3>
+              <button 
+                onClick={onResetGraph}
+                className="text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5"
+              >
+                Reset
+              </button>
+            </div>
+            
+            <div className="flex-1 w-full min-h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="splitColor" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={gradientOffset} stopColor="#10b981" stopOpacity={1} />
+                      <stop offset={gradientOffset} stopColor="#f43f5e" stopOpacity={1} />
+                    </linearGradient>
+                    <linearGradient id="splitFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" stopColor="#10b981" stopOpacity={0.4} />
+                      <stop offset={gradientOffset} stopColor="#10b981" stopOpacity={0.05} />
+                      <stop offset={gradientOffset} stopColor="#f43f5e" stopOpacity={0.05} />
+                      <stop offset="1" stopColor="#f43f5e" stopOpacity={0.4} />
+                    </linearGradient>
+                  </defs>
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#050505', border: '1px solid #ffffff10', borderRadius: '16px', padding: '12px', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}
+                    itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }}
+                    labelStyle={{ color: '#64748b', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
+                    cursor={{ stroke: '#ffffff10', strokeWidth: 2 }}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="profit" 
+                    stroke="url(#splitColor)" 
+                    fillOpacity={1} 
+                    fill="url(#splitFill)" 
+                    strokeWidth={4}
+                    animationDuration={1500}
+                    activeDot={{ r: 6, fill: '#fff', stroke: '#10b981', strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            
+            <div className="mt-8 pt-6 border-t border-white/5 grid grid-cols-2 sm:grid-cols-4 gap-6 px-2">
+              <div className="group">
+                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Profit or loss</p>
+                <div className="flex items-baseline gap-1">
+                  <p className={`text-2xl font-display font-bold ${(wins.reduce((s, t) => s + t.amount, 0) - bets.reduce((s, t) => s + t.amount, 0)) >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                    ₹{(wins.reduce((s, t) => s + t.amount, 0) - bets.reduce((s, t) => s + t.amount, 0)).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <div className="group">
+                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Total Wins</p>
+                <div className="flex items-baseline gap-1">
+                  <p className="text-2xl font-display font-bold text-white">{totalWins}</p>
+                </div>
+              </div>
+              <div className="group">
+                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Total Loss</p>
+                <div className="flex items-baseline gap-1">
+                  <p className="text-2xl font-display font-bold text-rose-500">{totalLoss}</p>
+                </div>
+              </div>
+              <div className="group text-right">
+                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Total Wagered</p>
+                <div className="flex items-baseline justify-end gap-1">
+                  <p className="text-2xl font-display font-bold text-amber-500">₹{amountWagered.toFixed(0)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-card p-6 rounded-[2rem] bg-white/[0.02] border-white/5 relative overflow-hidden group hover:border-emerald-500/20 transition-colors">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 blur-3xl rounded-full" />
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-2 group-hover:text-emerald-400 transition-colors">Telemetry Feed</p>
+            <p className="text-slate-400 text-xs leading-relaxed font-medium">
+              Neural profit matrix synchronized with cloud wagers. High-fidelity visualization enabled for active session.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Performance Stats */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-xl font-display font-bold text-slate-400 uppercase tracking-widest flex items-center gap-3">
+             <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+             Performance Stats
+          </h3>
+          <button 
+            onClick={onResetGraph}
+            className="flex items-center gap-2 text-[10px] font-black uppercase bg-white/5 border border-white/5 px-4 py-2 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-rose-500/10 hover:border-rose-500/20"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Reset ALL Stats
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <StatsCard label="Total Wagered" value={`₹${amountWagered.toFixed(2)}`} icon={<DollarSign className="w-5 h-5 text-amber-500" />} />
+          <StatsCard label="Total Wins" value={totalWins.toString()} icon={<TrendingUp className="w-5 h-5 text-emerald-400" />} />
+          <StatsCard label="Total Loss" value={totalLoss.toString()} icon={<XCircle className="w-5 h-5 text-rose-500" />} />
+          <StatsCard label="Net Profit" value={`₹${(wins.reduce((s, t) => s + t.amount, 0) - bets.reduce((s, t) => s + t.amount, 0)).toFixed(2)}`} icon={<TrendingUp className="w-5 h-5 text-blue-400" />} />
+          <StatsCard label="Win Streak" value={winStreak.toString()} icon={<Flame className="w-5 h-5 text-orange-500" />} />
+          <StatsCard label="Loss Streak" value={lossStreak.toString()} icon={<Zap className="w-5 h-5 text-yellow-500" />} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatsCard({ label, value, icon }: { label: string, value: string, icon: ReactNode }) {
+  return (
+    <div className="glass-card p-6 rounded-3xl group hover:border-white/10 transition-colors">
+      <div className="flex justify-between items-start mb-4">
+        <span className="text-slate-500 text-xs font-bold uppercase tracking-widest">{label}</span>
+        <div className="p-2.5 bg-white/5 rounded-xl group-hover:scale-110 transition-transform duration-300">{icon}</div>
+      </div>
+      <div className="text-3xl font-display font-bold tracking-tight text-white">{value}</div>
+    </div>
+  );
+}
+
+function LeaderboardView({ state }: { state: AppState }) {
+  const sortedPlayers = [...state.players].sort((a, b) => b.balance - a.balance);
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-8 pb-20 px-4">
+      <div className="flex flex-col items-center justify-center text-center space-y-4 mb-12">
+        <div className="p-4 bg-emerald-500/10 rounded-3xl border border-emerald-500/20">
+          <Trophy className="w-12 h-12 text-emerald-400" />
+        </div>
+        <div>
+          <h2 className="text-4xl font-display font-bold tracking-tight">Leaderboard</h2>
+          <p className="text-slate-500 font-mono text-xs uppercase tracking-[0.2em] mt-2">The Top Performance Arena</p>
+        </div>
+      </div>
+
+      <div className="glass-card rounded-[2.5rem] overflow-hidden border border-white/5">
+        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+           <h4 className="font-display font-bold text-xl flex items-center gap-3">
+             <TrendingUp className="w-6 h-6 text-emerald-400" />
+             Top Players
+           </h4>
+           <span className="text-slate-500 font-mono text-[10px] uppercase tracking-widest">{state.players.length} Competitors</span>
+        </div>
+        <div className="divide-y divide-white/5">
+          {sortedPlayers.map((player, index) => (
+            <div key={player.id} className="p-8 flex items-center justify-between gap-6 hover:bg-white/[0.01] transition-all duration-300">
+               <div className="flex items-center gap-6">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-xl ${
+                    index === 0 ? 'bg-amber-500 text-amber-950 shadow-lg shadow-amber-500/20' : 
+                    index === 1 ? 'bg-slate-300 text-slate-900' :
+                    index === 2 ? 'bg-orange-600 text-orange-950' :
+                    'bg-white/5 text-slate-400 border border-white/5'
+                  }`}>
+                    {index + 1}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <p className="text-xl font-display font-bold text-white tracking-tight">{player.name}</p>
+                      {index < 3 && <Flame className="w-4 h-4 text-orange-500 animate-pulse" />}
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.2em] mt-1">Status: Active</p>
+                  </div>
+               </div>
+               <div className="text-right">
+                 <p className="text-2xl font-display font-bold text-emerald-400">₹{player.balance.toFixed(2)}</p>
+                 <p className="text-[10px] text-slate-600 font-mono uppercase tracking-widest mt-1">Total Assets</p>
+               </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: { 
+  state: AppState, 
+  currentPlayer: Player,
+  onWithdraw: (amt: number, method: string, details: string) => void,
+  onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string) => void,
+  playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void
+}) {
+  const [modalType, setModalType] = useState<'deposit' | 'withdraw' | null>(null);
+  const [amount, setAmount] = useState(0);
+  const [method, setMethod] = useState('');
+  const [details, setDetails] = useState('');
+  const [screenshot, setScreenshot] = useState<string | undefined>(undefined);
+
+  const playerTransactions = useMemo(() => 
+    currentPlayer ? state.transactions.filter(t => t.playerId === currentPlayer.id) : [], 
+    [state.transactions, currentPlayer?.id]
+  );
+
+  const [step, setStep] = useState(1);
+  const [success, setSuccess] = useState(false);
+
+  const resetForm = () => {
+    setAmount(0);
+    setMethod('upi');
+    setDetails('');
+    setScreenshot(undefined);
+    setModalType(null);
+    setStep(1);
+    setSuccess(false);
+  };
+
+  const handleConfirm = () => {
+    if (modalType === 'deposit') {
+      onDeposit(amount, method, details, screenshot);
+    } else {
+      onWithdraw(amount, method, details);
+    }
+    setSuccess(true);
+    setTimeout(() => {
+      resetForm();
+    }, 2000);
+  };
+
+  const handleScreenshotUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setScreenshot(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  return (
+    <div className="space-y-10">
+      <div className="p-10 bg-slate-900/50 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-12 opacity-10 transition-transform duration-700 group-hover:scale-110 group-hover:rotate-12 translate-x-1/4 -translate-y-1/4">
+          <Wallet className="w-64 h-64" />
+        </div>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
+        
+        <div className="relative z-10 text-center sm:text-left">
+          <p className="text-emerald-500/60 font-black uppercase tracking-[0.2em] text-[10px] mb-3">Total Vault Balance</p>
+          <motion.h2 
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="text-6xl lg:text-7xl font-display font-bold text-white mb-12 tracking-tighter drop-shadow-sm"
+          >
+            <span className="text-4xl lg:text-5xl mr-1">₹</span>
+            {(currentPlayer?.balance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </motion.h2>
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4">
+            <button 
+              onClick={() => { setModalType('deposit'); playSound('CLICK'); }}
+              className="flex items-center gap-3 bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-emerald-500/20"
+            >
+              <ArrowDownLeft className="w-5 h-5" />
+              Deposit
+            </button>
+            <button 
+              onClick={() => { setModalType('withdraw'); playSound('CLICK'); }}
+              className="flex items-center gap-3 bg-white/10 backdrop-blur-md text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/20 active:scale-95 transition-all border border-white/10"
+            >
+              <ArrowUpRight className="w-5 h-5" />
+              Withdraw
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Pending Actions Highlighting */}
+      {(state.withdrawals.filter(w => w.status === 'pending' && w.playerId === currentPlayer?.id).length > 0 || 
+        state.deposits.filter(d => d.status === 'pending' && d.playerId === currentPlayer?.id).length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {state.deposits.filter(d => d.status === 'pending' && d.playerId === currentPlayer?.id).map(req => (
+            <div key={req.id} className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between animate-pulse">
+              <div className="flex items-center gap-4">
+                <div className="bg-emerald-500/20 p-2 rounded-xl">
+                  <Clock className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Deposit Pending</p>
+                  <p className="text-sm font-bold">₹{req.amount.toFixed(2)}</p>
+                </div>
+              </div>
+              <span className="text-[10px] text-slate-500 font-mono">Verifying...</span>
+            </div>
+          ))}
+          {state.withdrawals.filter(w => w.status === 'pending' && w.playerId === currentPlayer?.id).map(req => (
+            <div key={req.id} className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between animate-pulse">
+              <div className="flex items-center gap-4">
+                <div className="bg-amber-500/20 p-2 rounded-xl">
+                  <Clock className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Withdrawal Pending</p>
+                  <p className="text-sm font-bold">₹{req.amount.toFixed(2)}</p>
+                </div>
+              </div>
+              <span className="text-[10px] text-slate-500 font-mono">Processing...</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Referral Section */}
+      <div className="glass-card p-10 rounded-[2.5rem] bg-emerald-500/5 border border-emerald-500/10 relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-all group-hover:scale-110">
+          <Share2 className="w-32 h-32 text-emerald-400" />
+        </div>
+        <div className="relative z-10 space-y-6">
+          <div>
+            <h3 className="text-2xl font-display font-bold text-white flex items-center gap-3">
+              <Share2 className="w-6 h-6 text-emerald-400" />
+              Refer & Earn ₹10
+            </h3>
+            <p className="text-slate-400 text-sm mt-1 max-w-sm">Share your code with friends. When they join, you both get a ₹10 cash bonus instantly!</p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+             <div className="bg-black/40 border border-white/10 rounded-2xl px-6 py-4 flex flex-col justify-center flex-1">
+                <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Your Unique Code</span>
+                <span className="text-2xl font-mono font-bold text-emerald-400 tracking-tighter">{currentPlayer?.referralCode}</span>
+             </div>
+             <button 
+               onClick={() => {
+                 navigator.clipboard.writeText(currentPlayer?.referralCode || '');
+                 alert('Referral code copied to clipboard!');
+               }}
+               className="bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-xl shadow-emerald-500/20 glass-button"
+             >
+               Copy Code
+             </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-2xl font-display font-bold flex items-center gap-3">
+            <History className="w-6 h-6 text-emerald-400" />
+            Recent History
+          </h3>
+        </div>
+        
+        <div className="glass-card rounded-[2rem] overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-white/5 bg-white/[0.01]">
+                  <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Transaction</th>
+                  <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Amount</th>
+                  <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Status</th>
+                  <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {playerTransactions.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-8 py-20 text-center text-slate-600 font-display text-lg italic">
+                      No activity found. Start doubling today.
+                    </td>
+                  </tr>
+                ) : (
+                  playerTransactions.map((txn, idx) => (
+                    <motion.tr 
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.02 }}
+                      key={txn.id} 
+                      className="hover:bg-white/[0.02] transition-colors"
+                    >
+                      <td className="px-8 py-5">
+                        <div className="flex items-center gap-4">
+                           <div className={`p-2.5 rounded-xl ${txn.type === 'win' || txn.type === 'deposit' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                             {txn.type === 'win' ? <TrendingUp className="w-4 h-4" /> : 
+                              txn.type === 'deposit' ? <ArrowDownLeft className="w-4 h-4" /> : 
+                              <ArrowUpRight className="w-4 h-4" />}
+                           </div>
+                           <span className="font-display font-medium tracking-tight text-slate-200 capitalize">{txn.type}</span>
+                        </div>
+                      </td>
+                      <td className={`px-8 py-5 font-mono font-bold text-lg ${txn.type === 'win' || txn.type === 'deposit' ? 'text-emerald-400' : 'text-slate-200/60'}`}>
+                        {txn.type === 'win' || txn.type === 'deposit' ? '+' : '-'}₹{txn.amount.toFixed(2)}
+                      </td>
+                      <td className="px-8 py-5">
+                        <div className="flex items-center gap-1.5 capitalize text-[10px] font-bold tracking-widest">
+                          {txn.status === 'completed' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+                          {txn.status === 'pending' && <Clock className="w-3.5 h-3.5 text-amber-500" />}
+                          {txn.status === 'failed' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                          <span className={txn.status === 'completed' ? 'text-emerald-500' : txn.status === 'pending' ? 'text-amber-500' : 'text-slate-500'}>
+                            {txn.status}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-5 text-slate-600 text-[11px] font-mono tabular-nums">
+                        {new Date(txn.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                      </td>
+                    </motion.tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Enhanced Transaction Modal */}
+      <AnimatePresence>
+        {modalType && (
+          <div className="fixed inset-0 flex items-center justify-center p-4 z-[100]">
+             <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               onClick={() => !success && resetForm()}
+               className="fixed inset-0 bg-black/90 backdrop-blur-xl"
+             />
+             <motion.div 
+               initial={{ opacity: 0, scale: 0.9, y: 40 }}
+               animate={{ opacity: 1, scale: 1, y: 0 }}
+               exit={{ opacity: 0, scale: 0.9, y: 40 }}
+               className="bg-[#0f0f0f] border border-white/10 w-full max-w-md rounded-[2.5rem] overflow-hidden relative z-10 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.8)]"
+             >
+                {/* Modal Progress Dots (for Deposit) */}
+                {modalType === 'deposit' && !success && (
+                  <div className="flex justify-center gap-1.5 pt-6">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className={`h-1 rounded-full transition-all duration-300 ${step >= i ? 'w-6 bg-emerald-500' : 'w-2 bg-white/10'}`} />
+                    ))}
+                  </div>
+                )}
+
+                <div className="p-8">
+                  <div className="flex justify-between items-center mb-8">
+                    <div>
+                      <h3 className="text-3xl font-display font-bold capitalize">{modalType} Funds</h3>
+                      <p className="text-slate-500 text-xs mt-1">
+                        {modalType === 'deposit' ? 'Fast & Secure Add-on' : 'Payout your winnings'}
+                      </p>
+                    </div>
+                    {!success && (
+                      <button onClick={resetForm} className="p-3 hover:bg-white/5 rounded-2xl transition-colors">
+                        <X className="w-6 h-6 text-slate-400" />
+                      </button>
+                    )}
+                  </div>
+
+                  <AnimatePresence mode="wait">
+                    {success ? (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="text-center py-12 space-y-4"
+                      >
+                        <div className="w-20 h-20 bg-emerald-500/10 rounded-3xl flex items-center justify-center mx-auto border border-emerald-500/20">
+                          <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+                        </div>
+                        <h4 className="text-2xl font-bold">Request Sent!</h4>
+                        <p className="text-slate-400 text-sm max-w-[240px] mx-auto">
+                          Your {modalType} of ₹{amount.toFixed(2)} is being processed by our team.
+                        </p>
+                      </motion.div>
+                    ) : (
+                      <motion.div 
+                        key={step}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        className="space-y-6"
+                      >
+                        {modalType === 'deposit' && step === 1 ? (
+                          <div className="space-y-6">
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+                              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Select Deposit Amount</label>
+                              <div className="grid grid-cols-2 gap-3 mb-6">
+                                {[100, 500, 1000, 2000, 5000, 10000].map(val => (
+                                  <button 
+                                    key={val}
+                                    onClick={() => setAmount(val)}
+                                    className={`py-3 rounded-xl border font-bold transition-all text-sm ${amount === val ? 'bg-emerald-500 border-emerald-500 text-black shadow-lg shadow-emerald-500/20' : 'bg-white/5 border-white/5 hover:border-white/10 text-white'}`}
+                                  >
+                                    ₹{val.toLocaleString()}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="relative">
+                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                                <input 
+                                  type="number" 
+                                  value={amount || ''} 
+                                  onChange={(e) => setAmount(Number(e.target.value))}
+                                  className="w-full bg-white/5 border border-white/5 rounded-xl pl-8 pr-4 py-4 focus:outline-none focus:border-emerald-500/50 transition-all font-mono text-lg"
+                                  placeholder="Custom Amount"
+                                />
+                              </div>
+                              {amount > 0 && amount < 10 && <p className="text-[10px] text-rose-400 mt-2 italic px-1">Min deposit is ₹10.00</p>}
+                            </div>
+                            <button 
+                              disabled={amount < 10}
+                              onClick={() => setStep(2)}
+                              className="w-full py-5 bg-emerald-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 translate-y-0"
+                            >
+                              Next: Payment Details
+                            </button>
+                          </div>
+                        ) : modalType === 'deposit' && step === 2 ? (
+                          <div className="space-y-6">
+                            {state.paymentSettings && (
+                              <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-3xl p-6 space-y-6">
+                                <div className="text-center space-y-2">
+                                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Pay to Admin</p>
+                                  <p className="text-4xl font-display font-black text-white">₹{amount.toFixed(2)}</p>
+                                </div>
+                                
+                                {state.paymentSettings.qrCodeUrl && (
+                                   <div className="bg-white p-3 rounded-2xl shadow-2xl mx-auto w-48 h-48">
+                                     <img src={state.paymentSettings.qrCodeUrl} alt="QR" className="w-full h-full object-contain" />
+                                   </div>
+                                )}
+
+                                <div className="space-y-3">
+                                  {state.paymentSettings.upiId && (
+                                    <div className="bg-black/20 p-4 rounded-xl border border-white/5 flex items-center justify-between">
+                                      <div className="truncate pr-4">
+                                        <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Our UPI ID</p>
+                                        <p className="text-xs font-mono text-emerald-400 truncate">{state.paymentSettings.upiId}</p>
+                                      </div>
+                                      <button 
+                                        onClick={() => { navigator.clipboard.writeText(state.paymentSettings?.upiId || ''); playSound('CLICK'); }}
+                                        className="p-2.5 bg-white/5 hover:bg-white/10 rounded-lg"
+                                      >
+                                        <Copy className="w-4 h-4 text-emerald-400" />
+                                      </button>
+                                    </div>
+                                  )}
+                                  <div className="bg-amber-500/5 border border-amber-500/10 p-3 rounded-xl flex gap-3">
+                                    <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                                    <p className="text-[10px] text-amber-200/60 leading-relaxed italic">
+                                      Pay the amount above to our UPI and enter your Transaction Ref/Phone number below.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            
+                            <div className="space-y-4">
+                              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Payment Reference / Phone</label>
+                              <input 
+                                type="text"
+                                value={details}
+                                onChange={(e) => setDetails(e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-4 focus:outline-none focus:border-emerald-500 transition-all text-white placeholder:text-slate-600"
+                                placeholder="Enter PayTM/GPay Ref or Phone..."
+                              />
+                            </div>
+
+                            <div className="flex gap-3">
+                              <button onClick={() => setStep(1)} className="flex-1 py-5 bg-white/5 text-slate-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Back</button>
+                              <button 
+                                disabled={!details.trim()}
+                                onClick={() => setStep(3)}
+                                className="flex-[2] py-5 bg-emerald-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all"
+                              >
+                                Next: Upload Screenshot
+                              </button>
+                            </div>
+                          </div>
+                        ) : modalType === 'deposit' && step === 3 ? (
+                          <div className="space-y-6">
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+                              <div className="flex items-center gap-3 mb-2">
+                                <ImageIcon className="w-5 h-5 text-emerald-400" />
+                                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400/80">Upload Payment Proof</span>
+                              </div>
+                              <div className="relative group aspect-video rounded-xl border-2 border-dashed border-white/10 bg-black/40 flex items-center justify-center overflow-hidden transition-all hover:border-emerald-500/40">
+                                {screenshot ? (
+                                  <>
+                                    <img src={screenshot} alt="Screenshot" className="w-full h-full object-contain" />
+                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                      <ImageIcon className="w-6 h-6 text-white" />
+                                      <span className="text-[9px] font-black uppercase text-white">Change Photo</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="flex flex-col items-center gap-3 text-slate-500">
+                                    <ImageIcon className="w-10 h-10 opacity-20" />
+                                    <span className="text-[9px] font-black uppercase tracking-widest">Attach Screenshot</span>
+                                  </div>
+                                )}
+                                <input 
+                                  type="file" 
+                                  accept="image/*"
+                                  onChange={handleScreenshotUpload}
+                                  className="absolute inset-0 opacity-0 cursor-pointer"
+                                />
+                              </div>
+                              <p className="text-[9px] text-slate-500 italic text-center">Attach a clear screenshot of your payment for faster approval.</p>
+                            </div>
+                            <div className="flex gap-3">
+                              <button onClick={() => setStep(2)} className="flex-1 py-5 bg-white/5 text-slate-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Back</button>
+                              <button 
+                                disabled={!screenshot}
+                                onClick={handleConfirm}
+                                className="flex-[2] py-5 bg-emerald-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all"
+                              >
+                                Submit Deposit
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* Withdrawal UI remains simple but polished */
+                          <div className="space-y-6">
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6">
+                              <div>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Withdraw Amount</label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                                  <input 
+                                    type="number" 
+                                    value={amount || ''} 
+                                    onChange={(e) => setAmount(Number(e.target.value))}
+                                    className="w-full bg-white/5 border border-white/5 rounded-xl pl-8 pr-4 py-4 focus:outline-none focus:border-white/20 transition-all font-mono text-lg"
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                                <p className="text-[10px] text-slate-500 mt-2 pl-1">Available: ₹{(currentPlayer?.balance ?? 0).toFixed(2)}</p>
+                              </div>
+                              
+                              <div>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Your UPI ID (Payout Destination)</label>
+                                <input 
+                                  type="text" 
+                                  value={details}
+                                  onChange={(e) => setDetails(e.target.value)}
+                                  className="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-4 focus:outline-none focus:border-white/20 transition-all text-white"
+                                  placeholder="e.g. name@paytm"
+                                />
+                              </div>
+                            </div>
+
+                            <button 
+                              disabled={amount < 10 || amount > (currentPlayer?.balance ?? 0) || !details.trim()}
+                              onClick={handleConfirm}
+                              className="w-full py-5 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20"
+                            >
+                              Confirm Payout
+                            </button>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function MetricCard({ label, val, sub, trend }: { label: string, val: string, sub?: string, trend?: 'up' | 'down' }) {
+  return (
+    <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2rem] relative overflow-hidden group">
+      <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+        <TrendingUp className={`w-12 h-12 ${trend === 'up' ? 'text-emerald-400' : 'text-slate-400'}`} />
+      </div>
+      <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">{label}</p>
+      <p className={`text-3xl font-display font-bold ${trend === 'up' ? 'text-emerald-400' : trend === 'down' ? 'text-rose-500' : 'text-white'}`}>{val}</p>
+      {sub && <p className="text-[10px] text-slate-600 font-mono mt-2 uppercase tracking-widest">{sub}</p>}
+    </div>
+  );
+}
+
+function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats }: { 
+  state: AppState, 
+  onUpdateWinRate: (rate: number) => void,
+  onUpdateMaxBet: (max: number) => void,
+  onToggleBetLimit: () => void,
+  onToggleManualMode: () => void,
+  onUpdatePlayerOverride: (id: string, override: 'win' | 'lose' | 'none') => void,
+  onSwitchPlayer: (id: string) => void,
+  onResultBet: (playerId: string, outcome: 'win' | 'lose') => void,
+  onUpdateWithdrawalStatus: (id: string, status: 'completed' | 'rejected') => void,
+  onUpdateDepositStatus: (id: string, status: 'completed' | 'rejected') => void,
+  onToggleMaintenanceMode: () => void,
+  onUpdatePaymentSettings: (settings: PaymentSettings) => void,
+  onTogglePaymentLock: () => void,
+  onReset: () => void,
+  onResetHouseStats: () => void
+}) {
+  const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
+  const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
+
+  const [paymentEdit, setPaymentEdit] = useState<PaymentSettings>(state.paymentSettings || {});
+
+  const handleQrUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPaymentEdit(prev => ({ ...prev, qrCodeUrl: reader.result as string }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSavePayment = () => {
+    onUpdatePaymentSettings(paymentEdit);
+    alert('Payment settings updated successfully!');
+  };
+
+  const filteredWithdrawals = useMemo(() => {
+    if (withdrawalFilter === 'all') return state.withdrawals;
+    return state.withdrawals.filter(w => w.status === withdrawalFilter);
+  }, [state.withdrawals, withdrawalFilter]);
+
+  const filteredDeposits = useMemo(() => {
+    if (depositFilter === 'all') return state.deposits;
+    return state.deposits.filter(d => d.status === depositFilter);
+  }, [state.deposits, depositFilter]);
+
+  const stats = useMemo(() => {
+    // Player perspectives
+    const playerWins = state.transactions.filter(t => t.type === 'win');
+    const playerLosses = state.transactions.filter(t => t.type === 'bet');
+    
+    const totalWinCount = playerWins.length;
+    const totalLossCount = playerLosses.length;
+    const totalGames = totalWinCount + totalLossCount;
+    
+    const totalWonAmount = playerWins.reduce((sum, t) => sum + t.amount, 0);
+    const totalLostAmount = playerLosses.reduce((sum, t) => sum + t.amount, 0);
+    
+    // House perspective (Profit)
+    const houseProfit = totalLostAmount - totalWonAmount;
+    
+    // Graph Data: Cumulative House Profit
+    const sortedTxns = [...state.transactions].sort((a, b) => a.timestamp - b.timestamp);
+    let cumulativeProfit = 0;
+    const chartData = sortedTxns.map((t, index) => {
+      if (t.type === 'bet') cumulativeProfit += t.amount;
+      if (t.type === 'win') cumulativeProfit -= t.amount;
+      return {
+        index,
+        profit: cumulativeProfit,
+        time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+    });
+
+    const dataMax = Math.max(...chartData.map((i) => i.profit));
+    const dataMin = Math.min(...chartData.map((i) => i.profit));
+    let gradientOffset = 0;
+    if (dataMax > 0 && dataMin < 0) {
+      gradientOffset = dataMax / (dataMax - dataMin);
+    } else if (dataMax <= 0) {
+      gradientOffset = 0;
+    } else {
+      gradientOffset = 1;
+    }
+
+    return { 
+      totalWinCount, 
+      totalLossCount, 
+      totalGames, 
+      totalWonAmount, 
+      totalLostAmount, 
+      houseProfit,
+      chartData,
+      gradientOffset,
+      total: totalGames,
+      losses: totalLossCount,
+      realWinRate: totalGames > 0 ? (totalWinCount / totalGames) * 100 : 0
+    };
+  }, [state.transactions]);
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
+        <div className="space-y-1">
+          <h2 className="text-5xl font-display font-bold tracking-[ -0.05em] text-white">
+            ADMIN <span className="text-emerald-400/80">CORE</span>
+          </h2>
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <p className="text-slate-500 font-mono text-[10px] uppercase tracking-[0.3em]">System Operations Interface</p>
+          </div>
+        </div>
+        <div className="flex gap-4">
+          <button 
+            onClick={() => onToggleMaintenanceMode()}
+            className={`group flex items-center gap-3 border px-8 py-4 rounded-2xl transition-all duration-500 ${
+              state.maintenanceMode 
+              ? 'bg-rose-500/20 border-rose-500/40 text-rose-400' 
+              : 'bg-white/5 border-white/5 hover:bg-amber-500/10 hover:border-amber-500/20'
+            }`}
+          >
+            <ShieldAlert className={`w-4 h-4 ${state.maintenanceMode ? 'text-rose-400 animate-pulse' : 'text-slate-500 group-hover:text-amber-500'} transition-all`} />
+            <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${state.maintenanceMode ? 'text-rose-400' : 'text-slate-400 group-hover:text-amber-400'}`}>
+              {state.maintenanceMode ? 'ACTIVE MAINTENANCE' : 'Service Shutdown'}
+            </span>
+          </button>
+          <button 
+            onClick={() => onReset()}
+            className="group flex items-center gap-3 bg-white/5 hover:bg-rose-500/10 border border-white/5 hover:border-rose-500/20 px-8 py-4 rounded-2xl transition-all duration-500"
+          >
+            <RotateCcw className="w-4 h-4 text-slate-500 group-hover:text-rose-500 group-hover:rotate-[-45deg] transition-all" />
+            <span className="text-[10px] font-black text-slate-400 group-hover:text-rose-400 uppercase tracking-[0.2em]">Reset Systems</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 1. Pending Bets */}
+      <div className="glass-card rounded-[2.5rem] overflow-hidden mb-8">
+        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+           <h4 className="font-display font-bold text-xl flex items-center gap-3">
+             <DollarSign className="w-6 h-6 text-amber-500" />
+             Pending Bets
+           </h4>
+           <span className="bg-amber-500/10 text-amber-500 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border border-amber-500/20">
+             {state.players.filter(p => p.pendingBet).length} Pending
+           </span>
+        </div>
+        <div className="divide-y divide-white/5">
+          {state.players.filter(p => p.pendingBet).length === 0 ? (
+            <div className="p-20 text-center text-slate-600 font-display italic">No active bets currently awaiting outcome</div>
+          ) : (
+            state.players.filter(p => p.pendingBet).map(player => (
+              <div key={player.id} className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-white/[0.01] transition-colors">
+                <div className="flex items-center gap-5">
+                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex items-center justify-center font-bold text-xl text-emerald-400">
+                     {player.name.charAt(0)}
+                   </div>
+                   <div>
+                     <p className="font-display font-bold text-lg">{player.name}</p>
+                     <div className="flex items-center gap-3 mt-1">
+                       <p className="text-emerald-400 font-mono text-xl font-black">₹{player.pendingBet?.amount.toFixed(2)}</p>
+                       <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest">ID: {player.id}</span>
+                     </div>
+                   </div>
+                </div>
+                
+                <div className="flex gap-3">
+                    <button 
+                      onClick={() => onResultBet(player.id, 'win')}
+                      className="bg-emerald-500 text-emerald-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest glass-button"
+                    >
+                      Resolve Win
+                    </button>
+                    <button 
+                      onClick={() => onResultBet(player.id, 'lose')}
+                      className="bg-rose-500 text-rose-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest glass-button"
+                    >
+                      Resolve Loss
+                    </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+        <div 
+          onClick={() => {
+            const el = document.getElementById('deposits-section');
+            el?.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] hover:border-emerald-500/30 transition-all cursor-pointer group"
+        >
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-3 bg-emerald-500/10 rounded-2xl group-hover:bg-emerald-500/20 transition-colors">
+              <ArrowDownLeft className="w-5 h-5 text-emerald-400" />
+            </div>
+            {state.deposits.filter(d => d.status === 'pending').length > 0 && (
+              <span className="bg-emerald-500 text-black text-[9px] font-black px-2 py-0.5 rounded-full animate-bounce">
+                {state.deposits.filter(d => d.status === 'pending').length} NEW
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Pending Deposits</p>
+          <p className="text-2xl font-display font-bold text-white">₹{state.deposits.filter(d => d.status === 'pending').reduce((s, d) => s + d.amount, 0).toLocaleString()}</p>
+        </div>
+
+        <div 
+          onClick={() => {
+            const el = document.getElementById('withdrawals-section');
+            el?.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] hover:border-blue-500/30 transition-all cursor-pointer group"
+        >
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-3 bg-blue-500/10 rounded-2xl group-hover:bg-blue-500/20 transition-colors">
+              <ArrowUpRight className="w-5 h-5 text-blue-400" />
+            </div>
+            {state.withdrawals.filter(w => w.status === 'pending').length > 0 && (
+              <span className="bg-blue-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full animate-bounce">
+                {state.withdrawals.filter(w => w.status === 'pending').length} NEW
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Pending Payouts</p>
+          <p className="text-2xl font-display font-bold text-white">₹{state.withdrawals.filter(w => w.status === 'pending').reduce((s, d) => s + d.amount, 0).toLocaleString()}</p>
+        </div>
+
+        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-3 bg-amber-500/10 rounded-2xl">
+              <Clock className="w-5 h-5 text-amber-500" />
+            </div>
+          </div>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Active Wagers</p>
+          <p className="text-2xl font-display font-bold text-white">{state.players.filter(p => p.pendingBet).length} Requests</p>
+        </div>
+
+        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-3 bg-emerald-500/10 rounded-2xl">
+              <UserPlus className="w-5 h-5 text-emerald-400" />
+            </div>
+          </div>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Players</p>
+          <p className="text-2xl font-display font-bold text-white">{state.players.length}</p>
+        </div>
+      </div>
+
+      {/* 2. Withdrawal Requests */}
+      <div id="withdrawals-section" className="glass-card rounded-[2.5rem] overflow-hidden mb-8 scroll-mt-24">
+        <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between bg-white/[0.01] gap-6">
+           <div className="flex items-center gap-3">
+             <ArrowUpRight className="w-6 h-6 text-blue-400" />
+             <h4 className="font-display font-bold text-xl">Withdrawal Requests</h4>
+             <span className="bg-blue-500/10 text-blue-400 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border border-blue-500/20">
+               {state.withdrawals.filter(w => w.status === 'pending').length} New
+             </span>
+           </div>
+
+           <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
+              {(['pending', 'completed', 'rejected', 'all'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setWithdrawalFilter(filter)}
+                  className={`
+                    px-4 py-2 rounded-lg font-black uppercase tracking-widest text-[9px] transition-all
+                    ${withdrawalFilter === filter 
+                      ? 'bg-blue-500 text-blue-950 shadow-lg shadow-blue-500/20' 
+                      : 'text-slate-500 hover:text-slate-300'}
+                  `}
+                >
+                  {filter}
+                </button>
+              ))}
+           </div>
+        </div>
+        <div className="divide-y divide-white/5">
+          {filteredWithdrawals.length === 0 ? (
+            <div className="p-20 text-center text-slate-600 font-display italic">No {withdrawalFilter !== 'all' ? withdrawalFilter : ''} withdrawal requests found</div>
+          ) : (
+            filteredWithdrawals.map(req => {
+              const player = state.players.find(p => p.id === req.playerId);
+              return (
+                <div key={req.id} className="p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-8 hover:bg-white/[0.01] transition-colors">
+                  <div className="flex flex-col md:flex-row md:items-center gap-8 flex-1">
+                     <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-blue-500/5 border border-blue-500/10 flex items-center justify-center font-bold text-lg text-blue-400">
+                          {player?.name.charAt(0) || '?'}
+                        </div>
+                        <div>
+                          <p className="font-display font-bold text-white">{player?.name || 'Unknown Player'}</p>
+                          <p className="text-[10px] text-slate-500 font-mono">Balance Req: ₹{(req.playerBalanceAtRequest ?? 0).toFixed(2)}</p>
+                        </div>
+                     </div>
+
+                     <div className="h-8 w-[1px] bg-white/5 hidden md:block" />
+
+                     <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-1">
+                          <span className="text-xl font-display font-bold text-emerald-400">₹{(req.amount ?? 0).toFixed(2)}</span>
+                          <span className="bg-white/5 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase text-slate-400 border border-white/5 tracking-tighter">{req.method}</span>
+                        </div>
+                        <p className="text-xs text-slate-400 font-mono tracking-tight bg-white/5 p-2 rounded-lg border border-white/5 mt-2">{req.details}</p>
+                     </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-3 shrink-0">
+                    <p className="text-[10px] text-slate-600 font-mono uppercase tracking-widest">{new Date(req.timestamp).toLocaleString()}</p>
+                    {req.status === 'pending' ? (
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => onUpdateWithdrawalStatus(req.id, 'completed')}
+                          className="bg-emerald-500 text-emerald-950 px-6 py-2.5 rounded-xl text-[10px] font-black hover:scale-105 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest glass-button"
+                        >
+                          Approve
+                        </button>
+                        <button 
+                          onClick={() => onUpdateWithdrawalStatus(req.id, 'rejected')}
+                          className="bg-rose-500 text-rose-950 px-6 py-2.5 rounded-xl text-[10px] font-black hover:scale-105 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest glass-button"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border ${req.status === 'completed' ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500/60' : 'bg-rose-500/5 border-rose-500/20 text-rose-500/60'}`}>
+                        {req.status}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* 2.1 Deposit Requests */}
+      <div id="deposits-section" className="glass-card rounded-[2.5rem] overflow-hidden mb-8 scroll-mt-24">
+        <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between bg-white/[0.01] gap-6">
+           <div className="flex items-center gap-3">
+             <ArrowDownLeft className="w-6 h-6 text-emerald-400" />
+             <h4 className="font-display font-bold text-xl">Deposit Requests</h4>
+             <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border border-emerald-500/20">
+               {state.deposits.filter(d => d.status === 'pending').length} New
+             </span>
+           </div>
+
+           <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
+              {(['pending', 'completed', 'rejected', 'all'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setDepositFilter(filter)}
+                  className={`
+                    px-4 py-2 rounded-lg font-black uppercase tracking-widest text-[9px] transition-all
+                    ${depositFilter === filter 
+                      ? 'bg-emerald-500 text-emerald-950 shadow-lg shadow-emerald-500/20' 
+                      : 'text-slate-500 hover:text-slate-300'}
+                  `}
+                >
+                  {filter}
+                </button>
+              ))}
+           </div>
+        </div>
+        <div className="divide-y divide-white/5">
+          {filteredDeposits.length === 0 ? (
+            <div className="p-20 text-center text-slate-600 font-display italic">No {depositFilter !== 'all' ? depositFilter : ''} deposit requests found</div>
+          ) : (
+            filteredDeposits.map(req => {
+              const player = state.players.find(p => p.id === req.playerId);
+              return (
+                <div key={req.id} className="p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-8 hover:bg-white/[0.01] transition-colors">
+                  <div className="flex flex-col md:flex-row md:items-center gap-8 flex-1">
+                     <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-emerald-500/5 border border-emerald-500/10 flex items-center justify-center font-bold text-lg text-emerald-400">
+                          {player?.name.charAt(0) || '?'}
+                        </div>
+                        <div>
+                          <p className="font-display font-bold text-white">{player?.name || 'Unknown Player'}</p>
+                          <p className="text-[10px] text-slate-500 font-mono">Balance Req: ₹{(req.playerBalanceAtRequest ?? 0).toFixed(2)}</p>
+                        </div>
+                     </div>
+
+                     <div className="h-8 w-[1px] bg-white/5 hidden md:block" />
+
+                     <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-1">
+                          <span className="text-xl font-display font-bold text-emerald-400">₹{(req.amount ?? 0).toFixed(2)}</span>
+                          <span className="bg-white/5 text-[9px] font-black px-2.5 py-1 rounded-lg uppercase text-slate-400 border border-white/5 tracking-tighter">{req.method}</span>
+                        </div>
+                        <p className="text-xs text-slate-400 font-mono tracking-tight bg-white/5 p-2 rounded-lg border border-white/5 mt-2">{req.details}</p>
+                        {req.screenshotUrl && (
+                          <div className="mt-4">
+                            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 px-1">Verification Screenshot</p>
+                            <div className="relative group w-40 aspect-square rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-black/40">
+                              <img src={req.screenshotUrl} alt="Deposit Proof" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
+                                <button 
+                                  onClick={() => {
+                                    const win = window.open();
+                                    if (win) {
+                                      win.document.write(`<img src="${req.screenshotUrl}" style="max-width: 100%; max-height: 100vh; display: block; margin: auto;">`);
+                                      win.document.title = "Payment Verification";
+                                    }
+                                  }}
+                                  className="px-4 py-2 bg-white text-black text-[10px] font-black uppercase rounded-xl hover:scale-105 transition-transform"
+                                >
+                                  View Full Size
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                     </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-3 shrink-0">
+                    <p className="text-[10px] text-slate-600 font-mono uppercase tracking-widest">{new Date(req.timestamp).toLocaleString()}</p>
+                    {req.status === 'pending' ? (
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => onUpdateDepositStatus(req.id, 'completed')}
+                          className="bg-emerald-500 text-emerald-950 px-6 py-2.5 rounded-xl text-[10px] font-black hover:scale-105 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest glass-button"
+                        >
+                          Approve
+                        </button>
+                        <button 
+                          onClick={() => onUpdateDepositStatus(req.id, 'rejected')}
+                          className="bg-rose-500 text-rose-950 px-6 py-2.5 rounded-xl text-[10px] font-black hover:scale-105 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest glass-button"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border ${req.status === 'completed' ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500/60' : 'bg-rose-500/5 border-rose-500/20 text-rose-500/60'}`}>
+                        {req.status}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* House Performance Metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <MetricCard label="House Yield" val={`₹${(stats.houseProfit ?? 0).toFixed(2)}`} trend={(stats.houseProfit ?? 0) >= 0 ? 'up' : 'down'} />
+        <MetricCard label="User Liquidity" val={`₹${(stats.totalWonAmount ?? 0).toFixed(2)}`} sub={`${stats.totalWinCount} Events`} />
+        <MetricCard label="Captalized Loss" val={`₹${(stats.totalLostAmount ?? 0).toFixed(2)}`} sub={`${stats.totalLossCount} Events`} />
+        <MetricCard label="Net Profitability" val={`₹${(stats.houseProfit ?? 0).toFixed(2)}`} sub="Pure Revenue" trend={(stats.houseProfit ?? 0) >= 0 ? 'up' : 'down'} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          {/* 3. House Profit Graph */}
+          <div className="bg-[#0c0c0c] border border-white/5 p-10 rounded-[3rem] shadow-3xl">
+            <div className="flex justify-between items-center mb-10">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-emerald-500/10 rounded-2xl">
+                  <TrendingUp className="w-6 h-6 text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-xl font-display font-bold">Yield Performance</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Cumulative House Profit Analysis</p>
+                </div>
+              </div>
+              <button 
+                onClick={onResetHouseStats}
+                className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl transition-colors border border-white/5"
+                title="Reset Graph"
+              >
+                <RotateCcw className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+            <div className="h-[350px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={stats.chartData}>
+                  <defs>
+                    <linearGradient id="adminColor" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={stats.gradientOffset} stopColor="#10b981" stopOpacity={1} />
+                      <stop offset={stats.gradientOffset} stopColor="#f43f5e" stopOpacity={1} />
+                    </linearGradient>
+                    <linearGradient id="adminFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={stats.gradientOffset} stopColor="#10b981" stopOpacity={0.2} />
+                      <stop offset={stats.gradientOffset} stopColor="#f43f5e" stopOpacity={0.2} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                  <XAxis dataKey="time" hide />
+                  <YAxis hide domain={['auto', 'auto']} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#000', border: 'none', borderRadius: '20px', padding: '16px' }}
+                    itemStyle={{ color: '#fff', fontSize: '14px', fontWeight: '800' }}
+                    cursor={{ stroke: '#ffffff10' }}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="profit" 
+                    stroke="url(#adminColor)" 
+                    strokeWidth={4}
+                    fillOpacity={1} 
+                    fill="url(#adminFill)" 
+                    animationDuration={2000}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* 4. Remaining Stats (Controls & Players) */}
+          <div className="glass-card p-10 rounded-[2.5rem]">
+            <h4 className="text-xl font-display font-bold mb-8 flex items-center gap-3">
+              <Settings className="w-5 h-5 text-purple-400" />
+              Game Control Mode
+            </h4>
+            <div className="flex p-1.5 bg-white/5 rounded-2xl border border-white/5">
+              <button 
+                onClick={() => state.manualMode && onToggleManualMode()}
+                className={`flex-1 py-4 rounded-xl font-black transition-all uppercase tracking-[0.2em] text-[10px] ${!state.manualMode ? 'bg-emerald-500 text-emerald-950 shadow-2xl shadow-emerald-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                Auto (Algorithm)
+              </button>
+              <button 
+                onClick={() => !state.manualMode && onToggleManualMode()}
+                className={`flex-1 py-4 rounded-xl font-black transition-all uppercase tracking-[0.2em] text-[10px] ${state.manualMode ? 'bg-rose-500 text-rose-950 shadow-2xl shadow-rose-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                Manual (God Mode)
+              </button>
+            </div>
+            <p className="mt-4 text-xs text-slate-500 italic text-center">
+              {state.manualMode 
+                ? "In Manual mode, every bet stays 'Pending' until you click Win or Lose below." 
+                : "In Auto mode, the algorithm (and overrides) decide results instantly."}
+            </p>
+          </div>
+
+          <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl">
+            <h4 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-emerald-400" />
+              Winning Algorithm (Base Rate)
+            </h4>
+            <div className="space-y-6">
+               <div className="flex justify-between items-center">
+                 <span className="text-slate-400">Target Win Probability</span>
+                 <span className="font-mono text-2xl font-bold text-emerald-400">{((state.winRate ?? 0) * 100).toFixed(0)}%</span>
+               </div>
+               <input 
+                type="range" 
+                min="0" 
+                max="1" 
+                step="0.01"
+                value={state.winRate ?? 0} 
+                onChange={(e) => onUpdateWinRate(Number(e.target.value))}
+                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl">
+            <div className="flex items-center justify-between mb-6">
+              <h4 className="text-xl font-bold flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-amber-500" />
+                Maximum Bet Limit
+              </h4>
+              <button 
+                onClick={onToggleBetLimit}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${state.isBetLimitEnabled ? 'bg-amber-500/20 text-amber-500 border border-amber-500/20' : 'bg-white/5 text-slate-500 border border-white/5'}`}
+              >
+                {state.isBetLimitEnabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+            <div className={`space-y-6 transition-opacity duration-300 ${state.isBetLimitEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+               <div className="flex justify-between items-center">
+                 <span className="text-slate-400">Global Max Bet Limit</span>
+                 <span className="font-mono text-2xl font-bold text-amber-500">₹{state.maxBet}</span>
+               </div>
+               <input 
+                type="range" 
+                min="10" 
+                max="5000" 
+                step="10"
+                value={state.maxBet ?? 0} 
+                onChange={(e) => onUpdateMaxBet(Number(e.target.value))}
+                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              />
+              <p className="text-[10px] text-slate-600 font-medium italic">
+                Restricts the maximum amount any player can wager at once.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-[#0f0f0f] border border-white/5 p-10 rounded-[3rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] mb-12">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+              <div className="flex items-center gap-5">
+                <div className="p-4 bg-emerald-500/10 rounded-[1.5rem] border border-emerald-500/20">
+                  <QrCode className="w-8 h-8 text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-3xl font-display font-bold text-white tracking-tight">Configuration Hub</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Manage Payment Gateways & Deposit Settings</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={onTogglePaymentLock}
+                  className={`px-6 py-4 rounded-2xl border transition-all flex items-center justify-center gap-3 group ${state.isPaymentLocked ? 'bg-amber-500 text-black border-amber-500 shadow-xl shadow-amber-500/20' : 'bg-white/5 border-white/10 text-slate-500 hover:text-slate-300'}`}
+                >
+                  {state.isPaymentLocked ? <Lock className="w-4 h-4" /> : <LockOpen className="w-4 h-4" />}
+                  <span className="text-[10px] font-black uppercase tracking-widest">
+                    {state.isPaymentLocked ? 'Locked' : 'Unlocked'}
+                  </span>
+                </button>
+                <button 
+                  onClick={handleSavePayment}
+                  className="bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 active:scale-95 transition-all shadow-2xl shadow-emerald-500/30"
+                >
+                  Sync Settings
+                </button>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div className="space-y-8">
+                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4 px-1">Primary UPI ID</label>
+                  <div className="relative">
+                    <input 
+                      type="text" 
+                      value={paymentEdit.upiId || ''}
+                      onChange={(e) => setPaymentEdit(prev => ({ ...prev, upiId: e.target.value }))}
+                      placeholder="e.g. aleem@okhdfc"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 focus:outline-none focus:border-emerald-500 text-emerald-100 font-mono text-lg shadow-inner"
+                    />
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <Zap className="w-5 h-5 text-emerald-500/30" />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4 px-1">Deposit Flow Note</label>
+                  <textarea 
+                    value={paymentEdit.additionalInstructions || ''}
+                    onChange={(e) => setPaymentEdit(prev => ({ ...prev, additionalInstructions: e.target.value }))}
+                    placeholder="e.g. Minimum deposit ₹500, send screenshot to support..."
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 focus:outline-none focus:border-emerald-500 text-slate-300 text-sm min-h-[140px] resize-none shadow-inner leading-relaxed"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-[2.5rem]">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4 px-1 text-center">Master QR Gateway</label>
+                  <div className="relative group aspect-square rounded-[2rem] border-2 border-dashed border-white/10 bg-black/40 flex items-center justify-center overflow-hidden transition-all hover:border-emerald-500/20 active:scale-[0.99]">
+                    {paymentEdit.qrCodeUrl ? (
+                      <>
+                        <img src={paymentEdit.qrCodeUrl} alt="QR Code" className="w-full h-full object-contain p-8" />
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3">
+                          <div className="p-3 bg-white/10 rounded-full backdrop-blur-md">
+                            <ImageIcon className="w-8 h-8 text-white" />
+                          </div>
+                          <span className="text-[10px] font-black uppercase text-white tracking-widest">Update Photo</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center gap-4 text-slate-500 group-hover:text-slate-300 transition-colors">
+                        <div className="p-5 bg-white/5 rounded-full">
+                          <ImageIcon className="w-12 h-12 opacity-20" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em]">Click to Upload QR</span>
+                      </div>
+                    )}
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      onChange={handleQrUpload}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                    />
+                  </div>
+                  <div className="mt-6 flex flex-col items-center gap-3">
+                    <p className="text-[10px] text-slate-500 italic max-w-[200px] text-center leading-relaxed">This QR will be the primary visual target for player deposits.</p>
+                    {paymentEdit.qrCodeUrl && (
+                      <button 
+                        onClick={() => setPaymentEdit(prev => ({ ...prev, qrCodeUrl: undefined }))}
+                        className="text-[9px] font-black text-rose-500 uppercase hover:text-rose-400 transition-colors flex items-center gap-2 group"
+                      >
+                        <Trash2 className="w-3 h-3 transition-transform group-hover:rotate-12" />
+                        Purge Image
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-card p-10 rounded-[2.5rem]">
+            <h4 className="text-xl font-display font-bold mb-8 flex items-center gap-3">
+              <Settings className="w-5 h-5 text-emerald-400" />
+              Manage Individual Players
+            </h4>
+            <div className="space-y-4">
+              {state.players.map((player) => (
+                <div key={player.id} className={`p-6 rounded-2xl border transition-all duration-300 ${state.currentPlayerId === player.id ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-white/[0.02] border-white/5'}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                    <div className="flex items-center gap-5">
+                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center font-bold text-xl text-white shadow-xl">
+                        {player.name.charAt(0)}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <h5 className="font-display font-bold text-lg">{player.name}</h5>
+                          {state.currentPlayerId === player.id && (
+                            <span className="bg-emerald-500/10 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest border border-emerald-500/20">Active Player</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 font-mono mt-0.5">Balance: ₹{(player.balance ?? 0).toFixed(2)} | Code: {player.referralCode} | Refs: {player.referralCount}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button 
+                        onClick={() => onSwitchPlayer(player.id)}
+                        className={`px-5 py-2.5 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest ${state.currentPlayerId === player.id ? 'bg-emerald-500 text-emerald-950' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+                      >
+                        {state.currentPlayerId === player.id ? 'Playing' : 'Switch to Play'}
+                      </button>
+                      <div className="h-8 w-[1px] bg-white/5 mx-2 hidden sm:block" />
+                      <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
+                        {(['none', 'win', 'lose'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            onClick={() => onUpdatePlayerOverride(player.id, mode)}
+                            className={`
+                              px-4 py-2 rounded-lg font-black uppercase tracking-widest text-[9px] transition-all
+                              ${player.override === mode 
+                                ? mode === 'win' ? 'bg-emerald-500 text-emerald-950' 
+                                : mode === 'lose' ? 'bg-rose-500 text-rose-950'
+                                : 'bg-white/10 text-white'
+                                : 'text-slate-600 hover:text-slate-400'}
+                            `}
+                          >
+                            {mode === 'none' ? 'RNG' : mode}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Sidebar Stats */}
+        <div className="space-y-6">
+          <div className="glass-card p-8 rounded-[2rem]">
+             <h5 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mb-8">Real-time Performance</h5>
+             <div className="space-y-8">
+               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+                  <div className="flex justify-between text-[10px] uppercase font-black tracking-widest mb-3">
+                    <span className="text-slate-500">Actual Win Ratio</span>
+                    <span className="text-emerald-400">{(stats.realWinRate ?? 0).toFixed(1)}%</span>
+                  </div>
+                  <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${stats.realWinRate}%` }}
+                      transition={{ duration: 1, ease: "easeOut" }}
+                      className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full" 
+                    />
+                  </div>
+               </motion.div>
+               <div className="grid grid-cols-1 gap-4">
+                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="bg-white/[0.03] p-5 rounded-2xl border border-white/5">
+                   <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1">Total Plays</p>
+                   <p className="text-3xl font-display font-bold text-white">{stats.total}</p>
+                 </motion.div>
+                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="bg-white/[0.03] p-5 rounded-2xl border border-white/5">
+                   <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1">House Wins</p>
+                   <p className="text-3xl font-display font-bold text-rose-500/80">{stats.losses}</p>
+                 </motion.div>
+               </div>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

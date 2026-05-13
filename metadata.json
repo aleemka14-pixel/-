@@ -1,0 +1,6 @@
+{
+  "name": "STARK",
+  "description": "A thrill-seeking money simulation app where you can double your virtual funds or lose it all. Features a wallet system, withdrawal requests, and an admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
