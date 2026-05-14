@@ -1,6 +1,6 @@
 {
-  "name": "STARK",
-  "description": "A thrill-seeking money simulation app where you can double your virtual funds or lose it all. Features a wallet system, withdrawal requests, and an admin dashboard.",
+  "name": "WinDouble",
+  "description": "Double your money or donate it to the poor. A high-stakes virtual gambling simulation with real-time profit tracking, referral system, and admin controls.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

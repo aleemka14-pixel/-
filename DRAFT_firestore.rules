@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == '4m3i5Kbu9MV2x23vRbYImQpGeDn1' ||
+        request.auth.token.email.lower() == 'aleemka14@gmail.com' ||
+        request.auth.token.email.lower() == 'futurebillionairehrx@gmail.com'
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+    
+    function isValidPlayer(data) {
+      return data.keys().hasAll(['id', 'name', 'balance', 'override', 'referralCode', 'referralCount']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.balance is number &&
+             data.override in ['win', 'lose', 'none'] &&
+             data.referralCode is string &&
+             data.referralCount is number;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['id', 'playerId', 'type', 'amount', 'timestamp', 'status']) &&
+             data.id is string &&
+             data.playerId is string &&
+             data.type in ['deposit', 'bet', 'win', 'withdrawal'] &&
+             data.amount is number &&
+             data.timestamp is number &&
+             data.status in ['pending', 'completed', 'failed'];
+    }
+
+    function isValidWithdrawal(data) {
+      return data.keys().hasAll(['id', 'playerId', 'amount', 'method', 'details', 'status', 'timestamp', 'playerBalanceAtRequest']) &&
+             data.status in ['pending', 'completed', 'rejected'];
+    }
+
+    function isValidDeposit(data) {
+      return data.keys().hasAll(['id', 'playerId', 'amount', 'method', 'details', 'status', 'timestamp', 'playerBalanceAtRequest']) &&
+             data.status in ['pending', 'completed', 'rejected'];
+    }
+
+    // --- Collection Rules ---
+
+    match /players/{playerId} {
+      allow get: if isOwner(playerId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(playerId) && isValidPlayer(incoming());
+      allow update: if (isAdmin() && isValidPlayer(incoming())) || (
+        isOwner(playerId) && 
+        isValidPlayer(incoming()) && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['pendingBet', 'name', 'email'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /transactions/{id} {
+      allow get: if isSignedIn() && (isOwner(existing().playerId) || isAdmin());
+      allow list: if isSignedIn() && (isAdmin() || (resource.data.playerId == request.auth.uid));
+      allow create: if isSignedIn() && (isAdmin() || isOwner(incoming().playerId)) && isValidTransaction(incoming());
+      // Transactions should be immutable
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /withdrawals/{id} {
+      allow get: if isSignedIn() && (isOwner(existing().playerId) || isAdmin());
+      allow list: if isSignedIn() && (isAdmin() || (resource.data.playerId == request.auth.uid));
+      allow create: if isOwner(incoming().playerId) && isValidWithdrawal(incoming()) && incoming().status == 'pending';
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /deposits/{id} {
+      allow get: if isSignedIn() && (isOwner(existing().playerId) || isAdmin());
+      allow list: if isSignedIn() && (isAdmin() || (resource.data.playerId == request.auth.uid));
+      allow create: if isOwner(incoming().playerId) && isValidDeposit(incoming()) && incoming().status == 'pending';
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /config/admin {
+      allow read: if isSignedIn(); // All users need to read config
+      allow write: if isAdmin();
+    }
+  }
+}

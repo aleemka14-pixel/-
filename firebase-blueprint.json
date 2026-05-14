@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "Player": {
+      "title": "Player",
+      "description": "Represents a user profile in the game.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "balance": { "type": "number" },
+        "override": { "type": "string", "enum": ["win", "lose", "none"] },
+        "referralCode": { "type": "string" },
+        "referredBy": { "type": "string" },
+        "referralCount": { "type": "number" },
+        "pendingBet": {
+          "type": "object",
+          "properties": {
+            "amount": { "type": "number" },
+            "timestamp": { "type": "number" }
+          }
+        }
+      },
+      "required": ["id", "name", "balance", "override", "referralCode", "referralCount"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial records of the player.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "playerId": { "type": "string" },
+        "type": { "type": "string", "enum": ["deposit", "bet", "win", "withdrawal"] },
+        "amount": { "type": "number" },
+        "timestamp": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] }
+      },
+      "required": ["id", "playerId", "type", "amount", "timestamp", "status"]
+    },
+    "WithdrawalRequest": {
+      "title": "Withdrawal",
+      "description": "Player request to withdraw funds.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "playerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string" },
+        "details": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed", "rejected"] },
+        "timestamp": { "type": "number" },
+        "playerBalanceAtRequest": { "type": "number" }
+      },
+      "required": ["id", "playerId", "amount", "method", "details", "status", "timestamp", "playerBalanceAtRequest"]
+    },
+    "DepositRequest": {
+      "title": "Deposit",
+      "description": "Player report of a deposit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "playerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string" },
+        "details": { "type": "string" },
+        "screenshotUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed", "rejected"] },
+        "timestamp": { "type": "number" },
+        "playerBalanceAtRequest": { "type": "number" }
+      },
+      "required": ["id", "playerId", "amount", "method", "details", "status", "timestamp", "playerBalanceAtRequest"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global administrator settings.",
+      "type": "object",
+      "properties": {
+        "winRate": { "type": "number" },
+        "manualMode": { "type": "boolean" },
+        "maxBet": { "type": "number" },
+        "isBetLimitEnabled": { "type": "boolean" },
+        "maintenanceMode": { "type": "boolean" },
+        "isPaymentLocked": { "type": "boolean" },
+        "paymentSettings": {
+          "type": "object",
+          "properties": {
+            "upiId": { "type": "string" },
+            "qrCodeUrl": { "type": "string" },
+            "additionalInstructions": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "players": {
+      "schema": "Player",
+      "description": "User profiles indexed by UID."
+    },
+    "transactions": {
+      "schema": "Transaction",
+      "description": "System-wide transactions."
+    },
+    "withdrawals": {
+      "schema": "WithdrawalRequest",
+      "description": "Payment requests."
+    },
+    "deposits": {
+      "schema": "DepositRequest",
+      "description": "Confirmation requests."
+    },
+    "config/admin": {
+      "schema": "Settings",
+      "description": "Global settings document."
+    }
+  }
+}

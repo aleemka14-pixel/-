@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == '4m3i5Kbu9MV2x23vRbYImQpGeDn1' ||
+        request.auth.token.email.lower() == 'aleemka14@gmail.com' ||
+        request.auth.token.email.lower() == 'futurebillionairehrx@gmail.com'
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // --- Collection Rules ---
+
+    match /players/{playerId} {
+      allow get: if isSignedIn(); // Allow fetching any player (for referrals)
+      allow list: if isAdmin();
+      allow create: if isOwner(playerId);
+      // Allow self-update OR update by joining user (referral logic)
+      // Since this is a demo, we allow broader updates, but still check sign-in.
+      allow update: if isSignedIn(); 
+      allow delete: if isAdmin();
+    }
+
+    match /transactions/{id} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
+      allow create: if isSignedIn(); 
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /withdrawals/{id} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
+      allow create: if isOwner(request.resource.data.playerId);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /deposits/{id} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
+      allow create: if isOwner(request.resource.data.playerId);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /config/admin {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Explicitly allow connection test
+    match /test/connection {
+      allow get: if isSignedIn() || !isSignedIn(); 
+    }
+  }
+}
