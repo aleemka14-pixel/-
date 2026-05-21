@@ -15,8 +15,10 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         request.auth.uid == '4m3i5Kbu9MV2x23vRbYImQpGeDn1' ||
-        request.auth.token.email.lower() == 'aleemka14@gmail.com' ||
-        request.auth.token.email.lower() == 'futurebillionairehrx@gmail.com'
+        (request.auth.token.email != null && (
+          request.auth.token.email.lower() == 'aleemka14@gmail.com' ||
+          request.auth.token.email.lower() == 'futurebillionairehrx@gmail.com'
+        ))
       );
     }
 
@@ -24,19 +26,27 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
     // --- Collection Rules ---
 
     match /players/{playerId} {
-      allow get: if isSignedIn(); // Allow fetching any player (for referrals)
-      allow list: if isAdmin();
+      // Allow everyone to see the leaderboard (list) and individual profiles (get)
+      allow read: if isSignedIn(); 
       allow create: if isOwner(playerId);
       // Allow self-update OR update by joining user (referral logic)
-      // Since this is a demo, we allow broader updates, but still check sign-in.
       allow update: if isSignedIn(); 
       allow delete: if isAdmin();
     }
 
     match /transactions/{id} {
+      // Users can only see their own transactions, admins see all
       allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
       allow create: if isSignedIn(); 
       allow update: if isAdmin();
@@ -58,13 +68,14 @@ service cloud.firestore {
     }
 
     match /config/admin {
-      allow read: if isSignedIn();
+      // Everyone needs to read config for maintenance and win rate
+      allow read: if true; 
       allow write: if isAdmin();
     }
 
     // Explicitly allow connection test
-    match /test/connection {
-      allow get: if isSignedIn() || !isSignedIn(); 
+    match /test/{docId} {
+      allow get: if true; 
     }
   }
 }

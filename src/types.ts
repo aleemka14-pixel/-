@@ -43,6 +43,7 @@ export interface Player {
   referralCode: string;
   referredBy?: string;
   referralCount: number;
+  photoURL?: string;
 }
 
 export interface PaymentSettings {
@@ -63,6 +64,10 @@ export interface AppState {
   maxBet: number;
   isBetLimitEnabled: boolean;
   maintenanceMode: boolean;
+  minDeposit?: number;
+  minWithdraw?: number;
   paymentSettings?: PaymentSettings;
   isPaymentLocked: boolean;
+  referralAmount?: number;
+  isReferralEnabled?: boolean;
 }

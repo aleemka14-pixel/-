@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, ReactNode, useRef, ChangeEvent } from 'react';
+import { useState, useEffect, useMemo, ReactNode, useRef, ChangeEvent, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
 import { 
@@ -34,11 +34,12 @@ import {
   Lock,
   LockOpen,
   User,
-  ChevronRight
+  ChevronRight,
+  Heart
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings } from './types.ts';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
+import ProfileView from './components/ProfileView.tsx';
 import { 
   onSnapshot, 
   collection, 
@@ -49,8 +50,11 @@ import {
   where, 
   orderBy, 
   getDoc,
+  getDocs,
   deleteDoc,
-  writeBatch
+  writeBatch,
+  increment,
+  limit
 } from 'firebase/firestore';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
@@ -66,16 +70,9 @@ const SOUNDS = {
 
 // Mock Initial Data
 const INITIAL_STATE: AppState = {
-  players: [
-    { id: 'u1', name: 'User 1293', balance: 50.00, override: 'none', referralCode: 'FIRST100', referralCount: 0 },
-    { id: 'u2', name: 'John Admin', email: 'futurebillionairehrx@gmail.com', balance: 1000.00, override: 'none', referralCode: 'ADMINVIP', referralCount: 0 },
-    { id: 'u3', name: 'John Doe', balance: 120.50, override: 'none', referralCode: 'DOE2024', referralCount: 0 },
-    { id: 'u4', name: 'Sarah Wilson', balance: 15.00, override: 'lose', referralCode: 'SARAH77', referralCount: 0 },
-  ],
-  currentPlayerId: 'u1',
-  transactions: [
-    { id: '1', playerId: 'u1', type: 'deposit', amount: 50.00, timestamp: Date.now() - 86400000, status: 'completed' }
-  ],
+  players: [],
+  currentPlayerId: undefined,
+  transactions: [],
   withdrawals: [],
   deposits: [],
   winRate: 0.45, // 45% win rate by default
@@ -84,11 +81,15 @@ const INITIAL_STATE: AppState = {
   maxBet: 500,
   isBetLimitEnabled: true,
   maintenanceMode: false,
+  minDeposit: 100,
+  minWithdraw: 500,
   paymentSettings: {
     upiId: 'ALEEMKA14@OKHDFC',
     additionalInstructions: 'Send screenshot after payment for fast approval.'
   },
-  isPaymentLocked: false
+  isPaymentLocked: false,
+  referralAmount: 10,
+  isReferralEnabled: true
 };
 
 export default function App() {
@@ -97,12 +98,55 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const start = Date.now();
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser) {
-        setState(prev => ({ ...prev, currentPlayerId: firebaseUser.uid }));
-      }
-      setLoading(false);
+      const elapsed = Date.now() - start;
+      const delay = Math.max(0, 1500 - elapsed);
+      
+      setTimeout(() => {
+        setUser(firebaseUser);
+        if (firebaseUser) {
+          setState(prev => ({ ...prev, currentPlayerId: firebaseUser.uid }));
+          // Try to load cached balance for immediate display
+          const cached = localStorage.getItem(`balance_${firebaseUser.uid}`);
+          if (cached) {
+            const balance = parseFloat(cached);
+            setState(prev => {
+              const exists = prev.players.find(p => p.id === firebaseUser.uid);
+              if (exists) {
+                return {
+                  ...prev,
+                  players: prev.players.map(p => p.id === firebaseUser.uid ? { ...p, balance } : p)
+                };
+              } else {
+                return {
+                  ...prev,
+                  players: [...prev.players, {
+                    id: firebaseUser.uid,
+                    name: firebaseUser.displayName || 'Player',
+                    email: firebaseUser.email || '',
+                    balance,
+                    override: 'none',
+                    referralCode: '',
+                    referralCount: 0
+                  }]
+                };
+              }
+            });
+          }
+        } else {
+          // Clear sensitive state on logout
+          setState(prev => ({ 
+            ...prev, 
+            currentPlayerId: undefined,
+            players: [],
+            transactions: [],
+            withdrawals: [],
+            deposits: []
+          }));
+        }
+        setLoading(false);
+      }, delay);
     });
     return unsubscribe;
   }, []);
@@ -121,7 +165,7 @@ export default function App() {
 
   // Listeners for Firestore data
   useEffect(() => {
-    if (!user || user.uid !== state.currentPlayerId) return;
+    if (!user) return;
     
     console.log('Starting Listeners. User:', user.email, user.uid);
     console.log('CurrentUser:', auth.currentUser?.email, auth.currentUser?.uid);
@@ -137,8 +181,12 @@ export default function App() {
           maxBet: data.maxBet ?? 500,
           isBetLimitEnabled: data.isBetLimitEnabled ?? true,
           maintenanceMode: data.maintenanceMode ?? false,
+          minDeposit: data.minDeposit ?? 100,
+          minWithdraw: data.minWithdraw ?? 500,
           paymentSettings: data.paymentSettings,
-          isPaymentLocked: data.isPaymentLocked ?? false
+          isPaymentLocked: data.isPaymentLocked ?? false,
+          referralAmount: data.referralAmount ?? 10,
+          isReferralEnabled: data.isReferralEnabled ?? true
         }));
       } else if (isAdmin) {
         // Initialize default config if missing and user is admin
@@ -149,7 +197,9 @@ export default function App() {
             maxBet: 500,
             isBetLimitEnabled: true,
             maintenanceMode: false,
-            isPaymentLocked: false
+            isPaymentLocked: false,
+            referralAmount: 10,
+            isReferralEnabled: true
           }, { merge: true });
         } catch (e) {
           console.warn('Failed to initialize admin config:', e);
@@ -159,19 +209,20 @@ export default function App() {
       console.warn('Config access denied or missing. Using defaults.', err);
     });
 
-    // Players Listener - Only admins get full list, others get nothing from this one
-    // or we can wrap it in isAdmin check
-    let unsubPlayers = () => {};
-    if (isAdmin) {
-      unsubPlayers = onSnapshot(collection(db, 'players'), (snap) => {
-        const players = snap.docs.map(d => d.data() as Player);
-        setState(prev => ({ ...prev, players }));
-      }, (err) => {
-        console.warn('Admin players list access denied.', err);
+    // Players Listener - Everyone gets at least the top players for the leaderboard
+    const unsubPlayers = onSnapshot(query(collection(db, 'players'), orderBy('balance', 'desc'), limit(50)), (snap) => {
+      const players = snap.docs.map(d => d.data() as Player);
+      setState(prev => {
+        // Merge with existing players to keep the current user's full data if they aren't in the top 50
+        const idMap = new Map(prev.players.map(p => [p.id, p]));
+        players.forEach(p => idMap.set(p.id, p));
+        return { ...prev, players: Array.from(idMap.values()) };
       });
-    }
+    }, (err) => {
+      console.warn('Leaderboard players access denied.', err);
+    });
 
-    // Single Player profile listener for non-admins (or everyone)
+    // Single Player profile listener for updates to own balance/override
     const unsubPlayer = onSnapshot(doc(db, 'players', user.uid), (snap) => {
       if (snap.exists()) {
         const p = snap.data() as Player;
@@ -187,9 +238,10 @@ export default function App() {
 
     // Query helper to switch between own and admin data
     const getQuery = (colName: string) => {
+      const l = colName === 'transactions' ? 500 : 50; // Cap transactions at 500 for performance
       return isAdmin 
-        ? query(collection(db, colName), orderBy('timestamp', 'desc'))
-        : query(collection(db, colName), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
+        ? query(collection(db, colName), orderBy('timestamp', 'desc'), limit(l))
+        : query(collection(db, colName), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'), limit(l));
     };
 
     const unsubTxns = onSnapshot(getQuery('transactions'), (snap) => {
@@ -259,7 +311,7 @@ export default function App() {
     lastStateRef.current = state;
   }, [state]);
 
-  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'leaderboard'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'leaderboard' | 'profile'>('play');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmailInput, setAdminEmailInput] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -271,8 +323,20 @@ export default function App() {
   const [registerReferral, setRegisterReferral] = useState('');
 
   const currentPlayer = useMemo(() => {
-    return state.players.find(p => p.id === state.currentPlayerId) || state.players[0];
-  }, [state.players, state.currentPlayerId]);
+    const p = state.players.find(p => p.id === user?.uid) || state.players.find(p => p.id === state.currentPlayerId);
+    if (!p) {
+      return {
+        id: user?.uid || state.currentPlayerId || 'temp',
+        name: user?.displayName || 'New Player',
+        email: user?.email || '',
+        balance: 0,
+        override: 'none',
+        referralCode: '',
+        referralCount: 0
+      } as Player;
+    }
+    return p;
+  }, [state.players, state.currentPlayerId, user]);
 
   // Sound Controller
   const playSound = (soundKey: keyof typeof SOUNDS) => {
@@ -305,8 +369,13 @@ export default function App() {
   };
 
   useEffect(() => {
-    localStorage.setItem('windouble_state', JSON.stringify(state));
-  }, [state]);
+    if (user && currentPlayer) {
+      const isRealPlayer = state.players.some(p => p.id === user.uid);
+      if (isRealPlayer) {
+        localStorage.setItem(`balance_${user.uid}`, currentPlayer.balance.toString());
+      }
+    }
+  }, [user, currentPlayer?.balance, state.players]);
 
   const addTransaction = async (txn: Omit<Transaction, 'id' | 'timestamp' | 'playerId'>) => {
     if (!user) return;
@@ -324,14 +393,8 @@ export default function App() {
       batch.set(doc(db, 'transactions', id), newTxn);
       
       const playerRef = doc(db, 'players', user.uid);
-      const playerSnap = await getDoc(playerRef);
-      if (playerSnap.exists()) {
-        const p = playerSnap.data() as Player;
-        const newBalance = txn.type === 'win' || txn.type === 'deposit' 
-          ? p.balance + txn.amount 
-          : p.balance - txn.amount;
-        batch.update(playerRef, { balance: newBalance });
-      }
+      const balanceChange = (txn.type === 'win' || txn.type === 'deposit') ? txn.amount : -txn.amount;
+      batch.update(playerRef, { balance: increment(balanceChange) });
       
       await batch.commit();
     } catch (e) {
@@ -409,7 +472,7 @@ export default function App() {
       const batch = writeBatch(db);
       batch.set(doc(db, 'withdrawals', id), newRequest);
       batch.set(doc(db, 'transactions', txnId), txn);
-      batch.update(doc(db, 'players', user.uid), { balance: currentPlayer.balance - amount });
+      batch.update(doc(db, 'players', user.uid), { balance: increment(-amount) });
       await batch.commit();
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'withdrawals');
@@ -434,15 +497,18 @@ export default function App() {
         where('amount', '==', withdrawalData.amount),
         where('status', '==', 'pending')
       );
-      const txnSnaps = await onSnapshot(q, (s) => {
-        s.docs.forEach(d => batch.update(d.ref, { status }));
-      });
-      // Note: onSnapshot is async and for listening. Using getDocs for one-time fetch is better.
-      // But multi_edit is limited. I'll stick to simple update if I can find the ID or just use a simpler logic.
-      // Actually, I'll just update the withdrawal for now, and handle txns by ID if I had it.
-      // In a real app, I'd store txnId in the withdrawal request.
       
+      const tSnaps = await getDocs(q);
+      tSnaps.docs.forEach(d => batch.update(d.ref, { status }));
+      
+      if (status === 'rejected') {
+        // Refund player balance if rejected
+        const playerRef = doc(db, 'players', withdrawalData.playerId);
+        batch.update(playerRef, { balance: increment(withdrawalData.amount) });
+      }
+
       await batch.commit();
+      playSound(status === 'completed' ? 'WIN' : 'CLICK');
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'withdrawals');
     }
@@ -460,10 +526,7 @@ export default function App() {
 
       if (status === 'completed') {
         const playerRef = doc(db, 'players', deposit.playerId);
-        const playerSnap = await getDoc(playerRef);
-        if (playerSnap.exists()) {
-          batch.update(playerRef, { balance: playerSnap.data().balance + deposit.amount });
-        }
+        batch.update(playerRef, { balance: increment(deposit.amount) });
         playSound('WIN');
       }
 
@@ -499,7 +562,7 @@ export default function App() {
         };
         batch.set(doc(db, 'transactions', winTxnId), winTxn);
         batch.update(playerRef, { 
-          balance: player.balance + winAmount,
+          balance: increment(winAmount),
           pendingBet: null 
         });
         playSound('WIN');
@@ -522,6 +585,91 @@ export default function App() {
     // For simplicity, we just clear the history in the UI or use a batch if fetched.
   };
 
+  const onResetHouseStats = async () => {
+    if (!confirm('🚨 CRITICAL ACTION: This will permanently DELETE ALL transaction history from the database. Proceed?')) return;
+    try {
+      setLoading(true);
+      const q = query(collection(db, 'transactions'));
+      const snapshots = await getDocs(q);
+      
+      for (let i = 0; i < snapshots.docs.length; i += 500) {
+        const batch = writeBatch(db);
+        snapshots.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+      
+      playSound('WIN');
+      setLoading(false);
+      alert(`Yield History Purged: ${snapshots.docs.length} records deleted.`);
+    } catch (e) {
+      setLoading(false);
+      handleFirestoreError(e, OperationType.DELETE, 'transactions');
+    }
+  };
+
+  const onResetPlayerGraph = async () => {
+    if (!currentPlayer) return;
+    if (!confirm('Reset your performance telemetry? This will wipe your session history.')) return;
+    try {
+      setLoading(true);
+      const q = query(collection(db, 'transactions'), where('playerId', '==', currentPlayer.id));
+      const snapshots = await getDocs(q);
+      
+      for (let i = 0; i < snapshots.docs.length; i += 500) {
+        const batch = writeBatch(db);
+        snapshots.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      playSound('CLICK');
+      setLoading(false);
+      alert(`Personal Telemetry Cleared: ${snapshots.docs.length} records purged.`);
+    } catch (e) {
+      setLoading(false);
+      handleFirestoreError(e, OperationType.DELETE, 'transactions');
+    }
+  };
+
+  const onResetSystem = async () => {
+    if (!confirm('WIPE SYSTEM: This will reset Admin Config AND DELETE ALL transactions, withdrawals, and deposits. Are you absolutely certain?')) return;
+    try {
+      setLoading(true);
+      const batch = writeBatch(db);
+      
+      batch.set(doc(db, 'config', 'admin'), {
+        winRate: 0.45,
+        manualMode: false,
+        maxBet: 500,
+        isBetLimitEnabled: true,
+        maintenanceMode: false,
+        isPaymentLocked: false,
+        paymentSettings: {
+          upiId: 'ALEEMKA14@OKHDFC',
+          additionalInstructions: 'Send screenshot after payment for fast approval.'
+        },
+      });
+      await batch.commit();
+
+      const tables = ['transactions', 'withdrawals', 'deposits'];
+      for (const table of tables) {
+        const q = query(collection(db, table));
+        const snapshots = await getDocs(q);
+        for (let i = 0; i < snapshots.docs.length; i += 500) {
+          const b = writeBatch(db);
+          snapshots.docs.slice(i, i + 500).forEach(d => b.delete(d.ref));
+          await b.commit();
+        }
+      }
+
+      setLoading(false);
+      alert('Total System Wipe Completed.');
+      window.location.reload();
+    } catch (e) {
+      setLoading(false);
+      handleFirestoreError(e, OperationType.UPDATE, 'config/admin');
+    }
+  };
+
   const onToggleMaintenanceMode = async () => {
     try {
       const adminRef = doc(db, 'config', 'admin');
@@ -541,21 +689,53 @@ export default function App() {
     }
   };
 
+  const handleUpdateProfile = async (updates: { name?: string; photoURL?: string }) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'players', user.uid), updates);
+      playSound('WIN');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `players/${user.uid}`);
+    }
+  };
+
   const handleRegisterPlayer = async (name: string, referralCode?: string) => {
     if (!user) return;
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      alert('Display name cannot be empty!');
+      return;
+    }
+
+    try {
+      const qName = query(collection(db, 'players'), where('name', '==', trimmedName));
+      const querySnap = await getDocs(qName);
+      if (!querySnap.empty) {
+        alert('This display name is already taken. Please choose another one!');
+        return;
+      }
+    } catch (e) {
+      console.warn('Failed uniqueness check, checking local state', e);
+      const localTaken = state.players.some(p => p.name.toLowerCase() === trimmedName.toLowerCase());
+      if (localTaken) {
+        alert('This display name is already taken. Please choose another one!');
+        return;
+      }
+    }
     
-    const personalReferralCode = (name.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+    const personalReferralCode = (trimmedName.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
     
     let bonusAmount = 0;
     let referrerId: string | undefined = undefined;
 
-    if (referralCode) {
+    if (referralCode && (state.isReferralEnabled ?? true)) {
       const q = query(collection(db, 'players'), where('referralCode', '==', referralCode.toUpperCase()));
       // This is simplified, in real code you'd fetch it.
       // I'll assume for now I can find it in the state if it's already synced.
       const referrer = state.players.find(p => p.referralCode === referralCode.toUpperCase());
       if (referrer) {
-        bonusAmount = 10;
+        bonusAmount = state.referralAmount ?? 10;
         referrerId = referrer.id;
       }
     }
@@ -591,7 +771,7 @@ export default function App() {
           id: refBonusTxnId,
           playerId: referrerId,
           type: 'deposit',
-          amount: 10,
+          amount: state.referralAmount ?? 10,
           timestamp: Date.now(),
           status: 'completed'
         });
@@ -602,7 +782,7 @@ export default function App() {
           const currentBalance = referrerSnap.data().balance || 0;
           const currentReferralCount = referrerSnap.data().referralCount || 0;
           batch.update(referrerRef, { 
-            balance: (Number.isNaN(currentBalance) ? 0 : currentBalance) + 10,
+            balance: (Number.isNaN(currentBalance) ? 0 : currentBalance) + (state.referralAmount ?? 10),
             referralCount: (Number.isNaN(currentReferralCount) ? 0 : currentReferralCount) + 1
           });
         }
@@ -638,6 +818,24 @@ export default function App() {
   const onUpdateWinRate = async (rate: number) => {
     try {
       await setDoc(doc(db, 'config', 'admin'), { winRate: rate }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onUpdateReferralAmount = async (amount: number) => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { referralAmount: amount }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onToggleReferralEnabled = async () => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { isReferralEnabled: !(state.isReferralEnabled ?? true) }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onUpdateMinLimits = async (minDeposit: number, minWithdraw: number) => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { minDeposit, minWithdraw }, { merge: true });
     } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
   };
 
@@ -688,7 +886,7 @@ export default function App() {
       });
 
       batch.update(doc(db, 'players', user.uid), {
-        balance: currentPlayer.balance - amt,
+        balance: increment(-amt),
         pendingBet: { amount: amt, timestamp }
       });
 
@@ -716,12 +914,17 @@ export default function App() {
     }
   };
 
-  // Auto-open login if not authenticated
+  // Auto-open registration if player profile is missing
   useEffect(() => {
-    if (!loading && !user) {
+    if (!loading && user) {
+      const exists = state.players.find(p => p.id === user.uid);
+      if (!exists) {
+        setShowRegisterModal(true);
+      }
+    } else if (!loading && !user) {
       setShowRegisterModal(true);
     }
-  }, [user, loading]);
+  }, [user, loading, state.players]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -734,19 +937,41 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-slate-100 font-sans selection:bg-emerald-500/30">
+      <AnimatePresence>
+        {loading && (
+          <motion.div 
+            key="matrix-loader"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[1000] bg-[#01030e] flex items-center justify-center overflow-hidden"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 1.1, opacity: 0 }}
+              className="relative flex flex-col items-center"
+            >
+              <h1 className="text-8xl md:text-9xl font-matrix text-white select-none relative drop-shadow-[0_0_30px_rgba(163,230,53,0.2)]">
+                <span className="text-[#a3e635]">M</span>atrix
+              </h1>
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: '85%' }}
+                transition={{ delay: 0.4, duration: 0.6, ease: "easeOut" }}
+                className="h-2 bg-[#a3e635] mt-[-1rem] rounded-full self-end mr-6"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Navbar / Mobile Header */}
       <header className="lg:hidden flex items-center justify-between p-4 border-b border-white/10 sticky top-0 bg-[#0a0a0a]/80 backdrop-blur-md z-50">
         <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
           <Menu className="w-6 h-6" />
         </button>
         <div className="flex flex-col items-center">
-          <div className="flex items-center gap-2">
-            <div className="bg-emerald-500 p-1 rounded-lg">
-              <TrendingUp className="w-4 h-4 text-black" />
-            </div>
-            <span className="font-bold tracking-tight text-lg">WIN<span className="text-emerald-400">DOUBLE</span></span>
-          </div>
-          <span className="text-lg font-mono font-bold text-emerald-400">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
+          <img src="/matrix_logo.png" alt="Matrix Logo" className="h-8 w-auto object-contain" />
+          <span className="text-lg font-mono font-bold text-emerald-400 mt-0.5">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
         </div>
         <button 
           onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
@@ -766,11 +991,8 @@ export default function App() {
           ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}>
           <div className="p-6 flex flex-col h-full">
-            <div className="hidden lg:flex items-center gap-3 mb-10">
-              <div className="bg-emerald-500 p-2 rounded-xl shadow-lg shadow-emerald-500/20">
-                <TrendingUp className="w-6 h-6 text-black" />
-              </div>
-              <span className="font-bold tracking-tight text-2xl">WIN<span className="text-emerald-400">DOUBLE</span></span>
+            <div className="hidden lg:flex items-center justify-center mb-10">
+              <img src="/matrix_logo.png" alt="Matrix Logo" className="h-14 w-auto object-contain" />
             </div>
 
             <div className="flex justify-between items-center lg:hidden mb-10">
@@ -796,6 +1018,12 @@ export default function App() {
                 onClick={() => { setActiveTab('leaderboard'); setIsSidebarOpen(false); playSound('CLICK'); }}
                 icon={<Trophy className="w-5 h-5" />}
                 label="Leaderboard"
+              />
+              <NavItem 
+                active={activeTab === 'profile'} 
+                onClick={() => { setActiveTab('profile'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                icon={<User className="w-5 h-5" />}
+                label="My Profile"
               />
 
               <div className="pt-4 mt-4 border-t border-white/5 space-y-1.5">
@@ -844,7 +1072,16 @@ export default function App() {
             </div>
 
             <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-4 mt-auto">
-              <p className="text-emerald-400/60 text-xs font-semibold uppercase tracking-wider mb-1">Total Balance</p>
+              <div className="flex items-center justify-center mb-4">
+                <motion.img 
+                  whileHover={{ scale: 1.1, rotate: 1 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                  src="/matrix_logo.png" 
+                  alt="Matrix Logo" 
+                  className="h-16 w-auto object-contain filter drop-shadow-[0_0_12px_rgba(132,204,22,0.5)] cursor-pointer" 
+                />
+              </div>
+              <p className="text-emerald-400/60 text-xs font-semibold uppercase tracking-wider mb-1 text-center">Total Balance</p>
               <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-bold">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
                 <span className="text-xs text-emerald-400/40 font-mono">INR</span>
@@ -879,15 +1116,28 @@ export default function App() {
               <motion.div 
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="flex items-center gap-3"
+                className="flex flex-col items-center gap-3"
               >
-                <div className="bg-emerald-500 p-2.5 rounded-2xl shadow-xl shadow-emerald-500/20">
-                  <TrendingUp className="w-7 h-7 text-black" />
-                </div>
-                <div className="flex flex-col items-center">
-                  <span className="font-bold tracking-tighter text-3xl leading-none">WIN<span className="text-emerald-400">DOUBLE</span></span>
-                  <span className="text-2xl font-mono font-bold text-emerald-400/80 mt-1">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
-                </div>
+                <motion.img 
+                  whileHover={{ scale: 1.15 }}
+                  animate={{ 
+                    y: [0, -4, 0],
+                  }}
+                  transition={{
+                    y: {
+                      duration: 3,
+                      repeat: Infinity,
+                      ease: "easeInOut"
+                    },
+                    type: "spring", 
+                    stiffness: 300, 
+                    damping: 15
+                  }}
+                  src="/matrix_logo.png" 
+                  alt="Matrix Logo" 
+                  className="h-24 w-auto object-contain filter drop-shadow-[0_0_20px_rgba(132,204,22,0.6)] cursor-pointer" 
+                />
+                <span className="text-2xl font-mono font-bold text-emerald-400/80">₹{(currentPlayer?.balance ?? 0).toFixed(2)}</span>
               </motion.div>
             </div>
 
@@ -987,110 +1237,76 @@ export default function App() {
               )}
 
               {showRegisterModal && (
-                <div key="register-modal" className="fixed inset-0 flex items-center justify-center p-4 z-[100] bg-black/80 backdrop-blur-2xl">
+                <div key="register-modal" className="fixed inset-0 flex items-center justify-center p-4 z-[100] bg-black">
                   <motion.div 
-                    initial={{ opacity: 0, scale: 0.9, y: 30 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    className="w-full max-w-md p-1 items-center justify-center flex flex-col"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="w-full max-w-sm"
                   >
-                    <div className="w-full bg-[#050505] border border-white/5 rounded-[3.5rem] p-10 text-center shadow-[0_0_80px_rgba(37,99,235,0.15)] relative overflow-hidden">
-                      {/* Interactive Glow Effects */}
-                      <div className="absolute top-0 left-1/4 w-32 h-32 bg-blue-500/20 rounded-full blur-[60px]" />
-                      <div className="absolute bottom-0 right-1/4 w-32 h-32 bg-indigo-500/20 rounded-full blur-[60px]" />
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-gradient-to-b from-transparent via-blue-500/5 to-transparent pointer-events-none" />
-
+                    <div className="w-full bg-[#050505] border border-white/5 rounded-[2.5rem] p-10 text-center shadow-2xl relative overflow-hidden">
                       <div className="relative mb-12">
-                         <motion.div 
-                           whileHover={{ scale: 1.05, rotate: 5 }}
-                           className="w-24 h-24 bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-600 rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-[0_0_40px_rgba(37,99,235,0.4)]"
-                         >
-                           <TrendingUp className="w-12 h-12 text-white" />
-                         </motion.div>
-                         <h1 className="text-5xl font-black text-white tracking-tighter mb-3 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">WinDouble</h1>
-                         <p className="text-slate-400 font-medium tracking-wide">The Future of Strategic Trading.</p>
+                         <img src="/matrix_logo.png" alt="Matrix Logo" className="h-24 w-auto mx-auto mb-6 object-contain" />
+                         <h1 className="text-3xl font-bold text-white tracking-tight mb-2">Welcome</h1>
+                         <p className="text-slate-500 text-sm">Risk Hai Toh Ishq Hai</p>
                       </div>
 
                       {!user ? (
                         <div className="space-y-6 relative">
-                          <motion.button 
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
+                          <button 
                             onClick={handleGoogleSignIn}
-                            className="w-full py-6 bg-white border border-white/10 text-black font-black rounded-3xl shadow-[0_10px_40px_rgba(255,255,255,0.1)] hover:shadow-[0_20px_50px_rgba(255,255,255,0.15)] transition-all flex items-center justify-center gap-4 group"
+                            className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-slate-100 transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
                           >
-                            <div className="bg-white p-1.5 rounded-full group-hover:rotate-12 transition-transform">
-                              <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="G" />
-                            </div>
-                            <span className="text-xl">Authentication via Google</span>
-                          </motion.button>
+                            <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="" />
+                            <span>Continue with Google</span>
+                          </button>
                           
-                          <div className="flex flex-col gap-3 pt-6 border-t border-white/5">
-                            <p className="text-slate-500 text-[11px] font-black uppercase tracking-[0.3em] flex items-center justify-center gap-2">
-                               <ShieldAlert className="w-3.5 h-3.5 text-blue-500" /> End-to-End Encryption
-                            </p>
-                            <p className="text-slate-600 text-[10px] leading-relaxed max-w-[280px] mx-auto">By establishing a connection, you agree to our Enterprise Terms of Protocol.</p>
-                          </div>
+                          <p className="text-slate-600 text-[10px] leading-relaxed">
+                            Secured by Enterprise Protocol.
+                          </p>
                         </div>
                       ) : (
-                        <div className="space-y-8 text-left relative">
-                          <div className="space-y-6">
-                            <div className="group">
-                              <label className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] block mb-3 ml-2">Operator Alias</label>
+                        <div className="space-y-6 text-left relative">
+                          <div className="space-y-4">
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2 ml-1">Your Name</label>
                               <div className="relative">
-                                <User className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                                <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
                                 <input 
                                   type="text" 
-                                  placeholder="e.g. Commander_Zero"
+                                  placeholder="Enter name"
                                   value={registerName}
                                   onChange={(e) => setRegisterName(e.target.value)}
-                                  className="w-full bg-white/5 border border-white/10 rounded-2xl pl-14 pr-6 py-5 text-white focus:outline-none focus:border-blue-500/50 transition-all font-bold placeholder:text-slate-800 text-lg shadow-inner"
+                                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-11 pr-4 py-4 text-white focus:outline-none focus:border-emerald-500/30 transition-all placeholder:text-slate-700"
                                 />
                               </div>
                             </div>
 
-                            <div className="group">
-                              <label className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] block mb-3 ml-2">Referral Protocol (Optional)</label>
-                              <div className="relative">
-                                <Zap className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500" />
-                                <input 
-                                  type="text" 
-                                  placeholder="Enter encrypted key"
-                                  value={registerReferral}
-                                  onChange={(e) => setRegisterReferral(e.target.value)}
-                                  className="w-full bg-white/5 border border-white/10 rounded-2xl pl-14 pr-6 py-5 text-emerald-400 focus:outline-none focus:border-emerald-500/50 transition-all font-bold placeholder:text-slate-800 text-lg"
-                                />
+                            {(state.isReferralEnabled ?? true) && (
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2 ml-1">Referral Code (Optional)</label>
+                                <div className="relative">
+                                  <Zap className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500/50" />
+                                  <input 
+                                    type="text" 
+                                    placeholder="Code"
+                                    value={registerReferral}
+                                    onChange={(e) => setRegisterReferral(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-11 pr-4 py-4 text-emerald-400 focus:outline-none focus:border-emerald-500/30 transition-all placeholder:text-slate-700"
+                                  />
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
 
-                          <motion.button 
-                            whileHover={{ y: -2 }}
-                            whileTap={{ scale: 0.98 }}
+                          <button 
                             onClick={() => handleRegisterPlayer(registerName, registerReferral)}
                             disabled={!registerName.trim()}
-                            className="w-full py-6 bg-gradient-to-r from-blue-600 via-indigo-700 to-blue-600 bg-[length:200%_auto] hover:bg-right text-white font-black rounded-3xl shadow-[0_20px_50px_rgba(37,99,235,0.3)] transition-all duration-500 disabled:opacity-20 disabled:grayscale text-2xl active:scale-[0.98] uppercase tracking-tighter"
+                            className="w-full py-5 bg-emerald-500 text-black font-bold rounded-2xl shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all disabled:opacity-30 active:scale-[0.98]"
                           >
-                            Initialize Environment
-                          </motion.button>
-                          
-
+                            Start Trading
+                          </button>
                         </div>
                       )}
-                    </div>
-                    
-                    <div className="mt-8 flex items-center justify-center gap-12 opacity-30">
-                       <div className="flex flex-col items-center gap-2">
-                         <ShieldAlert className="w-6 h-6 text-white" />
-                         <span className="text-[8px] uppercase tracking-widest text-white">Secure</span>
-                       </div>
-                       <div className="flex flex-col items-center gap-2">
-                         <Lock className="w-6 h-6 text-white" />
-                         <span className="text-[8px] uppercase tracking-widest text-white">Privacy</span>
-                       </div>
-                       <div className="flex flex-col items-center gap-2">
-                         <Zap className="w-6 h-6 text-white" />
-                         <span className="text-[8px] uppercase tracking-widest text-white">Speed</span>
-                       </div>
                     </div>
                   </motion.div>
                 </div>
@@ -1123,17 +1339,17 @@ export default function App() {
               {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'play' && (
                 <motion.div
                   key="play"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 >
                   <GameView 
                     state={state}
                     currentPlayer={currentPlayer}
                     playSound={playSound}
-                    onResetGraph={() => currentPlayer?.id && resetPlayerGraph(currentPlayer.id)}
                     onPlaceBet={onPlaceBet}
+                    onResetGraph={onResetPlayerGraph}
                   />
                 </motion.div>
               )}
@@ -1141,10 +1357,10 @@ export default function App() {
               {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'leaderboard' && (
                 <motion.div
                   key="leaderboard"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 >
                   <LeaderboardView state={state} />
                 </motion.div>
@@ -1153,16 +1369,33 @@ export default function App() {
               {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'wallet' && (
                 <motion.div
                   key="wallet"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 >
                   <WalletView 
                     state={state} 
-                    currentPlayer={currentPlayer}
+                    currentPlayer={currentPlayer} 
                     onWithdraw={handleWithdraw} 
                     onDeposit={handleDeposit} 
+                    playSound={playSound}
+                    onResetGraph={onResetPlayerGraph}
+                  />
+                </motion.div>
+              )}
+
+              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'profile' && (
+                <motion.div
+                  key="profile"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                >
+                  <ProfileView 
+                    currentPlayer={currentPlayer}
+                    onUpdateProfile={handleUpdateProfile}
                     playSound={playSound}
                   />
                 </motion.div>
@@ -1171,15 +1404,16 @@ export default function App() {
               {activeTab === 'admin' && (
                 <motion.div
                   key="admin"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 >
                   <AdminView 
                     state={state} 
                     onUpdateWinRate={onUpdateWinRate}
                     onUpdateMaxBet={onUpdateMaxBet}
+                    onUpdateMinLimits={onUpdateMinLimits}
                     onToggleBetLimit={onToggleBetLimit}
                     onToggleManualMode={onToggleManualMode}
                     onUpdatePlayerOverride={onUpdatePlayerOverride}
@@ -1190,14 +1424,10 @@ export default function App() {
                     onToggleMaintenanceMode={onToggleMaintenanceMode}
                     onUpdatePaymentSettings={onUpdatePaymentSettings}
                     onTogglePaymentLock={onTogglePaymentLock}
-                    onReset={async () => {
-                      if (confirm('Are you sure? This will NOT clear Firestore documents by default but will reset UI state.')) {
-                        window.location.reload();
-                      }
-                    }}
-                    onResetHouseStats={async () => {
-                      alert('To reset house stats, delete the transactions from Firestore console.');
-                    }}
+                    onReset={onResetSystem}
+                    onResetHouseStats={onResetHouseStats}
+                    onUpdateReferralAmount={onUpdateReferralAmount}
+                    onToggleReferralEnabled={onToggleReferralEnabled}
                   />
                 </motion.div>
               )}
@@ -1209,7 +1439,7 @@ export default function App() {
   );
 }
 
-function NavItem({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: ReactNode; label: string }) {
+const NavItem = memo(({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: ReactNode; label: string }) => {
   return (
     <button 
       onClick={onClick}
@@ -1232,20 +1462,64 @@ function NavItem({ active, onClick, icon, label }: { active: boolean; onClick: (
       )}
     </button>
   );
-}
+});
+
+NavItem.displayName = 'NavItem';
 
 // Sub-components (Views)
 
 function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }: { 
   state: AppState, 
   currentPlayer: Player, 
-  onPlaceBet: (amt: number) => void, 
+  onPlaceBet: (amt: number) => Promise<void>, 
   playSound: (key: keyof typeof SOUNDS) => void,
-  onResetGraph: () => void 
+  onResetGraph: () => Promise<void>
 }) {
   const [betAmount, setBetAmount] = useState(10);
   const [isSpinning, setIsSpinning] = useState(false);
   const [result, setResult] = useState<'win' | 'lose' | null>(null);
+
+  const currentBalance = currentPlayer?.balance ?? 0;
+  const [prevBalance, setPrevBalance] = useState<number>(currentBalance);
+  const [prevPlayerId, setPrevPlayerId] = useState<string | null>(currentPlayer?.id || null);
+  const [flashType, setFlashType] = useState<'win' | 'lose' | 'none'>('none');
+  const [floatingIndicator, setFloatingIndicator] = useState<{ id: number; amount: string; type: 'gain' | 'loss' } | null>(null);
+
+  useEffect(() => {
+    if (currentPlayer?.id !== prevPlayerId) {
+      setPrevPlayerId(currentPlayer?.id || null);
+      setPrevBalance(currentBalance);
+      setFloatingIndicator(null);
+      setFlashType('none');
+      return;
+    }
+
+    if (prevBalance !== currentBalance) {
+      const difference = currentBalance - prevBalance;
+      if (Math.abs(difference) > 0.01) {
+        setFlashType(difference > 0 ? 'win' : 'lose');
+        setFloatingIndicator({
+          id: Date.now(),
+          amount: `${difference > 0 ? '+' : '-'}₹${Math.abs(difference).toFixed(2)}`,
+          type: difference > 0 ? 'gain' : 'loss'
+        });
+        const flashTimer = setTimeout(() => {
+          setFlashType('none');
+        }, 1200);
+        const floatTimer = setTimeout(() => {
+          setFloatingIndicator(null);
+        }, 2000);
+      }
+      setPrevBalance(currentBalance);
+    }
+  }, [currentBalance, prevBalance, currentPlayer?.id, prevPlayerId]);
+
+  // Sync betAmount if balance drops below current bet
+  useEffect(() => {
+    if (currentPlayer && betAmount > currentPlayer.balance) {
+      setBetAmount(Math.max(1, Math.min(Math.floor(currentPlayer.balance), 10)));
+    }
+  }, [currentPlayer?.balance]);
 
   const playerTransactions = useMemo(() => 
     currentPlayer ? state.transactions.filter(t => t.playerId === currentPlayer.id) : [], 
@@ -1287,33 +1561,6 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
     return { winStreak: w, lossStreak: l };
   }, [playerTransactions]);
 
-  const chartData = useMemo(() => {
-    const sorted = [...playerTransactions]
-      .filter(t => (t.type === 'win' || t.type === 'bet') && t.status === 'completed')
-      .sort((a, b) => a.timestamp - b.timestamp);
-    
-    let currentProfit = 0;
-    const data = sorted.map(t => {
-      if (t.type === 'win') currentProfit += t.amount;
-      if (t.type === 'bet') currentProfit -= t.amount;
-      return {
-        time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        profit: Number(currentProfit.toFixed(2))
-      };
-    });
-    return [{ time: 'Init', profit: 0 }, ...data];
-  }, [playerTransactions]);
-
-  const gradientOffset = useMemo(() => {
-    const dataMax = Math.max(...chartData.map((i) => i.profit));
-    const dataMin = Math.min(...chartData.map((i) => i.profit));
-
-    if (dataMax <= 0) return 0;
-    if (dataMin >= 0) return 1;
-
-    return dataMax / (dataMax - dataMin);
-  }, [chartData]);
-
   // Detect when bet is resolved by admin
   useEffect(() => {
      if (isSpinning && currentPlayer && !currentPlayer.pendingBet) {
@@ -1326,7 +1573,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
      }
   }, [currentPlayer?.pendingBet, isSpinning, state.transactions, currentPlayer?.id]);
 
-  const handlePlay = () => {
+  const handlePlay = async () => {
     if (betAmount > currentPlayer.balance || betAmount <= 0) return;
     
     setIsSpinning(true);
@@ -1334,24 +1581,88 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
     playSound('BET');
     
     // Start spin loop sound after a tiny delay
-    setTimeout(() => {
+    const spinTimer = setTimeout(() => {
       playSound('SPIN');
     }, 100);
 
-    onPlaceBet(betAmount);
+    try {
+      await onPlaceBet(betAmount);
+    } catch (e) {
+      console.error("Bet placement failed:", e);
+      setIsSpinning(false);
+      clearTimeout(spinTimer);
+      alert("Failed to place bet. Please try again.");
+    }
   };
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 gap-8">
         {/* Game Main Area */}
-        <div className="lg:col-span-2 bg-[#0b0b0b] border border-white/5 rounded-[2rem] p-8 lg:p-12 text-center relative overflow-hidden shadow-2xl flex flex-col justify-center min-h-[500px]">
+        <div className="bg-[#0b0b0b] border border-white/5 rounded-[2rem] p-8 lg:p-12 text-center relative overflow-hidden shadow-2xl flex flex-col justify-center min-h-[500px]">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent opacity-30" />
           
           <h2 className="text-4xl lg:text-5xl font-display font-bold mb-4 tracking-tight">Double Your <span className="text-emerald-400">Cash</span></h2>
           <p className="text-slate-400 mb-12 max-w-sm mx-auto">Enter an amount and try your luck. High risk, high reward.</p>
 
           <div className="max-w-xs mx-auto w-full space-y-8 relative">
+            {/* Available Balance HUD inside GameView */}
+            <div className="relative flex justify-center mb-2">
+              <motion.div 
+                animate={
+                  flashType === 'win' 
+                    ? { scale: [1, 1.15, 1], borderColor: ['rgba(255,255,255,0.05)', 'rgba(52,211,153,0.5)', 'rgba(255,255,255,0.05)'], backgroundColor: ['rgba(255,255,255,0)', 'rgba(16,185,129,0.1)', 'rgba(255,255,255,0)'] }
+                    : flashType === 'lose'
+                    ? { scale: [1, 0.95, 1], borderColor: ['rgba(255,255,255,0.05)', 'rgba(239,68,68,0.5)', 'rgba(255,255,255,0.05)'], backgroundColor: ['rgba(255,255,255,0)', 'rgba(239,68,68,0.1)', 'rgba(255,255,255,0)'] }
+                    : {}
+                }
+                transition={{ duration: 0.8, ease: "easeInOut" }}
+                className="flex items-center gap-3 px-5 py-2.5 rounded-2xl bg-white/[0.02] border border-white/5 backdrop-blur-sm shadow-xl relative z-10"
+              >
+                <div className={`p-1.5 rounded-lg transition-colors duration-300 ${
+                  flashType === 'win' ? 'bg-emerald-500/20 text-emerald-400' : 
+                  flashType === 'lose' ? 'bg-rose-500/20 text-rose-400' : 
+                  'bg-white/5 text-slate-400'
+                }`}>
+                  <Wallet className="w-4 h-4" />
+                </div>
+                <div className="text-left">
+                  <p className="text-[9px] uppercase tracking-widest font-black text-slate-500">Vault Balance</p>
+                  <motion.p 
+                    animate={
+                      flashType === 'win' 
+                        ? { color: ['#ffffff', '#34d399', '#ffffff'] }
+                        : flashType === 'lose'
+                        ? { color: ['#ffffff', '#f87171', '#ffffff'] }
+                        : {}
+                    }
+                    className="text-lg font-mono font-bold text-white transition-colors duration-300"
+                  >
+                    ₹{currentBalance.toFixed(2)}
+                  </motion.p>
+                </div>
+              </motion.div>
+
+              <AnimatePresence>
+                {floatingIndicator && (
+                  <motion.div
+                    key={floatingIndicator.id}
+                    initial={{ opacity: 0, y: 15, scale: 0.8 }}
+                    animate={{ opacity: 1, y: -45, scale: 1.1 }}
+                    exit={{ opacity: 0, y: -70, scale: 0.9 }}
+                    transition={{ duration: 1.2, ease: "easeOut" }}
+                    className={`absolute z-20 font-mono font-black text-xs px-3 py-1 rounded-full border shadow-lg filter drop-shadow-sm ${
+                      floatingIndicator.type === 'gain' 
+                        ? 'bg-emerald-950/90 text-emerald-400 border-emerald-500/30' 
+                        : 'bg-rose-950/90 text-rose-400 border-rose-500/30'
+                    }`}
+                  >
+                    {floatingIndicator.amount}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <AnimatePresence>
               {result === 'win' && (
                 <motion.div 
@@ -1388,7 +1699,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
               />
             </div>
 
-            <div className="relative">
+            <div className="relative space-y-6">
                <button 
                 onClick={handlePlay}
                 disabled={isSpinning || (currentPlayer?.balance ?? 0) < 1}
@@ -1399,26 +1710,31 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
               >
                 {isSpinning ? 'PLAYING...' : 'DOUBLE OR DONATE'}
               </button>
+
+              <div className="flex items-center justify-center gap-2.5 text-[10px] font-black tracking-wider text-slate-400 uppercase py-2.5 bg-white/[0.02] border border-white/5 rounded-2xl px-5 select-none shadow-sm transition-all duration-300">
+                <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500/25 animate-pulse shrink-0" />
+                <span>Your Lost Amount Will Be Donated To Poor</span>
+              </div>
               
-              <AnimatePresence>
+              <AnimatePresence mode="wait">
                 {result && (
                   <motion.div 
-                    initial={{ opacity: 0, scale: 0.5, y: 20 }}
-                    animate={{ opacity: 1, scale: 1, y: -100 }}
-                    exit={{ opacity: 0, y: -120 }}
-                    className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center whitespace-nowrap z-50 pointer-events-none"
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="flex flex-col items-center whitespace-nowrap z-0 py-4"
                   >
                     {result === 'win' ? (
-                      <span className="font-black text-7xl italic tracking-tighter text-emerald-400 drop-shadow-[0_0_30px_rgba(52,211,153,0.8)] animate-pulse">
+                      <span className="font-black text-6xl italic tracking-tighter text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.4)] animate-pulse">
                         WINNER!
                       </span>
                     ) : (
                       <div className="flex flex-col items-center">
-                        <span className="font-black text-6xl italic tracking-tighter text-rose-500 mb-2 drop-shadow-[0_0_20px_rgba(244,63,94,0.4)]">
+                        <span className="font-black text-7xl italic tracking-tighter text-red-600 mb-2 drop-shadow-[0_0_30px_rgba(220,38,38,0.4)]">
                           DONATED
                         </span>
-                        <span className="text-white font-bold tracking-[0.2em] text-[10px] uppercase">
-                          Your Money Has Been Donated To The Poor ❤️
+                        <span className="text-white font-extrabold tracking-[0.1em] text-xs uppercase text-center max-w-[250px] leading-relaxed drop-shadow-md">
+                          Your Money Has been Donated to The Poor
                         </span>
                       </div>
                     )}
@@ -1435,134 +1751,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
             )}
           </div>
         </div>
-
-        {/* Profit Graph Column */}
-        <div className="flex flex-col gap-6">
-          <div className="glass-card p-6 rounded-[2.5rem] flex-1 min-h-[350px] flex flex-col">
-            <div className="flex justify-between items-center mb-10 px-2">
-              <h3 className="font-display font-bold text-lg flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                Live Matrix
-              </h3>
-              <button 
-                onClick={onResetGraph}
-                className="text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5"
-              >
-                Reset
-              </button>
-            </div>
-            
-            <div className="flex-1 w-full min-h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="splitColor" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset={gradientOffset} stopColor="#10b981" stopOpacity={1} />
-                      <stop offset={gradientOffset} stopColor="#f43f5e" stopOpacity={1} />
-                    </linearGradient>
-                    <linearGradient id="splitFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0" stopColor="#10b981" stopOpacity={0.4} />
-                      <stop offset={gradientOffset} stopColor="#10b981" stopOpacity={0.05} />
-                      <stop offset={gradientOffset} stopColor="#f43f5e" stopOpacity={0.05} />
-                      <stop offset="1" stopColor="#f43f5e" stopOpacity={0.4} />
-                    </linearGradient>
-                  </defs>
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#050505', border: '1px solid #ffffff10', borderRadius: '16px', padding: '12px', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}
-                    itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }}
-                    labelStyle={{ color: '#64748b', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
-                    cursor={{ stroke: '#ffffff10', strokeWidth: 2 }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="profit" 
-                    stroke="url(#splitColor)" 
-                    fillOpacity={1} 
-                    fill="url(#splitFill)" 
-                    strokeWidth={4}
-                    animationDuration={1500}
-                    activeDot={{ r: 6, fill: '#fff', stroke: '#10b981', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="mt-8 pt-6 border-t border-white/5 grid grid-cols-2 sm:grid-cols-4 gap-6 px-2">
-              <div className="group">
-                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Profit or loss</p>
-                <div className="flex items-baseline gap-1">
-                  <p className={`text-2xl font-display font-bold ${(wins.reduce((s, t) => s + t.amount, 0) - bets.reduce((s, t) => s + t.amount, 0)) >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                    ₹{(wins.reduce((s, t) => s + t.amount, 0) - bets.reduce((s, t) => s + t.amount, 0)).toFixed(2)}
-                  </p>
-                </div>
-              </div>
-              <div className="group">
-                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Total Wins</p>
-                <div className="flex items-baseline gap-1">
-                  <p className="text-2xl font-display font-bold text-white">{totalWins}</p>
-                </div>
-              </div>
-              <div className="group">
-                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Total Loss</p>
-                <div className="flex items-baseline gap-1">
-                  <p className="text-2xl font-display font-bold text-rose-500">{totalLoss}</p>
-                </div>
-              </div>
-              <div className="group text-right">
-                <p className="text-[9px] text-slate-500 font-black uppercase tracking-[0.2em] mb-2">Total Wagered</p>
-                <div className="flex items-baseline justify-end gap-1">
-                  <p className="text-2xl font-display font-bold text-amber-500">₹{amountWagered.toFixed(0)}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="glass-card p-6 rounded-[2rem] bg-white/[0.02] border-white/5 relative overflow-hidden group hover:border-emerald-500/20 transition-colors">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 blur-3xl rounded-full" />
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-2 group-hover:text-emerald-400 transition-colors">Telemetry Feed</p>
-            <p className="text-slate-400 text-xs leading-relaxed font-medium">
-              Neural profit matrix synchronized with cloud wagers. High-fidelity visualization enabled for active session.
-            </p>
-          </div>
-        </div>
       </div>
-
-      {/* Performance Stats */}
-      <div className="space-y-6">
-        <div className="flex items-center justify-between px-2">
-          <h3 className="text-xl font-display font-bold text-slate-400 uppercase tracking-widest flex items-center gap-3">
-             <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-             Performance Stats
-          </h3>
-          <button 
-            onClick={onResetGraph}
-            className="flex items-center gap-2 text-[10px] font-black uppercase bg-white/5 border border-white/5 px-4 py-2 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-rose-500/10 hover:border-rose-500/20"
-          >
-            <RotateCcw className="w-3 h-3" />
-            Reset ALL Stats
-          </button>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatsCard label="Total Wagered" value={`₹${amountWagered.toFixed(2)}`} icon={<DollarSign className="w-5 h-5 text-amber-500" />} />
-          <StatsCard label="Total Wins" value={totalWins.toString()} icon={<TrendingUp className="w-5 h-5 text-emerald-400" />} />
-          <StatsCard label="Total Loss" value={totalLoss.toString()} icon={<XCircle className="w-5 h-5 text-rose-500" />} />
-          <StatsCard label="Net Profit" value={`₹${(wins.reduce((s, t) => s + t.amount, 0) - bets.reduce((s, t) => s + t.amount, 0)).toFixed(2)}`} icon={<TrendingUp className="w-5 h-5 text-blue-400" />} />
-          <StatsCard label="Win Streak" value={winStreak.toString()} icon={<Flame className="w-5 h-5 text-orange-500" />} />
-          <StatsCard label="Loss Streak" value={lossStreak.toString()} icon={<Zap className="w-5 h-5 text-yellow-500" />} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StatsCard({ label, value, icon }: { label: string, value: string, icon: ReactNode }) {
-  return (
-    <div className="glass-card p-6 rounded-3xl group hover:border-white/10 transition-colors">
-      <div className="flex justify-between items-start mb-4">
-        <span className="text-slate-500 text-xs font-bold uppercase tracking-widest">{label}</span>
-        <div className="p-2.5 bg-white/5 rounded-xl group-hover:scale-110 transition-transform duration-300">{icon}</div>
-      </div>
-      <div className="text-3xl font-display font-bold tracking-tight text-white">{value}</div>
     </div>
   );
 }
@@ -1622,12 +1811,13 @@ function LeaderboardView({ state }: { state: AppState }) {
   );
 }
 
-function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: { 
+function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, onResetGraph }: { 
   state: AppState, 
   currentPlayer: Player,
   onWithdraw: (amt: number, method: string, details: string) => void,
   onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string) => void,
-  playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void
+  playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void,
+  onResetGraph: () => Promise<void>
 }) {
   const [modalType, setModalType] = useState<'deposit' | 'withdraw' | null>(null);
   const [amount, setAmount] = useState(0);
@@ -1668,9 +1858,41 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
   const handleScreenshotUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Basic image compression
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setScreenshot(reader.result as string);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Resize if too large
+          const MAX_WIDTH = 1200;
+          const MAX_HEIGHT = 1200;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+
+          // Quality adjustment to keep it small (0.6 is usually a good balance)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+          setScreenshot(dataUrl);
+        };
+        img.src = event.target?.result as string;
       };
       reader.readAsDataURL(file);
     }
@@ -1685,6 +1907,9 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
         <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
         
         <div className="relative z-10 text-center sm:text-left">
+          <div className="flex justify-center sm:justify-start mb-6">
+            <img src="/matrix_logo.png" alt="Matrix Logo" className="h-16 w-auto object-contain" />
+          </div>
           <p className="text-emerald-500/60 font-black uppercase tracking-[0.2em] text-[10px] mb-3">Total Vault Balance</p>
           <motion.h2 
             initial={{ y: 20, opacity: 0 }}
@@ -1749,34 +1974,46 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
       )}
 
       {/* Referral Section */}
-      <div className="glass-card p-10 rounded-[2.5rem] bg-emerald-500/5 border border-emerald-500/10 relative overflow-hidden group">
+      <div className={`glass-card p-10 rounded-[2.5rem] relative overflow-hidden group transition-all ${
+        (state.isReferralEnabled ?? true) 
+          ? 'bg-emerald-500/5 border border-emerald-500/10' 
+          : 'bg-rose-500/5 border border-rose-500/10 opacity-70'
+      }`}>
         <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-all group-hover:scale-110">
-          <Share2 className="w-32 h-32 text-emerald-400" />
+          <Share2 className={`w-32 h-32 ${
+            (state.isReferralEnabled ?? true) ? 'text-emerald-400' : 'text-rose-400'
+          }`} />
         </div>
         <div className="relative z-10 space-y-6">
           <div>
             <h3 className="text-2xl font-display font-bold text-white flex items-center gap-3">
-              <Share2 className="w-6 h-6 text-emerald-400" />
-              Refer & Earn ₹10
+              <Share2 className={`w-6 h-6 ${(state.isReferralEnabled ?? true) ? 'text-emerald-400' : 'text-rose-400'}`} />
+              {(state.isReferralEnabled ?? true) ? `Refer & Earn ₹${state.referralAmount ?? 10}` : 'Referrals Paused'}
             </h3>
-            <p className="text-slate-400 text-sm mt-1 max-w-sm">Share your code with friends. When they join, you both get a ₹10 cash bonus instantly!</p>
+            <p className="text-slate-400 text-sm mt-1 max-w-sm">
+              {(state.isReferralEnabled ?? true) 
+                ? `Share your code with friends. When they join, you both get a ₹${state.referralAmount ?? 10} cash bonus instantly!` 
+                : 'The referral promotion is temporarily paused by admin. Check back later!'}
+            </p>
           </div>
           
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-             <div className="bg-black/40 border border-white/10 rounded-2xl px-6 py-4 flex flex-col justify-center flex-1">
-                <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Your Unique Code</span>
-                <span className="text-2xl font-mono font-bold text-emerald-400 tracking-tighter">{currentPlayer?.referralCode}</span>
-             </div>
-             <button 
-               onClick={() => {
-                 navigator.clipboard.writeText(currentPlayer?.referralCode || '');
-                 alert('Referral code copied to clipboard!');
-               }}
-               className="bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-xl shadow-emerald-500/20 glass-button"
-             >
-               Copy Code
-             </button>
-          </div>
+          {(state.isReferralEnabled ?? true) && (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+               <div className="bg-black/40 border border-white/10 rounded-2xl px-6 py-4 flex flex-col justify-center flex-1">
+                  <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Your Unique Code</span>
+                  <span className="text-2xl font-mono font-bold text-emerald-400 tracking-tighter">{currentPlayer?.referralCode}</span>
+               </div>
+               <button 
+                 onClick={() => {
+                   navigator.clipboard.writeText(currentPlayer?.referralCode || '');
+                   alert('Referral code copied to clipboard!');
+                 }}
+                 className="bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-xl shadow-emerald-500/20 glass-button"
+               >
+                 Copy Code
+               </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1786,6 +2023,15 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
             <History className="w-6 h-6 text-emerald-400" />
             Recent History
           </h3>
+          <motion.button 
+             whileHover={{ scale: 1.05 }}
+             whileTap={{ scale: 0.95 }}
+             onClick={onResetGraph}
+             className="flex items-center gap-2 text-[10px] font-black uppercase bg-white/5 border border-white/10 px-5 py-2.5 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-rose-500/10 hover:border-rose-500/30 group shadow-lg"
+           >
+             <RotateCcw className="w-3.5 h-3.5 group-hover:rotate-[-90deg] transition-all duration-500" />
+             Clear Log
+           </motion.button>
         </div>
         
         <div className="glass-card rounded-[2rem] overflow-hidden">
@@ -1939,10 +2185,12 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
                                   placeholder="Custom Amount"
                                 />
                               </div>
-                              {amount > 0 && amount < 10 && <p className="text-[10px] text-rose-400 mt-2 italic px-1">Min deposit is ₹10.00</p>}
+                              {amount > 0 && amount < (state.minDeposit ?? 100) && (
+                                <p className="text-[10px] text-rose-400 mt-2 italic px-1">Min deposit is ₹{(state.minDeposit ?? 100).toFixed(2)}</p>
+                              )}
                             </div>
                             <button 
-                              disabled={amount < 10}
+                              disabled={amount < (state.minDeposit ?? 100)}
                               onClick={() => setStep(2)}
                               className="w-full py-5 bg-emerald-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 translate-y-0"
                             >
@@ -2069,7 +2317,13 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
                                     placeholder="0.00"
                                   />
                                 </div>
-                                <p className="text-[10px] text-slate-500 mt-2 pl-1">Available: ₹{(currentPlayer?.balance ?? 0).toFixed(2)}</p>
+                                <div className="flex justify-between mt-2 px-1">
+                                  <p className="text-[10px] text-slate-500">Available: ₹{(currentPlayer?.balance ?? 0).toFixed(2)}</p>
+                                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider animate-pulse">10% Withdrawal Fees</p>
+                                </div>
+                                {amount > 0 && amount < (state.minWithdraw ?? 500) && (
+                                  <p className="text-[10px] text-rose-400 mt-2 italic">Min withdrawal is ₹{(state.minWithdraw ?? 500).toFixed(2)}</p>
+                                )}
                               </div>
                               
                               <div>
@@ -2085,7 +2339,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
                             </div>
 
                             <button 
-                              disabled={amount < 10 || amount > (currentPlayer?.balance ?? 0) || !details.trim()}
+                              disabled={amount < (state.minWithdraw ?? 500) || amount > (currentPlayer?.balance ?? 0) || !details.trim()}
                               onClick={handleConfirm}
                               className="w-full py-5 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20"
                             >
@@ -2105,23 +2359,11 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound }: 
   );
 }
 
-function MetricCard({ label, val, sub, trend }: { label: string, val: string, sub?: string, trend?: 'up' | 'down' }) {
-  return (
-    <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2rem] relative overflow-hidden group">
-      <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
-        <TrendingUp className={`w-12 h-12 ${trend === 'up' ? 'text-emerald-400' : 'text-slate-400'}`} />
-      </div>
-      <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">{label}</p>
-      <p className={`text-3xl font-display font-bold ${trend === 'up' ? 'text-emerald-400' : trend === 'down' ? 'text-rose-500' : 'text-white'}`}>{val}</p>
-      {sub && <p className="text-[10px] text-slate-600 font-mono mt-2 uppercase tracking-widest">{sub}</p>}
-    </div>
-  );
-}
-
-function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats }: { 
+function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled }: { 
   state: AppState, 
   onUpdateWinRate: (rate: number) => void,
   onUpdateMaxBet: (max: number) => void,
+  onUpdateMinLimits: (minDeposit: number, minWithdraw: number) => void,
   onToggleBetLimit: () => void,
   onToggleManualMode: () => void,
   onUpdatePlayerOverride: (id: string, override: 'win' | 'lose' | 'none') => void,
@@ -2132,8 +2374,10 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
   onToggleMaintenanceMode: () => void,
   onUpdatePaymentSettings: (settings: PaymentSettings) => void,
   onTogglePaymentLock: () => void,
-  onReset: () => void,
-  onResetHouseStats: () => void
+  onReset: () => Promise<void>,
+  onResetHouseStats: () => Promise<void>,
+  onUpdateReferralAmount: (amount: number) => void,
+  onToggleReferralEnabled: () => void
 }) {
   const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
@@ -2143,9 +2387,41 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
   const handleQrUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Basic image compression
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setPaymentEdit(prev => ({ ...prev, qrCodeUrl: reader.result as string }));
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Resize if too large
+          const MAX_WIDTH = 1200;
+          const MAX_HEIGHT = 1200;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+
+          // Quality adjustment to keep it small (0.6 is usually a good balance)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+          setPaymentEdit(prev => ({ ...prev, qrCodeUrl: dataUrl }));
+        };
+        img.src = event.target?.result as string;
       };
       reader.readAsDataURL(file);
     }
@@ -2166,60 +2442,6 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
     return state.deposits.filter(d => d.status === depositFilter);
   }, [state.deposits, depositFilter]);
 
-  const stats = useMemo(() => {
-    // Player perspectives
-    const playerWins = state.transactions.filter(t => t.type === 'win');
-    const playerLosses = state.transactions.filter(t => t.type === 'bet');
-    
-    const totalWinCount = playerWins.length;
-    const totalLossCount = playerLosses.length;
-    const totalGames = totalWinCount + totalLossCount;
-    
-    const totalWonAmount = playerWins.reduce((sum, t) => sum + t.amount, 0);
-    const totalLostAmount = playerLosses.reduce((sum, t) => sum + t.amount, 0);
-    
-    // House perspective (Profit)
-    const houseProfit = totalLostAmount - totalWonAmount;
-    
-    // Graph Data: Cumulative House Profit
-    const sortedTxns = [...state.transactions].sort((a, b) => a.timestamp - b.timestamp);
-    let cumulativeProfit = 0;
-    const chartData = sortedTxns.map((t, index) => {
-      if (t.type === 'bet') cumulativeProfit += t.amount;
-      if (t.type === 'win') cumulativeProfit -= t.amount;
-      return {
-        index,
-        profit: cumulativeProfit,
-        time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-    });
-
-    const dataMax = Math.max(...chartData.map((i) => i.profit));
-    const dataMin = Math.min(...chartData.map((i) => i.profit));
-    let gradientOffset = 0;
-    if (dataMax > 0 && dataMin < 0) {
-      gradientOffset = dataMax / (dataMax - dataMin);
-    } else if (dataMax <= 0) {
-      gradientOffset = 0;
-    } else {
-      gradientOffset = 1;
-    }
-
-    return { 
-      totalWinCount, 
-      totalLossCount, 
-      totalGames, 
-      totalWonAmount, 
-      totalLostAmount, 
-      houseProfit,
-      chartData,
-      gradientOffset,
-      total: totalGames,
-      losses: totalLossCount,
-      realWinRate: totalGames > 0 ? (totalWinCount / totalGames) * 100 : 0
-    };
-  }, [state.transactions]);
-
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
@@ -2233,7 +2455,9 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
           </div>
         </div>
         <div className="flex gap-4">
-          <button 
+          <motion.button 
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => onToggleMaintenanceMode()}
             className={`group flex items-center gap-3 border px-8 py-4 rounded-2xl transition-all duration-500 ${
               state.maintenanceMode 
@@ -2245,20 +2469,13 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
             <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${state.maintenanceMode ? 'text-rose-400' : 'text-slate-400 group-hover:text-amber-400'}`}>
               {state.maintenanceMode ? 'ACTIVE MAINTENANCE' : 'Service Shutdown'}
             </span>
-          </button>
-          <button 
-            onClick={() => onReset()}
-            className="group flex items-center gap-3 bg-white/5 hover:bg-rose-500/10 border border-white/5 hover:border-rose-500/20 px-8 py-4 rounded-2xl transition-all duration-500"
-          >
-            <RotateCcw className="w-4 h-4 text-slate-500 group-hover:text-rose-500 group-hover:rotate-[-45deg] transition-all" />
-            <span className="text-[10px] font-black text-slate-400 group-hover:text-rose-400 uppercase tracking-[0.2em]">Reset Systems</span>
-          </button>
+          </motion.button>
         </div>
       </div>
 
-      {/* 1. Pending Bets */}
-      <div className="glass-card rounded-[2.5rem] overflow-hidden mb-8">
-        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+      {/* Pending Bets */}
+      <div className="glass-card rounded-[2.5rem] overflow-hidden mb-8 border border-amber-500/10">
+        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-amber-500/[0.02]">
            <h4 className="font-display font-bold text-xl flex items-center gap-3">
              <DollarSign className="w-6 h-6 text-amber-500" />
              Pending Bets
@@ -2306,7 +2523,7 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
         <div 
           onClick={() => {
             const el = document.getElementById('deposits-section');
@@ -2351,21 +2568,11 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
 
         <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
           <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-amber-500/10 rounded-2xl">
-              <Clock className="w-5 h-5 text-amber-500" />
-            </div>
-          </div>
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Active Wagers</p>
-          <p className="text-2xl font-display font-bold text-white">{state.players.filter(p => p.pendingBet).length} Requests</p>
-        </div>
-
-        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
-          <div className="flex justify-between items-start mb-4">
             <div className="p-3 bg-emerald-500/10 rounded-2xl">
               <UserPlus className="w-5 h-5 text-emerald-400" />
             </div>
           </div>
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Players</p>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Active Users</p>
           <p className="text-2xl font-display font-bold text-white">{state.players.length}</p>
         </div>
       </div>
@@ -2568,71 +2775,8 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
         </div>
       </div>
 
-      {/* House Performance Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard label="House Yield" val={`₹${(stats.houseProfit ?? 0).toFixed(2)}`} trend={(stats.houseProfit ?? 0) >= 0 ? 'up' : 'down'} />
-        <MetricCard label="User Liquidity" val={`₹${(stats.totalWonAmount ?? 0).toFixed(2)}`} sub={`${stats.totalWinCount} Events`} />
-        <MetricCard label="Captalized Loss" val={`₹${(stats.totalLostAmount ?? 0).toFixed(2)}`} sub={`${stats.totalLossCount} Events`} />
-        <MetricCard label="Net Profitability" val={`₹${(stats.houseProfit ?? 0).toFixed(2)}`} sub="Pure Revenue" trend={(stats.houseProfit ?? 0) >= 0 ? 'up' : 'down'} />
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          {/* 3. House Profit Graph */}
-          <div className="bg-[#0c0c0c] border border-white/5 p-10 rounded-[3rem] shadow-3xl">
-            <div className="flex justify-between items-center mb-10">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-emerald-500/10 rounded-2xl">
-                  <TrendingUp className="w-6 h-6 text-emerald-400" />
-                </div>
-                <div>
-                  <h4 className="text-xl font-display font-bold">Yield Performance</h4>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Cumulative House Profit Analysis</p>
-                </div>
-              </div>
-              <button 
-                onClick={onResetHouseStats}
-                className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl transition-colors border border-white/5"
-                title="Reset Graph"
-              >
-                <RotateCcw className="w-5 h-5 text-slate-500" />
-              </button>
-            </div>
-            <div className="h-[350px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={stats.chartData}>
-                  <defs>
-                    <linearGradient id="adminColor" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset={stats.gradientOffset} stopColor="#10b981" stopOpacity={1} />
-                      <stop offset={stats.gradientOffset} stopColor="#f43f5e" stopOpacity={1} />
-                    </linearGradient>
-                    <linearGradient id="adminFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset={stats.gradientOffset} stopColor="#10b981" stopOpacity={0.2} />
-                      <stop offset={stats.gradientOffset} stopColor="#f43f5e" stopOpacity={0.2} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                  <XAxis dataKey="time" hide />
-                  <YAxis hide domain={['auto', 'auto']} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#000', border: 'none', borderRadius: '20px', padding: '16px' }}
-                    itemStyle={{ color: '#fff', fontSize: '14px', fontWeight: '800' }}
-                    cursor={{ stroke: '#ffffff10' }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="profit" 
-                    stroke="url(#adminColor)" 
-                    strokeWidth={4}
-                    fillOpacity={1} 
-                    fill="url(#adminFill)" 
-                    animationDuration={2000}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
+        <div className="lg:col-span-3 space-y-8">
           {/* 4. Remaining Stats (Controls & Players) */}
           <div className="glass-card p-10 rounded-[2.5rem]">
             <h4 className="text-xl font-display font-bold mb-8 flex items-center gap-3">
@@ -2711,6 +2855,126 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
               />
               <p className="text-[10px] text-slate-600 font-medium italic">
                 Restricts the maximum amount any player can wager at once.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl">
+            <h4 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <History className="w-5 h-5 text-blue-400" />
+              Transfer Limits
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+               <div className="space-y-6">
+                 <div className="flex justify-between items-center">
+                   <span className="text-slate-400 text-sm italic">Min Deposit</span>
+                   <span className="font-mono text-xl font-bold text-white">₹{state.minDeposit}</span>
+                 </div>
+                 <div className="flex gap-2">
+                   {[100, 200, 500, 1000].map(val => (
+                     <button
+                       key={val}
+                       onClick={() => onUpdateMinLimits(val, state.minWithdraw ?? 500)}
+                       className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.minDeposit === val ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'}`}
+                     >
+                       ₹{val}
+                     </button>
+                   ))}
+                 </div>
+                 <input 
+                  type="range" 
+                  min="10" 
+                  max="2000" 
+                  step="10"
+                  value={state.minDeposit ?? 100} 
+                  onChange={(e) => onUpdateMinLimits(Number(e.target.value), state.minWithdraw ?? 500)}
+                  className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                />
+               </div>
+
+               <div className="space-y-6">
+                 <div className="flex justify-between items-center">
+                   <span className="text-slate-400 text-sm italic">Min Withdrawal</span>
+                   <span className="font-mono text-xl font-bold text-white">₹{state.minWithdraw}</span>
+                 </div>
+                 <div className="flex gap-2">
+                   {[300, 500, 1000, 2000].map(val => (
+                     <button
+                       key={val}
+                       onClick={() => onUpdateMinLimits(state.minDeposit ?? 100, val)}
+                       className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.minWithdraw === val ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'}`}
+                     >
+                       ₹{val}
+                     </button>
+                   ))}
+                 </div>
+                 <input 
+                  type="range" 
+                  min="10" 
+                  max="5000" 
+                  step="10"
+                  value={state.minWithdraw ?? 500} 
+                  onChange={(e) => onUpdateMinLimits(state.minDeposit ?? 100, Number(e.target.value))}
+                  className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                />
+               </div>
+            </div>
+          </div>
+
+          <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl mb-12">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 pb-6 border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="bg-emerald-500/10 p-2.5 rounded-2xl border border-emerald-500/20">
+                  <Share2 className="w-6 h-6 text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-xl font-bold text-white">Referral Program Settings</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mt-0.5">Configure and toggle the referral system</p>
+                </div>
+              </div>
+
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={onToggleReferralEnabled}
+                className={`flex items-center gap-2.5 py-2.5 px-5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 ${
+                  (state.isReferralEnabled ?? true) 
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
+                    : 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                }`}
+              >
+                <div className={`w-2 h-2 rounded-full ${(state.isReferralEnabled ?? true) ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                {(state.isReferralEnabled ?? true) ? 'System Active' : 'System Suspended'}
+              </motion.button>
+            </div>
+
+            <div className={`space-y-6 transition-all duration-500 ${(state.isReferralEnabled ?? true) ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+               <div className="flex justify-between items-center">
+                 <span className="text-slate-400">Bonus payout (For Register & Referrer)</span>
+                 <span className="font-mono text-2xl font-bold text-emerald-400">₹{state.referralAmount ?? 10}</span>
+               </div>
+               <div className="flex gap-2">
+                 {[10, 20, 50, 100].map(val => (
+                   <button
+                     key={val}
+                     onClick={() => onUpdateReferralAmount(val)}
+                     className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.referralAmount === val ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'}`}
+                   >
+                     ₹{val}
+                   </button>
+                 ))}
+               </div>
+               <input 
+                type="range" 
+                min="5" 
+                max="500" 
+                step="5"
+                value={state.referralAmount ?? 10} 
+                onChange={(e) => onUpdateReferralAmount(Number(e.target.value))}
+                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              />
+              <p className="text-[10px] text-slate-600 font-medium italic">
+                Adjusts the amount of cash credit given to both the referrer and the newly referred player upon registration.
               </p>
             </div>
           </div>
@@ -2826,87 +3090,67 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onToggleBetLimit, o
               Manage Individual Players
             </h4>
             <div className="space-y-4">
-              {state.players.map((player) => (
-                <div key={player.id} className={`p-6 rounded-2xl border transition-all duration-300 ${state.currentPlayerId === player.id ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-white/[0.02] border-white/5'}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                    <div className="flex items-center gap-5">
-                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center font-bold text-xl text-white shadow-xl">
-                        {player.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-3">
-                          <h5 className="font-display font-bold text-lg">{player.name}</h5>
-                          {state.currentPlayerId === player.id && (
-                            <span className="bg-emerald-500/10 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest border border-emerald-500/20">Active Player</span>
-                          )}
+              <AnimatePresence mode="popLayout">
+                {state.players.map((player, idx) => (
+                  <motion.div 
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    key={player.id} 
+                    className={`p-6 rounded-2xl border transition-all duration-300 ${state.currentPlayerId === player.id ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-white/[0.02] border-white/5'}`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                      <div className="flex items-center gap-5">
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center font-bold text-xl text-white shadow-xl">
+                          {player.name.charAt(0)}
                         </div>
-                        <p className="text-xs text-slate-500 font-mono mt-0.5">Balance: ₹{(player.balance ?? 0).toFixed(2)} | Code: {player.referralCode} | Refs: {player.referralCount}</p>
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <h5 className="font-display font-bold text-lg">{player.name}</h5>
+                            {state.currentPlayerId === player.id && (
+                              <span className="bg-emerald-500/10 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest border border-emerald-500/20">Active Player</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 font-mono mt-0.5">Balance: ₹{(player.balance ?? 0).toFixed(2)} | Code: {player.referralCode} | Refs: {player.referralCount}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <motion.button 
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => onSwitchPlayer(player.id)}
+                          className={`px-5 py-2.5 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest ${state.currentPlayerId === player.id ? 'bg-emerald-500 text-emerald-950' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+                        >
+                          {state.currentPlayerId === player.id ? 'Playing' : 'Switch to Play'}
+                        </motion.button>
+                        <div className="h-8 w-[1px] bg-white/5 mx-2 hidden sm:block" />
+                        <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
+                          {(['none', 'win', 'lose'] as const).map((mode) => (
+                            <motion.button
+                              whileHover={{ scale: 1.1 }}
+                              whileTap={{ scale: 0.9 }}
+                              key={mode}
+                              onClick={() => onUpdatePlayerOverride(player.id, mode)}
+                              className={`
+                                px-4 py-2 rounded-lg font-black uppercase tracking-widest text-[9px] transition-all
+                                ${player.override === mode 
+                                  ? mode === 'win' ? 'bg-emerald-500 text-emerald-950' 
+                                  : mode === 'lose' ? 'bg-rose-500 text-rose-950'
+                                  : 'bg-white/10 text-white'
+                                  : 'text-slate-600 hover:text-slate-400'}
+                              `}
+                            >
+                              {mode === 'none' ? 'RNG' : mode}
+                            </motion.button>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button 
-                        onClick={() => onSwitchPlayer(player.id)}
-                        className={`px-5 py-2.5 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest ${state.currentPlayerId === player.id ? 'bg-emerald-500 text-emerald-950' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
-                      >
-                        {state.currentPlayerId === player.id ? 'Playing' : 'Switch to Play'}
-                      </button>
-                      <div className="h-8 w-[1px] bg-white/5 mx-2 hidden sm:block" />
-                      <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
-                        {(['none', 'win', 'lose'] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            onClick={() => onUpdatePlayerOverride(player.id, mode)}
-                            className={`
-                              px-4 py-2 rounded-lg font-black uppercase tracking-widest text-[9px] transition-all
-                              ${player.override === mode 
-                                ? mode === 'win' ? 'bg-emerald-500 text-emerald-950' 
-                                : mode === 'lose' ? 'bg-rose-500 text-rose-950'
-                                : 'bg-white/10 text-white'
-                                : 'text-slate-600 hover:text-slate-400'}
-                            `}
-                          >
-                            {mode === 'none' ? 'RNG' : mode}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
-          </div>
-        </div>
-
-        {/* Sidebar Stats */}
-        <div className="space-y-6">
-          <div className="glass-card p-8 rounded-[2rem]">
-             <h5 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mb-8">Real-time Performance</h5>
-             <div className="space-y-8">
-               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-                  <div className="flex justify-between text-[10px] uppercase font-black tracking-widest mb-3">
-                    <span className="text-slate-500">Actual Win Ratio</span>
-                    <span className="text-emerald-400">{(stats.realWinRate ?? 0).toFixed(1)}%</span>
-                  </div>
-                  <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${stats.realWinRate}%` }}
-                      transition={{ duration: 1, ease: "easeOut" }}
-                      className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full" 
-                    />
-                  </div>
-               </motion.div>
-               <div className="grid grid-cols-1 gap-4">
-                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="bg-white/[0.03] p-5 rounded-2xl border border-white/5">
-                   <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1">Total Plays</p>
-                   <p className="text-3xl font-display font-bold text-white">{stats.total}</p>
-                 </motion.div>
-                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="bg-white/[0.03] p-5 rounded-2xl border border-white/5">
-                   <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1">House Wins</p>
-                   <p className="text-3xl font-display font-bold text-rose-500/80">{stats.losses}</p>
-                 </motion.div>
-               </div>
-             </div>
           </div>
         </div>
       </div>
