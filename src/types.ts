@@ -43,7 +43,6 @@ export interface Player {
   referralCode: string;
   referredBy?: string;
   referralCount: number;
-  photoURL?: string;
 }
 
 export interface PaymentSettings {

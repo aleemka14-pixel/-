@@ -39,7 +39,6 @@ import {
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
-import ProfileView from './components/ProfileView.tsx';
 import { 
   onSnapshot, 
   collection, 
@@ -311,7 +310,7 @@ export default function App() {
     lastStateRef.current = state;
   }, [state]);
 
-  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'leaderboard' | 'profile'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'leaderboard'>('play');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmailInput, setAdminEmailInput] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -689,42 +688,10 @@ export default function App() {
     }
   };
 
-  const handleUpdateProfile = async (updates: { name?: string; photoURL?: string }) => {
-    if (!user) return;
-    try {
-      await updateDoc(doc(db, 'players', user.uid), updates);
-      playSound('WIN');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `players/${user.uid}`);
-    }
-  };
-
   const handleRegisterPlayer = async (name: string, referralCode?: string) => {
     if (!user) return;
-
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      alert('Display name cannot be empty!');
-      return;
-    }
-
-    try {
-      const qName = query(collection(db, 'players'), where('name', '==', trimmedName));
-      const querySnap = await getDocs(qName);
-      if (!querySnap.empty) {
-        alert('This display name is already taken. Please choose another one!');
-        return;
-      }
-    } catch (e) {
-      console.warn('Failed uniqueness check, checking local state', e);
-      const localTaken = state.players.some(p => p.name.toLowerCase() === trimmedName.toLowerCase());
-      if (localTaken) {
-        alert('This display name is already taken. Please choose another one!');
-        return;
-      }
-    }
     
-    const personalReferralCode = (trimmedName.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+    const personalReferralCode = (name.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
     
     let bonusAmount = 0;
     let referrerId: string | undefined = undefined;
@@ -1018,12 +985,6 @@ export default function App() {
                 onClick={() => { setActiveTab('leaderboard'); setIsSidebarOpen(false); playSound('CLICK'); }}
                 icon={<Trophy className="w-5 h-5" />}
                 label="Leaderboard"
-              />
-              <NavItem 
-                active={activeTab === 'profile'} 
-                onClick={() => { setActiveTab('profile'); setIsSidebarOpen(false); playSound('CLICK'); }}
-                icon={<User className="w-5 h-5" />}
-                label="My Profile"
               />
 
               <div className="pt-4 mt-4 border-t border-white/5 space-y-1.5">
@@ -1385,22 +1346,6 @@ export default function App() {
                 </motion.div>
               )}
 
-              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'profile' && (
-                <motion.div
-                  key="profile"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                >
-                  <ProfileView 
-                    currentPlayer={currentPlayer}
-                    onUpdateProfile={handleUpdateProfile}
-                    playSound={playSound}
-                  />
-                </motion.div>
-              )}
-
               {activeTab === 'admin' && (
                 <motion.div
                   key="admin"
@@ -1714,6 +1659,11 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
               <div className="flex items-center justify-center gap-2.5 text-[10px] font-black tracking-wider text-slate-400 uppercase py-2.5 bg-white/[0.02] border border-white/5 rounded-2xl px-5 select-none shadow-sm transition-all duration-300">
                 <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500/25 animate-pulse shrink-0" />
                 <span>Your Lost Amount Will Be Donated To Poor</span>
+              </div>
+
+              <div className="flex items-start gap-3 text-[9px] font-extrabold tracking-widest text-amber-500/90 uppercase py-3.5 bg-amber-500/[0.02] border border-amber-500/10 rounded-2xl px-5 select-none shadow-sm transition-all duration-300 text-left">
+                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <span className="leading-normal">Don't logout with balance in the account. We are not responsible for your loss.</span>
               </div>
               
               <AnimatePresence mode="wait">
