@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
+import { VercelDiagnosticModal } from './components/VercelDiagnosticModal.tsx';
 import { 
   onSnapshot, 
   collection, 
@@ -88,13 +89,16 @@ const INITIAL_STATE: AppState = {
   },
   isPaymentLocked: false,
   referralAmount: 10,
-  isReferralEnabled: true
+  isReferralEnabled: true,
+  isWithdrawLimit24hEnabled: false
 };
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [loading, setLoading] = useState(true);
+  const [showVercelDiag, setShowVercelDiag] = useState(false);
+  const [vercelDiagError, setVercelDiagError] = useState<{ code?: string; message?: string } | null>(null);
 
   useEffect(() => {
     const start = Date.now();
@@ -185,7 +189,8 @@ export default function App() {
           paymentSettings: data.paymentSettings,
           isPaymentLocked: data.isPaymentLocked ?? false,
           referralAmount: data.referralAmount ?? 10,
-          isReferralEnabled: data.isReferralEnabled ?? true
+          isReferralEnabled: data.isReferralEnabled ?? true,
+          isWithdrawLimit24hEnabled: data.isWithdrawLimit24hEnabled ?? false
         }));
       } else if (isAdmin) {
         // Initialize default config if missing and user is admin
@@ -198,7 +203,8 @@ export default function App() {
             maintenanceMode: false,
             isPaymentLocked: false,
             referralAmount: 10,
-            isReferralEnabled: true
+            isReferralEnabled: true,
+            isWithdrawLimit24hEnabled: false
           }, { merge: true });
         } catch (e) {
           console.warn('Failed to initialize admin config:', e);
@@ -442,6 +448,18 @@ export default function App() {
 
   const handleWithdraw = async (amount: number, method: string, details: string) => {
     if (!user || !currentPlayer || amount < 10 || amount > currentPlayer.balance) return;
+
+    if (state.isWithdrawLimit24hEnabled) {
+      const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const recentWithdrawal = state.withdrawals.find(w => 
+        w.playerId === user.uid && 
+        w.timestamp >= twentyFourHoursAgo &&
+        (w.status === 'pending' || w.status === 'completed')
+      );
+      if (recentWithdrawal) {
+        return; // Silent block or fail-safe guard
+      }
+    }
 
     const id = Math.random().toString(36).substr(2, 9);
     const txnId = Math.random().toString(36).substr(2, 9);
@@ -777,7 +795,8 @@ export default function App() {
       }
     } catch (e: any) {
       if (e.code !== 'auth/cancelled-popup-request' && e.code !== 'auth/popup-closed-by-user') {
-        alert('Login failed: ' + (e.message || 'Please try again.'));
+        setVercelDiagError({ code: e.code, message: e.message });
+        setShowVercelDiag(true);
       }
     }
   };
@@ -833,6 +852,12 @@ export default function App() {
   const onTogglePaymentLock = async () => {
     try {
       await setDoc(doc(db, 'config', 'admin'), { isPaymentLocked: !state.isPaymentLocked }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onToggleWithdrawLimit24h = async () => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { isWithdrawLimit24hEnabled: !state.isWithdrawLimit24hEnabled }, { merge: true });
     } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
   };
 
@@ -1224,6 +1249,17 @@ export default function App() {
                           <p className="text-slate-600 text-[10px] leading-relaxed">
                             Secured by Enterprise Protocol.
                           </p>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVercelDiagError(null);
+                              setShowVercelDiag(true);
+                            }}
+                            className="mt-2 text-[10px] font-bold text-teal-400 hover:text-teal-300 underline underline-offset-4 cursor-pointer transition-colors uppercase tracking-widest block mx-auto select-none"
+                          >
+                            Deploying on Vercel? Setup Guide
+                          </button>
                         </div>
                       ) : (
                         <div className="space-y-6 text-left relative">
@@ -1373,6 +1409,7 @@ export default function App() {
                     onResetHouseStats={onResetHouseStats}
                     onUpdateReferralAmount={onUpdateReferralAmount}
                     onToggleReferralEnabled={onToggleReferralEnabled}
+                    onToggleWithdrawLimit24h={onToggleWithdrawLimit24h}
                   />
                 </motion.div>
               )}
@@ -1380,6 +1417,11 @@ export default function App() {
           </div>
         </main>
       </div>
+      <VercelDiagnosticModal 
+        isOpen={showVercelDiag} 
+        onClose={() => setShowVercelDiag(false)} 
+        errorDetails={vercelDiagError}
+      />
     </div>
   );
 }
@@ -1774,11 +1816,44 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
   const [method, setMethod] = useState('');
   const [details, setDetails] = useState('');
   const [screenshot, setScreenshot] = useState<string | undefined>(undefined);
+  
+  // Custom structured Bank Account fields for withdrawals
+  const [bankName, setBankName] = useState('');
+  const [accNumber, setAccNumber] = useState('');
+  const [ifscCode, setIfscCode] = useState('');
+  const [holderName, setHolderName] = useState('');
 
   const playerTransactions = useMemo(() => 
     currentPlayer ? state.transactions.filter(t => t.playerId === currentPlayer.id) : [], 
     [state.transactions, currentPlayer?.id]
   );
+
+  const lastWithdrawalIn24h = useMemo(() => {
+    if (!currentPlayer || !state.isWithdrawLimit24hEnabled) return null;
+    const now = Date.now();
+    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+    
+    // Find any withdrawal request of the current player that is pending or completed in the last 24h
+    return state.withdrawals.find(w => 
+      w.playerId === currentPlayer.id && 
+      w.timestamp >= twentyFourHoursAgo &&
+      (w.status === 'pending' || w.status === 'completed')
+    );
+  }, [currentPlayer?.id, state.withdrawals, state.isWithdrawLimit24hEnabled]);
+
+  const getRemainingTimeStr = (timestamp: number) => {
+    const elapsed = Date.now() - timestamp;
+    const remainingMs = 24 * 60 * 60 * 1000 - elapsed;
+    if (remainingMs <= 0) return '0m';
+    
+    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+    return `${minutes}m`;
+  };
 
   const [step, setStep] = useState(1);
   const [success, setSuccess] = useState(false);
@@ -1787,6 +1862,10 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
     setAmount(0);
     setMethod('upi');
     setDetails('');
+    setBankName('');
+    setAccNumber('');
+    setIfscCode('');
+    setHolderName('');
     setScreenshot(undefined);
     setModalType(null);
     setStep(1);
@@ -1797,7 +1876,8 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
     if (modalType === 'deposit') {
       onDeposit(amount, method, details, screenshot);
     } else {
-      onWithdraw(amount, method, details);
+      const fullDetails = `Name: ${holderName.trim()} | Account number: ${accNumber.trim()} | IFSC Code: ${ifscCode.trim()} | Bank: ${bankName.trim()}`;
+      onWithdraw(amount, method, fullDetails);
     }
     setSuccess(true);
     setTimeout(() => {
@@ -1871,14 +1951,14 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
           </motion.h2>
           <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4">
             <button 
-              onClick={() => { setModalType('deposit'); playSound('CLICK'); }}
+              onClick={() => { setModalType('deposit'); setMethod('upi'); playSound('CLICK'); }}
               className="flex items-center gap-3 bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-emerald-500/20"
             >
               <ArrowDownLeft className="w-5 h-5" />
               Deposit
             </button>
             <button 
-              onClick={() => { setModalType('withdraw'); playSound('CLICK'); }}
+              onClick={() => { setModalType('withdraw'); setMethod('Bank transfer'); playSound('CLICK'); }}
               className="flex items-center gap-3 bg-white/10 backdrop-blur-md text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/20 active:scale-95 transition-all border border-white/10"
             >
               <ArrowUpRight className="w-5 h-5" />
@@ -2254,6 +2334,26 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                         ) : (
                           /* Withdrawal UI remains simple but polished */
                           <div className="space-y-6">
+                            {lastWithdrawalIn24h && (
+                              <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col gap-2 text-left">
+                                <div className="flex items-start gap-2.5">
+                                  <Clock className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                  <div>
+                                    <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">24h Payout Limit Active</p>
+                                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                                      You are permitted to submit one withdrawal request every 24 hours. Your last request was placed recently.
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="mt-2 pt-2 border-t border-amber-500/10 flex justify-between items-center bg-amber-500/[0.02] px-3 py-2 rounded-xl">
+                                  <span className="text-[10px] text-slate-500 uppercase font-bold">Unlocks In:</span>
+                                  <span className="text-xs font-mono font-extrabold text-amber-500 animate-pulse bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/10">
+                                    {getRemainingTimeStr(lastWithdrawalIn24h.timestamp)}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6">
                               <div>
                                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Withdraw Amount</label>
@@ -2261,9 +2361,10 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
                                   <input 
                                     type="number" 
+                                    disabled={!!lastWithdrawalIn24h}
                                     value={amount || ''} 
                                     onChange={(e) => setAmount(Number(e.target.value))}
-                                    className="w-full bg-white/5 border border-white/5 rounded-xl pl-8 pr-4 py-4 focus:outline-none focus:border-white/20 transition-all font-mono text-lg"
+                                    className="w-full bg-white/5 border border-white/5 rounded-xl pl-8 pr-4 py-4 focus:outline-none focus:border-white/20 transition-all font-mono text-lg disabled:opacity-40 disabled:cursor-not-allowed"
                                     placeholder="0.00"
                                   />
                                 </div>
@@ -2276,24 +2377,70 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                                 )}
                               </div>
                               
-                              <div>
-                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Your UPI ID (Payout Destination)</label>
-                                <input 
-                                  type="text" 
-                                  value={details}
-                                  onChange={(e) => setDetails(e.target.value)}
-                                  className="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-4 focus:outline-none focus:border-white/20 transition-all text-white"
-                                  placeholder="e.g. name@paytm"
-                                />
+                              <div className="space-y-4">
+                                <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Bank Account Credentials</h4>
+ 
+                                <div>
+                                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Account Holder Name</label>
+                                  <input 
+                                    type="text" 
+                                    disabled={!!lastWithdrawalIn24h}
+                                    value={holderName}
+                                    onChange={(e) => setHolderName(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-sans text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    placeholder="Full Name as per bank records"
+                                  />
+                                </div>
+ 
+                                <div>
+                                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Bank Name</label>
+                                  <input 
+                                    type="text" 
+                                    disabled={!!lastWithdrawalIn24h}
+                                    value={bankName}
+                                    onChange={(e) => setBankName(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-sans text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    placeholder="e.g. State Bank of India, HDFC"
+                                  />
+                                </div>
+ 
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                  <div>
+                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Account Number</label>
+                                    <input 
+                                      type="text" 
+                                      disabled={!!lastWithdrawalIn24h}
+                                      value={accNumber}
+                                      onChange={(e) => setAccNumber(e.target.value.replace(/\D/g, ''))}
+                                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      placeholder="Account number"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">IFSC Code</label>
+                                    <input 
+                                      type="text" 
+                                      disabled={!!lastWithdrawalIn24h}
+                                      value={ifscCode}
+                                      onChange={(e) => setIfscCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600 uppercase disabled:opacity-40 disabled:cursor-not-allowed"
+                                      placeholder="e.g. SBIN0001234"
+                                    />
+                                  </div>
+                                </div>
+ 
+                                <p className="text-[9px] text-slate-500 leading-normal italic pt-1 px-1">
+                                  Provide complete, accurate bank details to avoid delays in processing.
+                                </p>
                               </div>
                             </div>
-
+ 
                             <button 
-                              disabled={amount < (state.minWithdraw ?? 500) || amount > (currentPlayer?.balance ?? 0) || !details.trim()}
+                              disabled={!!lastWithdrawalIn24h || amount < (state.minWithdraw ?? 500) || amount > (currentPlayer?.balance ?? 0) || !holderName.trim() || !accNumber.trim() || !ifscCode.trim() || !bankName.trim()}
                               onClick={handleConfirm}
                               className="w-full py-5 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20"
                             >
-                              Confirm Payout
+                              {lastWithdrawalIn24h ? 'Payout Limit Exceeded (24h)' : 'Confirm Payout'}
                             </button>
                           </div>
                         )}
@@ -2309,7 +2456,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
   );
 }
 
-function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled }: { 
+function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h }: { 
   state: AppState, 
   onUpdateWinRate: (rate: number) => void,
   onUpdateMaxBet: (max: number) => void,
@@ -2327,7 +2474,8 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
   onReset: () => Promise<void>,
   onResetHouseStats: () => Promise<void>,
   onUpdateReferralAmount: (amount: number) => void,
-  onToggleReferralEnabled: () => void
+  onToggleReferralEnabled: () => void,
+  onToggleWithdrawLimit24h: () => void
 }) {
   const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
@@ -2810,10 +2958,40 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
           </div>
 
           <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl">
-            <h4 className="text-xl font-bold mb-6 flex items-center gap-2">
-              <History className="w-5 h-5 text-blue-400" />
-              Transfer Limits
-            </h4>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 pb-6 border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-500/10 p-2.5 rounded-2xl border border-blue-500/20">
+                  <History className="w-6 h-6 text-blue-400" />
+                </div>
+                <div>
+                  <h4 className="text-xl font-bold text-white">Transfer Limits</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mt-0.5">Control deposit/withdrawal limits & frequency rules</p>
+                </div>
+              </div>
+
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={onToggleWithdrawLimit24h}
+                className={`flex items-center gap-2.5 py-2.5 px-5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 ${
+                  state.isWithdrawLimit24hEnabled 
+                    ? 'bg-blue-500/15 border-blue-500/30 text-blue-400' 
+                    : 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                }`}
+              >
+                <div className={`w-2 h-2 rounded-full ${state.isWithdrawLimit24hEnabled ? 'bg-blue-400 animate-pulse' : 'bg-rose-400'}`} />
+                24h Limit: {state.isWithdrawLimit24hEnabled ? 'Active' : 'Disabled'}
+              </motion.button>
+            </div>
+            
+            {state.isWithdrawLimit24hEnabled && (
+              <div className="mb-6 p-4 bg-blue-500/5 border border-blue-500/10 rounded-2xl text-left">
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  💡 <strong className="text-blue-400">24-Hour Withdrawal Frequency Constraint:</strong> Players are restricted to a single successful or pending withdrawal request every 24 hours. Extra attempts will be blocked with a countdown.
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                <div className="space-y-6">
                  <div className="flex justify-between items-center">

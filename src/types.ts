@@ -69,4 +69,5 @@ export interface AppState {
   isPaymentLocked: boolean;
   referralAmount?: number;
   isReferralEnabled?: boolean;
+  isWithdrawLimit24hEnabled?: boolean;
 }
