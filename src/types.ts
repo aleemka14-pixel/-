@@ -70,4 +70,6 @@ export interface AppState {
   referralAmount?: number;
   isReferralEnabled?: boolean;
   isWithdrawLimit24hEnabled?: boolean;
+  isWinRateLocked?: boolean;
+  isTransferLimitsLocked?: boolean;
 }

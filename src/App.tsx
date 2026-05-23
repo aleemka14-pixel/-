@@ -90,7 +90,9 @@ const INITIAL_STATE: AppState = {
   isPaymentLocked: false,
   referralAmount: 10,
   isReferralEnabled: true,
-  isWithdrawLimit24hEnabled: false
+  isWithdrawLimit24hEnabled: false,
+  isWinRateLocked: false,
+  isTransferLimitsLocked: false
 };
 
 export default function App() {
@@ -190,7 +192,9 @@ export default function App() {
           isPaymentLocked: data.isPaymentLocked ?? false,
           referralAmount: data.referralAmount ?? 10,
           isReferralEnabled: data.isReferralEnabled ?? true,
-          isWithdrawLimit24hEnabled: data.isWithdrawLimit24hEnabled ?? false
+          isWithdrawLimit24hEnabled: data.isWithdrawLimit24hEnabled ?? false,
+          isWinRateLocked: data.isWinRateLocked ?? false,
+          isTransferLimitsLocked: data.isTransferLimitsLocked ?? false
         }));
       } else if (isAdmin) {
         // Initialize default config if missing and user is admin
@@ -204,7 +208,9 @@ export default function App() {
             isPaymentLocked: false,
             referralAmount: 10,
             isReferralEnabled: true,
-            isWithdrawLimit24hEnabled: false
+            isWithdrawLimit24hEnabled: false,
+            isWinRateLocked: false,
+            isTransferLimitsLocked: false
           }, { merge: true });
         } catch (e) {
           console.warn('Failed to initialize admin config:', e);
@@ -660,6 +666,9 @@ export default function App() {
         isBetLimitEnabled: true,
         maintenanceMode: false,
         isPaymentLocked: false,
+        isWithdrawLimit24hEnabled: false,
+        isWinRateLocked: false,
+        isTransferLimitsLocked: false,
         paymentSettings: {
           upiId: 'ALEEMKA14@OKHDFC',
           additionalInstructions: 'Send screenshot after payment for fast approval.'
@@ -802,8 +811,15 @@ export default function App() {
   };
 
   const onUpdateWinRate = async (rate: number) => {
+    if (state.isWinRateLocked) return;
     try {
       await setDoc(doc(db, 'config', 'admin'), { winRate: rate }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onToggleWinRateLock = async () => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { isWinRateLocked: !state.isWinRateLocked }, { merge: true });
     } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
   };
 
@@ -820,8 +836,15 @@ export default function App() {
   };
 
   const onUpdateMinLimits = async (minDeposit: number, minWithdraw: number) => {
+    if (state.isTransferLimitsLocked) return;
     try {
       await setDoc(doc(db, 'config', 'admin'), { minDeposit, minWithdraw }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onToggleTransferLimitsLock = async () => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { isTransferLimitsLocked: !state.isTransferLimitsLocked }, { merge: true });
     } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
   };
 
@@ -1410,6 +1433,8 @@ export default function App() {
                     onUpdateReferralAmount={onUpdateReferralAmount}
                     onToggleReferralEnabled={onToggleReferralEnabled}
                     onToggleWithdrawLimit24h={onToggleWithdrawLimit24h}
+                    onToggleWinRateLock={onToggleWinRateLock}
+                    onToggleTransferLimitsLock={onToggleTransferLimitsLock}
                   />
                 </motion.div>
               )}
@@ -2456,7 +2481,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
   );
 }
 
-function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h }: { 
+function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock }: { 
   state: AppState, 
   onUpdateWinRate: (rate: number) => void,
   onUpdateMaxBet: (max: number) => void,
@@ -2475,7 +2500,9 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
   onResetHouseStats: () => Promise<void>,
   onUpdateReferralAmount: (amount: number) => void,
   onToggleReferralEnabled: () => void,
-  onToggleWithdrawLimit24h: () => void
+  onToggleWithdrawLimit24h: () => void,
+  onToggleWinRateLock: () => void,
+  onToggleTransferLimitsLock: () => void
 }) {
   const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
@@ -2903,13 +2930,26 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
           </div>
 
           <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl">
-            <h4 className="text-xl font-bold mb-6 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-emerald-400" />
-              Winning Algorithm (Base Rate)
-            </h4>
-            <div className="space-y-6">
+            <div className="flex items-center justify-between mb-6">
+              <h4 className="text-xl font-bold flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-emerald-400" />
+                Winning Algorithm (Base Rate)
+              </h4>
+              <button 
+                onClick={onToggleWinRateLock}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  state.isWinRateLocked 
+                    ? 'bg-rose-500/20 text-rose-500 border border-rose-500/20 hover:bg-rose-500/30' 
+                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 hover:bg-emerald-500/30'
+                }`}
+              >
+                {state.isWinRateLocked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+                {state.isWinRateLocked ? 'Locked' : 'Unlocked'}
+              </button>
+            </div>
+            <div className={`space-y-6 transition-all duration-300 ${state.isWinRateLocked ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
                <div className="flex justify-between items-center">
-                 <span className="text-slate-400">Target Win Probability</span>
+                 <span className="text-slate-400 font-medium">Target Win Probability</span>
                  <span className="font-mono text-2xl font-bold text-emerald-400">{((state.winRate ?? 0) * 100).toFixed(0)}%</span>
                </div>
                <input 
@@ -2917,9 +2957,10 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                 min="0" 
                 max="1" 
                 step="0.01"
+                disabled={state.isWinRateLocked}
                 value={state.winRate ?? 0} 
                 onChange={(e) => onUpdateWinRate(Number(e.target.value))}
-                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-400"
               />
             </div>
           </div>
@@ -2969,19 +3010,33 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                 </div>
               </div>
 
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={onToggleWithdrawLimit24h}
-                className={`flex items-center gap-2.5 py-2.5 px-5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 ${
-                  state.isWithdrawLimit24hEnabled 
-                    ? 'bg-blue-500/15 border-blue-500/30 text-blue-400' 
-                    : 'bg-rose-500/15 border-rose-500/30 text-rose-400'
-                }`}
-              >
-                <div className={`w-2 h-2 rounded-full ${state.isWithdrawLimit24hEnabled ? 'bg-blue-400 animate-pulse' : 'bg-rose-400'}`} />
-                24h Limit: {state.isWithdrawLimit24hEnabled ? 'Active' : 'Disabled'}
-              </motion.button>
+              <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                <button 
+                  onClick={onToggleTransferLimitsLock}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                    state.isTransferLimitsLocked 
+                      ? 'bg-rose-500/20 text-rose-500 border border-rose-500/20 hover:bg-rose-500/30' 
+                      : 'bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/20 hover:bg-[#10b981]/25'
+                  }`}
+                >
+                  {state.isTransferLimitsLocked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+                  {state.isTransferLimitsLocked ? 'Locked' : 'Unlocked'}
+                </button>
+
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={onToggleWithdrawLimit24h}
+                  className={`flex items-center gap-2.5 py-2.5 px-5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 ${
+                    state.isWithdrawLimit24hEnabled 
+                      ? 'bg-blue-500/15 border-blue-500/30 text-blue-400' 
+                      : 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                  }`}
+                >
+                  <div className={`w-2 h-2 rounded-full ${state.isWithdrawLimit24hEnabled ? 'bg-blue-400 animate-pulse' : 'bg-rose-400'}`} />
+                  24h Limit: {state.isWithdrawLimit24hEnabled ? 'Active' : 'Disabled'}
+                </motion.button>
+              </div>
             </div>
             
             {state.isWithdrawLimit24hEnabled && (
@@ -2992,7 +3047,7 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 transition-all duration-300 ${state.isTransferLimitsLocked ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
                <div className="space-y-6">
                  <div className="flex justify-between items-center">
                    <span className="text-slate-400 text-sm italic">Min Deposit</span>
@@ -3002,8 +3057,9 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                    {[100, 200, 500, 1000].map(val => (
                      <button
                        key={val}
+                       disabled={state.isTransferLimitsLocked}
                        onClick={() => onUpdateMinLimits(val, state.minWithdraw ?? 500)}
-                       className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.minDeposit === val ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'}`}
+                       className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.minDeposit === val ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'} disabled:opacity-40 disabled:cursor-not-allowed`}
                      >
                        ₹{val}
                      </button>
@@ -3014,9 +3070,10 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                   min="10" 
                   max="2000" 
                   step="10"
+                  disabled={state.isTransferLimitsLocked}
                   value={state.minDeposit ?? 100} 
                   onChange={(e) => onUpdateMinLimits(Number(e.target.value), state.minWithdraw ?? 500)}
-                  className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                  className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500 disabled:opacity-40"
                 />
                </div>
 
@@ -3029,8 +3086,9 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                    {[300, 500, 1000, 2000].map(val => (
                      <button
                        key={val}
+                       disabled={state.isTransferLimitsLocked}
                        onClick={() => onUpdateMinLimits(state.minDeposit ?? 100, val)}
-                       className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.minWithdraw === val ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'}`}
+                       className={`flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all ${state.minWithdraw === val ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'} disabled:opacity-40 disabled:cursor-not-allowed`}
                      >
                        ₹{val}
                      </button>
@@ -3041,9 +3099,10 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                   min="10" 
                   max="5000" 
                   step="10"
+                  disabled={state.isTransferLimitsLocked}
                   value={state.minWithdraw ?? 500} 
                   onChange={(e) => onUpdateMinLimits(state.minDeposit ?? 100, Number(e.target.value))}
-                  className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-40"
                 />
                </div>
             </div>
