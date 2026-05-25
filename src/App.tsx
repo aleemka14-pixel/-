@@ -2,6 +2,15 @@ import { useState, useEffect, useMemo, ReactNode, useRef, ChangeEvent, memo } fr
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
 import { 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  CartesianGrid 
+} from 'recharts';
+import { 
   Wallet, 
   TrendingUp, 
   History, 
@@ -92,7 +101,8 @@ const INITIAL_STATE: AppState = {
   isReferralEnabled: true,
   isWithdrawLimit24hEnabled: false,
   isWinRateLocked: false,
-  isTransferLimitsLocked: false
+  isTransferLimitsLocked: false,
+  houseProfitResetTimestamp: 0
 };
 
 export default function App() {
@@ -194,7 +204,8 @@ export default function App() {
           isReferralEnabled: data.isReferralEnabled ?? true,
           isWithdrawLimit24hEnabled: data.isWithdrawLimit24hEnabled ?? false,
           isWinRateLocked: data.isWinRateLocked ?? false,
-          isTransferLimitsLocked: data.isTransferLimitsLocked ?? false
+          isTransferLimitsLocked: data.isTransferLimitsLocked ?? false,
+          houseProfitResetTimestamp: data.houseProfitResetTimestamp ?? 0
         }));
       } else if (isAdmin) {
         // Initialize default config if missing and user is admin
@@ -1573,6 +1584,39 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
     return { winStreak: w, lossStreak: l };
   }, [playerTransactions]);
 
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+  // Sync isSpinning when a pending bet exists (e.g. after refresh/login)
+  useEffect(() => {
+    if (currentPlayer?.pendingBet) {
+      setIsSpinning(true);
+    }
+  }, [currentPlayer?.pendingBet]);
+
+  // Handle countdown during God Mode / Manual Mode
+  useEffect(() => {
+    if (state.manualMode && currentPlayer?.pendingBet) {
+      const getRemaining = () => {
+        const diff = Date.now() - currentPlayer.pendingBet!.timestamp;
+        return Math.max(0, 60 - Math.floor(diff / 1000));
+      };
+
+      setTimeLeft(getRemaining());
+
+      const interval = setInterval(() => {
+        const rem = getRemaining();
+        setTimeLeft(rem);
+        if (rem <= 0) {
+          clearInterval(interval);
+        }
+      }, 1000);
+
+      return () => clearInterval(interval);
+    } else {
+      setTimeLeft(null);
+    }
+  }, [currentPlayer?.pendingBet?.timestamp, state.manualMode]);
+
   // Detect when bet is resolved by admin
   useEffect(() => {
      if (isSpinning && currentPlayer && !currentPlayer.pendingBet) {
@@ -1712,6 +1756,36 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
             </div>
 
             <div className="relative space-y-6">
+               {state.manualMode && currentPlayer?.pendingBet && timeLeft !== null && (
+                 <motion.div 
+                   initial={{ opacity: 0, scale: 0.95 }}
+                   animate={{ opacity: 1, scale: 1 }}
+                   className="p-5 rounded-2xl bg-[#10b981]/5 border border-[#10b981]/15 shadow-2xl relative overflow-hidden text-center"
+                 >
+                   <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-[#10b981]/30 to-transparent" />
+                   <div className="flex flex-col items-center justify-center space-y-2">
+                     <span className="text-[9px] font-black tracking-[0.2em] text-[#10b981] uppercase">Awaiting Live Settle</span>
+                     <div className="flex items-center gap-2">
+                       <Clock className="w-5 h-5 text-[#10b981] animate-pulse" />
+                       <span className="font-mono text-3xl font-black text-white px-3 py-1 rounded-xl bg-white/5 border border-white/5 shadow-inner">
+                         00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
+                       </span>
+                     </div>
+                     <span className="text-[10px] text-slate-500 font-medium">Please wait, check outcome soon...</span>
+                     
+                     {/* Attractive visual timer bar */}
+                     <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden mt-3 max-w-[200px] mx-auto">
+                       <div 
+                         className={`h-full transition-all duration-1000 ${
+                           timeLeft > 30 ? 'bg-[#10b981]' : timeLeft > 10 ? 'bg-amber-500' : 'bg-rose-500 animate-pulse'
+                         }`} 
+                         style={{ width: `${(timeLeft / 60) * 100}%` }}
+                       />
+                     </div>
+                   </div>
+                 </motion.div>
+               )}
+
                <button 
                 onClick={handlePlay}
                 disabled={isSpinning || (currentPlayer?.balance ?? 0) < 1}
@@ -1720,7 +1794,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
                   ${isSpinning ? 'bg-white/5 text-slate-500 cursor-not-allowed' : 'bg-emerald-500 text-black hover:transform hover:scale-[1.02] shadow-2xl shadow-emerald-500/20'}
                 `}
               >
-                {isSpinning ? 'PLAYING...' : 'DOUBLE OR DONATE'}
+                {isSpinning ? (state.manualMode && timeLeft !== null ? `AWAITING SETTLE (${timeLeft}s)` : 'PLAYING...') : 'DOUBLE OR DONATE'}
               </button>
 
               <div className="flex items-center justify-center gap-2.5 text-[10px] font-black tracking-wider text-slate-400 uppercase py-2.5 bg-white/[0.02] border border-white/5 rounded-2xl px-5 select-none shadow-sm transition-all duration-300">
@@ -1847,6 +1921,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
   const [accNumber, setAccNumber] = useState('');
   const [ifscCode, setIfscCode] = useState('');
   const [holderName, setHolderName] = useState('');
+  const [binanceEmail, setBinanceEmail] = useState('');
 
   const playerTransactions = useMemo(() => 
     currentPlayer ? state.transactions.filter(t => t.playerId === currentPlayer.id) : [], 
@@ -1891,6 +1966,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
     setAccNumber('');
     setIfscCode('');
     setHolderName('');
+    setBinanceEmail('');
     setScreenshot(undefined);
     setModalType(null);
     setStep(1);
@@ -1901,7 +1977,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
     if (modalType === 'deposit') {
       onDeposit(amount, method, details, screenshot);
     } else {
-      const fullDetails = `Name: ${holderName.trim()} | Account number: ${accNumber.trim()} | IFSC Code: ${ifscCode.trim()} | Bank: ${bankName.trim()}`;
+      const fullDetails = `Binance Email: ${binanceEmail.trim()}`;
       onWithdraw(amount, method, fullDetails);
     }
     setSuccess(true);
@@ -1983,7 +2059,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
               Deposit
             </button>
             <button 
-              onClick={() => { setModalType('withdraw'); setMethod('Bank transfer'); playSound('CLICK'); }}
+              onClick={() => { setModalType('withdraw'); setMethod('Crypto USDT Using Binance'); playSound('CLICK'); }}
               className="flex items-center gap-3 bg-white/10 backdrop-blur-md text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/20 active:scale-95 transition-all border border-white/10"
             >
               <ArrowUpRight className="w-5 h-5" />
@@ -2403,65 +2479,34 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                               </div>
                               
                               <div className="space-y-4">
-                                <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Bank Account Credentials</h4>
- 
+                                <h4 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Crypto USDT (Binance) Payout</h4>
+                                
+                                <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-center">
+                                  <p className="text-rose-500 font-extrabold text-[11px] tracking-wider uppercase">
+                                    🔴 PLEASE USE ONLY BINANCE FOR WITHDRAWAL 🔴
+                                  </p>
+                                </div>
+
                                 <div>
-                                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Account Holder Name</label>
+                                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 px-1">YOUR BINANCE EMAIL</label>
                                   <input 
-                                    type="text" 
+                                    type="email" 
                                     disabled={!!lastWithdrawalIn24h}
-                                    value={holderName}
-                                    onChange={(e) => setHolderName(e.target.value)}
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-sans text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    placeholder="Full Name as per bank records"
+                                    value={binanceEmail}
+                                    onChange={(e) => setBinanceEmail(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    placeholder="Enter your registered Binance email ID"
                                   />
                                 </div>
- 
-                                <div>
-                                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Bank Name</label>
-                                  <input 
-                                    type="text" 
-                                    disabled={!!lastWithdrawalIn24h}
-                                    value={bankName}
-                                    onChange={(e) => setBankName(e.target.value)}
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-sans text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    placeholder="e.g. State Bank of India, HDFC"
-                                  />
-                                </div>
- 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                  <div>
-                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Account Number</label>
-                                    <input 
-                                      type="text" 
-                                      disabled={!!lastWithdrawalIn24h}
-                                      value={accNumber}
-                                      onChange={(e) => setAccNumber(e.target.value.replace(/\D/g, ''))}
-                                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                                      placeholder="Account number"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">IFSC Code</label>
-                                    <input 
-                                      type="text" 
-                                      disabled={!!lastWithdrawalIn24h}
-                                      value={ifscCode}
-                                      onChange={(e) => setIfscCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600 uppercase disabled:opacity-40 disabled:cursor-not-allowed"
-                                      placeholder="e.g. SBIN0001234"
-                                    />
-                                  </div>
-                                </div>
- 
+
                                 <p className="text-[9px] text-slate-500 leading-normal italic pt-1 px-1">
-                                  Provide complete, accurate bank details to avoid delays in processing.
+                                  Payouts are processed to your Binance account using the provided email.
                                 </p>
                               </div>
                             </div>
- 
+
                             <button 
-                              disabled={!!lastWithdrawalIn24h || amount < (state.minWithdraw ?? 500) || amount > (currentPlayer?.balance ?? 0) || !holderName.trim() || !accNumber.trim() || !ifscCode.trim() || !bankName.trim()}
+                              disabled={!!lastWithdrawalIn24h || amount < (state.minWithdraw ?? 500) || amount > (currentPlayer?.balance ?? 0) || !binanceEmail.trim()}
                               onClick={handleConfirm}
                               className="w-full py-5 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20"
                             >
@@ -2480,6 +2525,118 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
     </div>
   );
 }
+
+const AdminPendingBetRow = memo(({ 
+  player, 
+  onResultBet 
+}: { 
+  player: Player; 
+  onResultBet: (playerId: string, outcome: 'win' | 'lose') => void; 
+}) => {
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+
+  useEffect(() => {
+    if (!player.pendingBet) return;
+    const timestamp = player.pendingBet.timestamp;
+    
+    const getRemaining = () => {
+      const diff = Date.now() - timestamp;
+      return Math.max(0, 60 - Math.floor(diff / 1000));
+    };
+
+    setTimeLeft(getRemaining());
+
+    const interval = setInterval(() => {
+      const rem = getRemaining();
+      setTimeLeft(rem);
+      if (rem <= 0) {
+        clearInterval(interval);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [player.pendingBet?.timestamp]);
+
+  return (
+    <div className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-white/[0.01] transition-colors">
+      <div className="flex items-center gap-5">
+         <div className="w-14 h-14 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex items-center justify-center font-bold text-xl text-emerald-400">
+           {player.name.charAt(0)}
+         </div>
+         <div>
+           <div className="flex flex-wrap items-center gap-3">
+             <p className="font-display font-bold text-lg">{player.name}</p>
+             <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider transition-all duration-300 ${
+               timeLeft > 30 
+                 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                 : timeLeft > 0 
+                 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse' 
+                 : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+             }`}>
+               <Clock className="w-3 h-3" />
+               {timeLeft > 0 ? `${timeLeft}s Left` : 'TIME OUT / Settle Now'}
+             </span>
+           </div>
+           <div className="flex items-center gap-3 mt-1">
+             <p className="text-emerald-400 font-mono text-xl font-black">₹{player.pendingBet?.amount.toFixed(2)}</p>
+             <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest">ID: {player.id}</span>
+           </div>
+         </div>
+      </div>
+      
+      <div className="flex gap-3">
+          <button 
+            onClick={() => onResultBet(player.id, 'win')}
+            className="bg-emerald-500 text-emerald-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest glass-button"
+          >
+            Resolve Win
+          </button>
+          <button 
+            onClick={() => onResultBet(player.id, 'lose')}
+            className="bg-rose-500 text-rose-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest glass-button"
+          >
+            Resolve Loss
+          </button>
+      </div>
+    </div>
+  );
+});
+
+AdminPendingBetRow.displayName = 'AdminPendingBetRow';
+
+const HouseProfitTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    const profit = payload[0].value;
+    const isPositive = profit >= 0;
+    return (
+      <div className="bg-[#0a0a0a]/95 backdrop-blur-md border border-white/10 p-5 rounded-2xl shadow-2xl relative overflow-hidden">
+        <div className={`absolute top-0 left-0 w-full h-[2px] ${isPositive ? 'bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent' : 'bg-gradient-to-r from-transparent via-rose-500/50 to-transparent'}`} />
+        <p className="text-[10px] font-black tracking-widest text-slate-500 uppercase mb-2">
+          {data.time !== 'Start' && data.time !== 'Init' && data.time !== 'Now' ? `Txn Index: #${data.index}` : 'Event Baseline'}
+        </p>
+        <div className="flex items-center gap-2.5">
+          <span className={`w-2.5 h-2.5 rounded-full ${isPositive ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500 animate-pulse'}`} />
+          <p className="font-mono font-black text-2xl text-white">
+            {isPositive ? '+' : ''}₹{profit.toFixed(2)}
+          </p>
+        </div>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+          House Cumulative Profit (Today)
+        </p>
+        {data.type && (
+          <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between gap-6">
+            <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Trigger Type</span>
+            <span className={`text-[10px] font-mono font-extrabold px-2.5 py-0.5 rounded-lg ${data.type === 'bet' ? 'bg-white/5 text-slate-300' : 'bg-[#10b981]/10 text-emerald-400 border border-emerald-500/10'}`}>
+              {data.type === 'bet' ? `Placed Bet (₹${data.amount})` : `Payout Win (₹${data.amount})`}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
 
 function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock }: { 
   state: AppState, 
@@ -2567,6 +2724,46 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
     return state.deposits.filter(d => d.status === depositFilter);
   }, [state.deposits, depositFilter]);
 
+  // House Profit Graph Calculation - Today's Profit Only
+  const houseProfitData = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayTimestamp = startOfToday.getTime();
+
+    const sortedTxns = [...state.transactions]
+      .filter(t => (t.type === 'bet' || t.type === 'win') && t.timestamp >= startOfTodayTimestamp)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    let runningProfit = 0;
+    const points = sortedTxns.map((t, idx) => {
+      if (t.type === 'bet') {
+        runningProfit += t.amount;
+      } else if (t.type === 'win') {
+        runningProfit -= t.amount;
+      }
+      return {
+        index: idx + 1,
+        time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        profit: runningProfit,
+        type: t.type,
+        amount: t.amount
+      };
+    });
+
+    if (points.length === 0) {
+      return [
+        { index: 0, time: 'Today', profit: 0 },
+        { index: 1, time: 'Active', profit: 0 }
+      ];
+    }
+    return [{ index: 0, time: 'Start Of Today', profit: 0 }, ...points];
+  }, [state.transactions]);
+
+  // Total House Net Profit (Today Only)
+  const currentHouseProfit = useMemo(() => {
+    return houseProfitData[houseProfitData.length - 1].profit;
+  }, [houseProfitData]);
+
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
@@ -2614,35 +2811,7 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
             <div className="p-20 text-center text-slate-600 font-display italic">No active bets currently awaiting outcome</div>
           ) : (
             state.players.filter(p => p.pendingBet).map(player => (
-              <div key={player.id} className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-white/[0.01] transition-colors">
-                <div className="flex items-center gap-5">
-                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex items-center justify-center font-bold text-xl text-emerald-400">
-                     {player.name.charAt(0)}
-                   </div>
-                   <div>
-                     <p className="font-display font-bold text-lg">{player.name}</p>
-                     <div className="flex items-center gap-3 mt-1">
-                       <p className="text-emerald-400 font-mono text-xl font-black">₹{player.pendingBet?.amount.toFixed(2)}</p>
-                       <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest">ID: {player.id}</span>
-                     </div>
-                   </div>
-                </div>
-                
-                <div className="flex gap-3">
-                    <button 
-                      onClick={() => onResultBet(player.id, 'win')}
-                      className="bg-emerald-500 text-emerald-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest glass-button"
-                    >
-                      Resolve Win
-                    </button>
-                    <button 
-                      onClick={() => onResultBet(player.id, 'lose')}
-                      className="bg-rose-500 text-rose-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest glass-button"
-                    >
-                      Resolve Loss
-                    </button>
-                </div>
-              </div>
+              <AdminPendingBetRow key={player.id} player={player} onResultBet={onResultBet} />
             ))
           )}
         </div>
@@ -3338,6 +3507,72 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
                 ))}
               </AnimatePresence>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* House Today's Profit Graph */}
+      <div className={`glass-card rounded-[2.5rem] overflow-hidden mb-8 border transition-all duration-500 ${currentHouseProfit >= 0 ? 'border-emerald-500/15 shadow-[0_0_50px_-12px_rgba(16,185,129,0.08)]' : 'border-rose-500/15 shadow-[0_0_50px_-12px_rgba(244,63,94,0.08)]'}`}>
+        <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/[0.01]">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <TrendingUp className={`w-6 h-6 animate-pulse ${currentHouseProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`} />
+              <h4 className="font-display font-bold text-xl text-white">House Today's Profit Graph</h4>
+            </div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">
+              Trajectory mapping today's winnings versus losses (resets automatically at midnight)
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className={`px-5 py-3 rounded-2xl bg-white/[0.02] border text-left min-w-[200px] transition-all duration-300 ${currentHouseProfit >= 0 ? 'border-emerald-500/10' : 'border-rose-500/10'}`}>
+              <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">TODAY'S NET INTEREST</p>
+              <p className={`font-mono text-2xl font-black transition-all ${currentHouseProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {currentHouseProfit >= 0 ? '+' : ''}₹{currentHouseProfit.toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 md:p-8 bg-[#030303]/40">
+          <div className="h-[280px] md:h-[320px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={houseProfitData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="profitGradToday" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={currentHouseProfit >= 0 ? "#10b981" : "#f43f5e"} stopOpacity={0.2}/>
+                    <stop offset="95%" stopColor={currentHouseProfit >= 0 ? "#10b981" : "#f43f5e"} stopOpacity={0.005}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" vertical={false} />
+                <XAxis 
+                  dataKey="time" 
+                  stroke="rgba(255,255,255,0.15)" 
+                  fontSize={9} 
+                  fontFamily="monospace"
+                  tickLine={false}
+                  axisLine={false}
+                  dy={10}
+                />
+                <YAxis 
+                  stroke="rgba(255,255,255,0.15)" 
+                  fontSize={9} 
+                  fontFamily="monospace"
+                  tickFormatter={(v) => `₹${v}`}
+                  tickLine={false}
+                  axisLine={false}
+                  dx={-10}
+                />
+                <Tooltip content={<HouseProfitTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.05)', strokeWidth: 1 }} />
+                <Area 
+                  type="monotone" 
+                  dataKey="profit" 
+                  stroke={currentHouseProfit >= 0 ? "#10b981" : "#f43f5e"} 
+                  strokeWidth={2.5}
+                  fillOpacity={1}
+                  fill="url(#profitGradToday)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>

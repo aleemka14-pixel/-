@@ -72,4 +72,5 @@ export interface AppState {
   isWithdrawLimit24hEnabled?: boolean;
   isWinRateLocked?: boolean;
   isTransferLimitsLocked?: boolean;
+  houseProfitResetTimestamp?: number;
 }
