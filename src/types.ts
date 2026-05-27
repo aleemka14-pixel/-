@@ -73,4 +73,6 @@ export interface AppState {
   isWinRateLocked?: boolean;
   isTransferLimitsLocked?: boolean;
   houseProfitResetTimestamp?: number;
+  isBettingClosed?: boolean;
+  teaBreakMode?: boolean;
 }

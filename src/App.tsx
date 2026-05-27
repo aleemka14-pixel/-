@@ -44,7 +44,8 @@ import {
   LockOpen,
   User,
   ChevronRight,
-  Heart
+  Heart,
+  Coffee
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
@@ -102,7 +103,9 @@ const INITIAL_STATE: AppState = {
   isWithdrawLimit24hEnabled: false,
   isWinRateLocked: false,
   isTransferLimitsLocked: false,
-  houseProfitResetTimestamp: 0
+  houseProfitResetTimestamp: 0,
+  isBettingClosed: false,
+  teaBreakMode: false
 };
 
 export default function App() {
@@ -205,7 +208,9 @@ export default function App() {
           isWithdrawLimit24hEnabled: data.isWithdrawLimit24hEnabled ?? false,
           isWinRateLocked: data.isWinRateLocked ?? false,
           isTransferLimitsLocked: data.isTransferLimitsLocked ?? false,
-          houseProfitResetTimestamp: data.houseProfitResetTimestamp ?? 0
+          houseProfitResetTimestamp: data.houseProfitResetTimestamp ?? 0,
+          isBettingClosed: data.isBettingClosed ?? false,
+          teaBreakMode: data.teaBreakMode ?? false
         }));
       } else if (isAdmin) {
         // Initialize default config if missing and user is admin
@@ -221,7 +226,9 @@ export default function App() {
             isReferralEnabled: true,
             isWithdrawLimit24hEnabled: false,
             isWinRateLocked: false,
-            isTransferLimitsLocked: false
+            isTransferLimitsLocked: false,
+            isBettingClosed: false,
+            teaBreakMode: false
           }, { merge: true });
         } catch (e) {
           console.warn('Failed to initialize admin config:', e);
@@ -614,6 +621,60 @@ export default function App() {
     }
   };
 
+  const resultAllBets = async (outcome: 'win' | 'lose') => {
+    const pendingPlayers = state.players.filter(p => p.pendingBet);
+    if (pendingPlayers.length === 0) return;
+
+    try {
+      const batch = writeBatch(db);
+      let winSoundPlayed = false;
+      let loseSoundPlayed = false;
+
+      for (const player of pendingPlayers) {
+        if (!player.pendingBet) continue;
+        const playerRef = doc(db, 'players', player.id);
+        const amount = player.pendingBet.amount;
+        const isWin = outcome === 'win';
+        const winAmount = amount * 2;
+
+        if (isWin) {
+          const winTxnId = Math.random().toString(36).substr(2, 9);
+          const winTxn: Transaction = {
+            id: winTxnId,
+            playerId: player.id,
+            type: 'win',
+            amount: winAmount,
+            timestamp: Date.now(),
+            status: 'completed'
+          };
+          batch.set(doc(db, 'transactions', winTxnId), winTxn);
+          batch.update(playerRef, { 
+            balance: increment(winAmount),
+            pendingBet: null 
+          });
+          winSoundPlayed = true;
+        } else {
+          batch.update(playerRef, { 
+            pendingBet: null 
+          });
+          loseSoundPlayed = true;
+        }
+      }
+
+      await batch.commit();
+
+      if (outcome === 'win' && winSoundPlayed) {
+        playSound('WIN');
+        triggerConfetti();
+      } else if (loseSoundPlayed) {
+        playSound('LOSE');
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'players');
+      throw e;
+    }
+  };
+
   const resetPlayerGraph = async (playerId: string) => {
     // Delete transactions for player (requires fetching them first)
     // For simplicity, we just clear the history in the UI or use a batch if fetched.
@@ -711,6 +772,16 @@ export default function App() {
     try {
       const adminRef = doc(db, 'config', 'admin');
       await setDoc(adminRef, { maintenanceMode: !state.maintenanceMode }, { merge: true });
+      playSound('CLICK');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'config/admin');
+    }
+  };
+
+  const onToggleTeaBreakMode = async () => {
+    try {
+      const adminRef = doc(db, 'config', 'admin');
+      await setDoc(adminRef, { teaBreakMode: !state.teaBreakMode }, { merge: true });
       playSound('CLICK');
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'config/admin');
@@ -895,8 +966,17 @@ export default function App() {
     } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
   };
 
+  const onToggleBettingStatus = async () => {
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { isBettingClosed: !state.isBettingClosed }, { merge: true });
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
   const onPlaceBet = async (amt: number) => {
     if (!user || !currentPlayer) return;
+    if (state.isBettingClosed) {
+      throw new Error("Betting closed — Please wait for the next round.");
+    }
     try {
       const batch = writeBatch(db);
       const txnId = Math.random().toString(36).substr(2, 9);
@@ -1367,7 +1447,80 @@ export default function App() {
                 </motion.div>
               )}
 
-              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'play' && (
+              {!state.maintenanceMode && state.teaBreakMode && activeTab !== 'admin' && (
+                <motion.div
+                  key="teabreak"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="flex-1 flex flex-col items-center justify-center text-center p-8 min-h-[60vh] font-sans"
+                >
+                  <div className="relative mb-8">
+                    {/* Pulsing cozy warm halo */}
+                    <div className="absolute inset-0 bg-amber-500/10 rounded-full blur-2xl scale-150 animate-pulse" />
+                    
+                    {/* Steaming hot tea cup container */}
+                    <div className="relative w-28 h-28 bg-gradient-to-br from-amber-500/20 to-orange-500/10 rounded-full flex items-center justify-center border border-amber-500/30 shadow-lg shadow-amber-500/10">
+                      
+                      {/* Animated Steam Waves */}
+                      <div className="absolute -top-4 flex gap-1.5 justify-center">
+                        <motion.div 
+                          animate={{ 
+                            y: [0, -12, 0],
+                            opacity: [0, 0.8, 0],
+                            scale: [1, 1.2, 0.9]
+                          }}
+                          transition={{ duration: 2, repeat: Infinity, delay: 0 }}
+                          className="w-1.5 h-6 bg-gradient-to-t from-amber-400 to-transparent rounded-full filter blur-[1px]" 
+                        />
+                        <motion.div 
+                          animate={{ 
+                            y: [0, -16, 0],
+                            opacity: [0, 0.9, 0],
+                            scale: [0.9, 1.3, 0.8]
+                          }}
+                          transition={{ duration: 2.3, repeat: Infinity, delay: 0.5 }}
+                          className="w-1.5 h-8 bg-gradient-to-t from-orange-400 to-transparent rounded-full filter blur-[1px]" 
+                        />
+                        <motion.div 
+                          animate={{ 
+                            y: [0, -10, 0],
+                            opacity: [0, 0.7, 0],
+                            scale: [1, 1.1, 0.9]
+                          }}
+                          transition={{ duration: 1.8, repeat: Infinity, delay: 0.2 }}
+                          className="w-1.5 h-6 bg-gradient-to-t from-amber-300 to-transparent rounded-full filter blur-[1px]" 
+                        />
+                      </div>
+
+                      {/* Main Mug Icon */}
+                      <Coffee className="w-14 h-14 text-amber-500 filter drop-shadow-[0_4px_6px_rgba(245,158,11,0.3)] animate-pulse" style={{ animationDuration: '3s' }} />
+                    </div>
+                  </div>
+
+                  {/* Text Details with high contrast and cozy typography */}
+                  <h2 className="text-4xl font-display font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-400 to-amber-200 mb-4 tracking-tight uppercase">
+                    Chai Break ☕
+                  </h2>
+                  <p className="text-slate-300 max-w-md text-base leading-relaxed mb-8">
+                    The Admin is taking a quick tea break! Grab a cup of warm chai, stretch, and get ready. The double-or-nothing action will resume shortly.
+                  </p>
+                  
+                  {/* Dynamic Status Badges */}
+                  <div className="flex flex-col sm:flex-row items-center gap-3 bg-white/[0.02] border border-white/5 px-6 py-4 rounded-[2rem] select-none shadow-xl">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                      </span>
+                      <span className="text-[10px] uppercase font-mono tracking-widest text-slate-400 font-bold">Kettle Status:</span>
+                    </div>
+                    <span className="text-xs font-black text-amber-400 uppercase tracking-widest font-mono text-center">Brewing Fresh Round...</span>
+                  </div>
+                </motion.div>
+              )}
+
+              {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'play' && (
                 <motion.div
                   key="play"
                   initial={{ opacity: 0, x: 20 }}
@@ -1385,7 +1538,7 @@ export default function App() {
                 </motion.div>
               )}
 
-              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'leaderboard' && (
+              {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'leaderboard' && (
                 <motion.div
                   key="leaderboard"
                   initial={{ opacity: 0, x: 20 }}
@@ -1397,7 +1550,7 @@ export default function App() {
                 </motion.div>
               )}
 
-              {(!state.maintenanceMode || activeTab === 'admin') && activeTab === 'wallet' && (
+              {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'wallet' && (
                 <motion.div
                   key="wallet"
                   initial={{ opacity: 0, x: 20 }}
@@ -1434,9 +1587,12 @@ export default function App() {
                     onUpdatePlayerOverride={onUpdatePlayerOverride}
                     onSwitchPlayer={(id) => setState(prev => ({ ...prev, currentPlayerId: id }))}
                     onResultBet={resultBet}
+                    onResultAllBets={resultAllBets}
+                    onToggleBettingStatus={onToggleBettingStatus}
                     onUpdateWithdrawalStatus={updateWithdrawalStatus}
                     onUpdateDepositStatus={updateDepositStatus}
                     onToggleMaintenanceMode={onToggleMaintenanceMode}
+                    onToggleTeaBreakMode={onToggleTeaBreakMode}
                     onUpdatePaymentSettings={onUpdatePaymentSettings}
                     onTogglePaymentLock={onTogglePaymentLock}
                     onReset={onResetSystem}
@@ -1585,6 +1741,15 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
   }, [playerTransactions]);
 
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [globalTimeLeft, setGlobalTimeLeft] = useState<number>(60 - new Date().getSeconds());
+
+  // Update globalTimeLeft every second to sync with the wall clock's current minute
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setGlobalTimeLeft(60 - new Date().getSeconds());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Sync isSpinning when a pending bet exists (e.g. after refresh/login)
   useEffect(() => {
@@ -1658,6 +1823,75 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
         <div className="bg-[#0b0b0b] border border-white/5 rounded-[2rem] p-8 lg:p-12 text-center relative overflow-hidden shadow-2xl flex flex-col justify-center min-h-[500px]">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent opacity-30" />
           
+          {/* Waiting For Bets - One Minute Timer */}
+          <div className="mb-6 flex justify-center mx-auto w-full max-w-xs relative z-20">
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`w-full border rounded-2xl p-4 flex items-center justify-between shadow-2xl relative transition-all duration-300 ${
+                state.isBettingClosed 
+                  ? 'bg-rose-500/5 border-rose-500/15 shadow-rose-500/[0.02]' 
+                  : 'bg-emerald-500/5 border-emerald-500/15 shadow-emerald-500/[0.02]'
+              }`}
+            >
+              {/* Glowing decorative accent */}
+              <div className={`absolute inset-x-0 bottom-0 h-[2px] bg-gradient-to-r from-transparent to-transparent transition-all duration-300 ${
+                state.isBettingClosed 
+                  ? 'via-rose-500/30' 
+                  : 'via-emerald-500/30'
+              }`} />
+              
+              <div className="flex items-center gap-3">
+                <div className="relative flex items-center justify-center">
+                  <span className={`absolute inline-flex h-3 w-3 rounded-full opacity-60 animate-ping transition-colors duration-300 ${
+                    state.isBettingClosed ? 'bg-rose-400' : 'bg-emerald-400'
+                  }`} />
+                  <span className={`relative inline-flex rounded-full h-2.5 w-2.5 transition-colors duration-300 ${
+                    state.isBettingClosed ? 'bg-rose-500' : 'bg-emerald-500'
+                  }`} />
+                </div>
+                <div className="text-left w-2/3 shrink-0">
+                  <span className={`text-[9px] uppercase font-black tracking-wider block transition-colors duration-300 ${
+                    state.isBettingClosed ? 'text-rose-400' : 'text-[#10b981]'
+                  }`}>ROUND STATUS</span>
+                  <p className="text-xs font-bold text-slate-300">
+                    {state.isBettingClosed ? 'Betting Closed' : 'Waiting For Bets'}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex flex-col items-end">
+                <div className={`flex items-center gap-1.5 px-2.5 py-1 border rounded-xl transition-all duration-300 ${
+                  state.isBettingClosed 
+                    ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+                    : 'bg-emerald-500/10 border-emerald-500/20 text-white'
+                }`}>
+                  <Clock className={`w-3.5 h-3.5 transition-all duration-300 ${
+                    state.isBettingClosed ? 'text-rose-400' : 'text-emerald-400 animate-pulse'
+                  }`} />
+                  <span className="font-mono text-sm sm:text-base font-black leading-none">
+                    {state.isBettingClosed ? '--:--' : `00:${globalTimeLeft < 10 ? `0${globalTimeLeft}` : globalTimeLeft}`}
+                  </span>
+                </div>
+                {/* Horizontal time bar indicator */}
+                <div className="w-[64px] bg-white/5 h-1 rounded-full overflow-hidden mt-1.5">
+                  <div 
+                    className={`h-full transition-all duration-1000 ease-linear ${
+                      state.isBettingClosed 
+                        ? 'bg-rose-500' 
+                        : globalTimeLeft > 30 
+                        ? 'bg-emerald-400' 
+                        : globalTimeLeft > 10 
+                        ? 'bg-amber-400' 
+                        : 'bg-rose-500 animate-pulse'
+                    }`}
+                    style={{ width: state.isBettingClosed ? '100%' : `${(globalTimeLeft / 60) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
           <h2 className="text-4xl lg:text-5xl font-display font-bold mb-4 tracking-tight">Double Your <span className="text-emerald-400">Cash</span></h2>
           <p className="text-slate-400 mb-12 max-w-sm mx-auto">Enter an amount and try your luck. High risk, high reward.</p>
 
@@ -1750,8 +1984,8 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
                   setBetAmount(Number(e.target.value));
                   playSound('CLICK'); 
                 }}
-                disabled={isSpinning}
-                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                disabled={isSpinning || state.isBettingClosed}
+                className="w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500 disabled:opacity-50"
               />
             </div>
 
@@ -1786,15 +2020,39 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph }:
                  </motion.div>
                )}
 
+               {state.isBettingClosed && (
+                 <motion.div 
+                   initial={{ opacity: 0, scale: 0.95, y: 5 }}
+                   animate={{ opacity: [1, 0.9, 1], scale: 1, y: 0 }}
+                   className="p-5 rounded-2xl bg-amber-500/5 border border-amber-500/20 shadow-xl relative overflow-hidden text-center z-10 font-sans"
+                 >
+                   <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-amber-500/30 to-transparent" />
+                   <div className="flex flex-col items-center justify-center space-y-2">
+                     <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 animate-pulse">
+                       <Lock className="w-5 h-5" />
+                     </div>
+                     <span className="text-[9px] font-black tracking-widest text-[#f59e0b] uppercase">Betting Closed</span>
+                     <p className="text-xs font-bold text-white leading-relaxed">
+                       Betting closed — Please wait for the next round.
+                     </p>
+                     <span className="text-[9px] text-slate-500 font-medium font-sans">All inputs frozen. Your current stats and balance are unaffected.</span>
+                   </div>
+                 </motion.div>
+               )}
+
                <button 
                 onClick={handlePlay}
-                disabled={isSpinning || (currentPlayer?.balance ?? 0) < 1}
+                disabled={isSpinning || (currentPlayer?.balance ?? 0) < 1 || state.isBettingClosed}
                 className={`
-                  w-full py-5 rounded-2xl text-xl font-bold transition-all duration-300 relative z-10
-                  ${isSpinning ? 'bg-white/5 text-slate-500 cursor-not-allowed' : 'bg-emerald-500 text-black hover:transform hover:scale-[1.02] shadow-2xl shadow-emerald-500/20'}
+                  w-full py-5 rounded-2xl text-xl font-bold transition-all duration-300 relative z-10 border-0 cursor-pointer
+                  ${isSpinning || state.isBettingClosed ? 'bg-white/5 text-slate-500 cursor-not-allowed' : 'bg-emerald-500 text-black hover:transform hover:scale-[1.02] shadow-2xl shadow-emerald-500/20'}
                 `}
               >
-                {isSpinning ? (state.manualMode && timeLeft !== null ? `AWAITING SETTLE (${timeLeft}s)` : 'PLAYING...') : 'DOUBLE OR DONATE'}
+                {isSpinning 
+                  ? (state.manualMode && timeLeft !== null ? `AWAITING SETTLE (${timeLeft}s)` : 'PLAYING...') 
+                  : state.isBettingClosed 
+                  ? 'BETTING CLOSED' 
+                  : 'DOUBLE OR DONATE'}
               </button>
 
               <div className="flex items-center justify-center gap-2.5 text-[10px] font-black tracking-wider text-slate-400 uppercase py-2.5 bg-white/[0.02] border border-white/5 rounded-2xl px-5 select-none shadow-sm transition-all duration-300">
@@ -2527,11 +2785,9 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
 }
 
 const AdminPendingBetRow = memo(({ 
-  player, 
-  onResultBet 
+  player 
 }: { 
   player: Player; 
-  onResultBet: (playerId: string, outcome: 'win' | 'lose') => void; 
 }) => {
   const [timeLeft, setTimeLeft] = useState<number>(0);
 
@@ -2584,19 +2840,9 @@ const AdminPendingBetRow = memo(({
          </div>
       </div>
       
-      <div className="flex gap-3">
-          <button 
-            onClick={() => onResultBet(player.id, 'win')}
-            className="bg-emerald-500 text-emerald-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest glass-button"
-          >
-            Resolve Win
-          </button>
-          <button 
-            onClick={() => onResultBet(player.id, 'lose')}
-            className="bg-rose-500 text-rose-950 px-8 py-3 rounded-2xl text-xs font-black hover:scale-105 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest glass-button"
-          >
-            Resolve Loss
-          </button>
+      <div className="flex items-center gap-2 px-4 py-2 bg-white/[0.02] border border-white/5 rounded-2xl">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Awaiting Bulk Action</span>
       </div>
     </div>
   );
@@ -2638,19 +2884,22 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock }: { 
+function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock }: { 
   state: AppState, 
   onUpdateWinRate: (rate: number) => void,
   onUpdateMaxBet: (max: number) => void,
   onUpdateMinLimits: (minDeposit: number, minWithdraw: number) => void,
   onToggleBetLimit: () => void,
   onToggleManualMode: () => void,
+  onToggleBettingStatus: () => void,
   onUpdatePlayerOverride: (id: string, override: 'win' | 'lose' | 'none') => void,
   onSwitchPlayer: (id: string) => void,
   onResultBet: (playerId: string, outcome: 'win' | 'lose') => void,
+  onResultAllBets: (outcome: 'win' | 'lose') => void,
   onUpdateWithdrawalStatus: (id: string, status: 'completed' | 'rejected') => void,
   onUpdateDepositStatus: (id: string, status: 'completed' | 'rejected') => void,
   onToggleMaintenanceMode: () => void,
+  onToggleTeaBreakMode: () => void,
   onUpdatePaymentSettings: (settings: PaymentSettings) => void,
   onTogglePaymentLock: () => void,
   onReset: () => Promise<void>,
@@ -2663,6 +2912,64 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
 }) {
   const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
+
+  const [bulkSettleType, setBulkSettleType] = useState<'win' | 'lose' | null>(null);
+  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [bulkSettleError, setBulkSettleError] = useState<string | null>(null);
+  const [bulkSettleSuccess, setBulkSettleSuccess] = useState<string | null>(null);
+
+  const handleInitiateBulkSettle = (type: 'win' | 'lose') => {
+    setBulkSettleType(type);
+    setBulkSettleError(null);
+    setBulkSettleSuccess(null);
+    setProcessingProgress(0);
+  };
+
+  const handleExecuteBulkSettle = async () => {
+    if (!bulkSettleType) return;
+    setIsProcessingBulk(true);
+    setBulkSettleError(null);
+    setBulkSettleSuccess(null);
+    setProcessingProgress(15);
+
+    // Dynamic progression simulation
+    const progressInterval = setInterval(() => {
+      setProcessingProgress(prev => {
+        if (prev >= 90) {
+          clearInterval(progressInterval);
+          return 90;
+        }
+        return prev + Math.floor(Math.random() * 15) + 5;
+      });
+    }, 150);
+
+    try {
+      const activeBets = state.players.filter(p => p.pendingBet);
+      const betCount = activeBets.length;
+      const totalSum = activeBets.reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0);
+      
+      await onResultAllBets(bulkSettleType);
+
+      // Settle animation to 100%
+      clearInterval(progressInterval);
+      setProcessingProgress(100);
+      setTimeout(() => {
+        setIsProcessingBulk(false);
+        setBulkSettleSuccess(`All ${betCount} pending bets (totaling ₹${totalSum.toFixed(2)}) were successfully settled as ${bulkSettleType.toUpperCase()}!`);
+        setBulkSettleType(null);
+
+        // Auto-dismiss after 2.5 seconds
+        setTimeout(() => {
+          setBulkSettleSuccess(null);
+        }, 2500);
+      }, 500);
+    } catch (err: any) {
+      clearInterval(progressInterval);
+      setIsProcessingBulk(false);
+      setBulkSettleError(err?.message || 'Failed to complete bulk settlement.');
+    }
+  };
 
   const [paymentEdit, setPaymentEdit] = useState<PaymentSettings>(state.paymentSettings || {});
 
@@ -2776,20 +3083,36 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
             <p className="text-slate-500 font-mono text-[10px] uppercase tracking-[0.3em]">System Operations Interface</p>
           </div>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           <motion.button 
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => onToggleMaintenanceMode()}
-            className={`group flex items-center gap-3 border px-8 py-4 rounded-2xl transition-all duration-500 ${
+            className={`group flex items-center gap-3 border px-8 py-4 rounded-2xl transition-all duration-500 cursor-pointer ${
               state.maintenanceMode 
-              ? 'bg-rose-500/20 border-rose-500/40 text-rose-400' 
-              : 'bg-white/5 border-white/5 hover:bg-amber-500/10 hover:border-amber-500/20'
+              ? 'bg-rose-500/20 border-rose-500/40 text-rose-400 font-sans' 
+              : 'bg-white/5 border-white/5 hover:bg-rose-500/10 hover:border-rose-500/20 text-slate-400 hover:text-rose-400 font-sans'
             }`}
           >
-            <ShieldAlert className={`w-4 h-4 ${state.maintenanceMode ? 'text-rose-400 animate-pulse' : 'text-slate-500 group-hover:text-amber-500'} transition-all`} />
-            <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${state.maintenanceMode ? 'text-rose-400' : 'text-slate-400 group-hover:text-amber-400'}`}>
+            <ShieldAlert className={`w-4 h-4 ${state.maintenanceMode ? 'text-rose-400 animate-pulse' : 'text-slate-500 group-hover:text-rose-400'} transition-all`} />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em]">
               {state.maintenanceMode ? 'ACTIVE MAINTENANCE' : 'Service Shutdown'}
+            </span>
+          </motion.button>
+
+          <motion.button 
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => onToggleTeaBreakMode()}
+            className={`group flex items-center gap-3 border px-8 py-4 rounded-2xl transition-all duration-500 cursor-pointer ${
+              state.teaBreakMode 
+              ? 'bg-amber-500/20 border-amber-500/40 text-amber-400 font-sans shadow-[0_0_15px_rgba(245,158,11,0.1)]' 
+              : 'bg-white/5 border-white/5 hover:bg-amber-500/10 hover:border-amber-500/20 text-slate-400 hover:text-amber-400 font-sans'
+            }`}
+          >
+            <Coffee className={`w-4 h-4 ${state.teaBreakMode ? 'text-amber-400 animate-bounce' : 'text-slate-500 group-hover:text-amber-400'} transition-all`} />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em]">
+              {state.teaBreakMode ? 'ACTIVE TEA BREAK ☕' : 'Tea Break'}
             </span>
           </motion.button>
         </div>
@@ -2797,21 +3120,108 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
 
       {/* Pending Bets */}
       <div className="glass-card rounded-[2.5rem] overflow-hidden mb-8 border border-amber-500/10">
-        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-amber-500/[0.02]">
-           <h4 className="font-display font-bold text-xl flex items-center gap-3">
+        <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between bg-amber-500/[0.02] gap-4">
+           <div className="flex items-center gap-3">
              <DollarSign className="w-6 h-6 text-amber-500" />
-             Pending Bets
-           </h4>
-           <span className="bg-amber-500/10 text-amber-500 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border border-amber-500/20">
-             {state.players.filter(p => p.pendingBet).length} Pending
-           </span>
+             <div>
+               <h4 className="font-display font-bold text-xl text-white animate-fade-in">
+                 Pending Bets
+               </h4>
+               <p className="text-[10px] text-slate-500 font-medium font-sans">Control bet flow and manual settlements</p>
+             </div>
+           </div>
+           
+           <div className="flex flex-wrap items-center gap-3">
+             <span className="bg-amber-500/10 text-amber-500 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest border border-amber-500/20 font-sans">
+               {state.players.filter(p => p.pendingBet).length} Pending
+             </span>
+
+             {/* Visual Active/Inactive status indicator */}
+             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 font-sans transition-all duration-300 ${
+               state.isBettingClosed 
+                 ? 'bg-rose-500/10 border-rose-500/20 text-rose-500 shadow-[0_0_15px_rgba(239,68,68,0.05)]' 
+                 : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.05)]'
+             }`}>
+               <span className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
+                 state.isBettingClosed ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'
+               }`} />
+               <span className="text-[9px] font-black uppercase tracking-wider">
+                 {state.isBettingClosed ? 'Stopped' : 'Collecting'}
+               </span>
+             </div>
+
+             {/* Stop / Resume Action Button */}
+             <motion.button
+               whileHover={{ scale: 1.02 }}
+               whileTap={{ scale: 0.98 }}
+               onClick={() => onToggleBettingStatus()}
+               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm transition-all duration-300 cursor-pointer border-0 font-sans ${
+                 state.isBettingClosed 
+                   ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-emerald-500/10' 
+                   : 'bg-rose-500/15 border border-rose-500/30 text-rose-400 hover:bg-rose-500/25'
+               }`}
+             >
+               {state.isBettingClosed ? (
+                 <>
+                   <LockOpen className="w-3.5 h-3.5" />
+                   Resume Bets
+                 </>
+               ) : (
+                 <>
+                   <Lock className="w-3.5 h-3.5" />
+                   Stop Bets
+                 </>
+               )}
+             </motion.button>
+           </div>
         </div>
+
+        {/* Bulk Action Controls */}
+        {state.players.filter(p => p.pendingBet).length > 0 && (
+          <div className="p-8 bg-white/[0.01] border-b border-white/5 flex flex-col lg:flex-row items-center justify-between gap-6">
+            <div className="space-y-1 text-center lg:text-left">
+              <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">BULK SETTLEMENT SUITE</span>
+              <p className="font-display font-bold text-lg text-white">Settle Active Round</p>
+              <div className="flex flex-wrap items-center gap-2 mt-1 justify-center lg:justify-start">
+                <span className="text-slate-400 text-xs">Total Pool Accumulation:</span>
+                <span className="text-emerald-400 font-mono text-base font-black">
+                  ₹{state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0).toFixed(2)}
+                </span>
+                <span className="text-slate-600 font-mono text-xs">|</span>
+                <span className="text-slate-400 text-xs">{state.players.filter(p => p.pendingBet).length} active bets</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto justify-center lg:justify-end">
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => handleInitiateBulkSettle('win')}
+                className="w-full sm:w-auto bg-emerald-500 text-emerald-950 px-8 py-4 rounded-2xl text-[10px] font-black hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Settle All as Win
+              </motion.button>
+              
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => handleInitiateBulkSettle('lose')}
+                className="w-full sm:w-auto bg-rose-500 text-rose-950 px-8 py-4 rounded-2xl text-[10px] font-black hover:bg-rose-400 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <XCircle className="w-4 h-4" />
+                Settle All as Loss
+              </motion.button>
+            </div>
+          </div>
+        )}
+
         <div className="divide-y divide-white/5">
           {state.players.filter(p => p.pendingBet).length === 0 ? (
             <div className="p-20 text-center text-slate-600 font-display italic">No active bets currently awaiting outcome</div>
           ) : (
             state.players.filter(p => p.pendingBet).map(player => (
-              <AdminPendingBetRow key={player.id} player={player} onResultBet={onResultBet} />
+              <AdminPendingBetRow key={player.id} player={player} />
             ))
           )}
         </div>
@@ -3576,6 +3986,149 @@ function AdminView({ state, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, 
           </div>
         </div>
       </div>
+
+      {/* Bulk Settlement Confirmation/Status Modal */}
+      <AnimatePresence>
+        {(bulkSettleType !== null || isProcessingBulk || bulkSettleSuccess !== null || bulkSettleError !== null) && (
+          <div className="fixed inset-0 flex items-center justify-center p-4 z-[120] overflow-y-auto">
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!isProcessingBulk) {
+                  setBulkSettleType(null);
+                  setBulkSettleSuccess(null);
+                  setBulkSettleError(null);
+                }
+              }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm"
+            />
+
+            {/* Content Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+              className="relative w-full max-w-md bg-[#0b0b0b] border border-white/10 rounded-[2.5rem] p-8 text-center shadow-2xl overflow-hidden z-[130]"
+            >
+              <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-transparent via-amber-500/40 to-transparent" />
+
+              {/* Success View */}
+              {bulkSettleSuccess && (
+                <div className="space-y-6">
+                  <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-400" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">Settlement Successful</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed">{bulkSettleSuccess}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Error View */}
+              {bulkSettleError && (
+                <div className="space-y-6">
+                  <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto">
+                    <XCircle className="w-8 h-8 text-rose-500" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">Process Interrupted</h3>
+                    <p className="text-rose-400 text-xs font-mono bg-rose-500/5 border border-rose-500/10 p-4 rounded-xl text-left leading-relaxed overflow-x-auto max-h-[120px]">
+                      {bulkSettleError}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setBulkSettleError(null);
+                      setBulkSettleType(null);
+                    }}
+                    className="w-full py-4 bg-white text-black font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl hover:scale-[1.02] transition-all cursor-pointer border-0 font-sans"
+                  >
+                    Acknowledge
+                  </button>
+                </div>
+              )}
+
+              {/* Processing View */}
+              {isProcessingBulk && (
+                <div className="space-y-8 py-4">
+                  <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+                    {/* Ring animation */}
+                    <div className="absolute inset-0 border-4 border-white/5 rounded-full" />
+                    <div className="absolute inset-0 border-4 border-amber-500 rounded-full border-t-transparent animate-spin" />
+                    <Clock className="w-8 h-8 text-amber-500 animate-pulse" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">Processing Settlement</h3>
+                    <p className="text-slate-500 text-xs uppercase tracking-[0.2em] font-mono">Executing Firebase Transaction Batch</p>
+                  </div>
+                  
+                  {/* Progress feedback bar */}
+                  <div className="space-y-2 max-w-xs mx-auto">
+                    <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                      <motion.div 
+                        className="h-full bg-gradient-to-r from-amber-500 to-yellow-400"
+                        animate={{ width: `${processingProgress}%` }}
+                        transition={{ duration: 0.1 }}
+                      />
+                    </div>
+                    <p className="text-slate-400 font-mono text-[10px] font-bold">{processingProgress}% Complete</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Confirmation View */}
+              {bulkSettleType && !isProcessingBulk && !bulkSettleSuccess && !bulkSettleError && (
+                <div className="space-y-6">
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-xl ${
+                    bulkSettleType === 'win' 
+                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
+                      : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                  }`}>
+                    {bulkSettleType === 'win' ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">
+                      Confirm Bulk {bulkSettleType === 'win' ? 'Win' : 'Loss'}?
+                    </h3>
+                    <p className="text-slate-400 text-sm leading-relaxed">
+                      You are about to resolve <strong className="text-white">{state.players.filter(p => p.pendingBet).length} active bets</strong> totaling <span className="text-emerald-400 font-mono font-bold">₹{state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0).toFixed(2)}</span> at once.
+                    </p>
+                    <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest bg-white/5 py-1.5 px-3 rounded-lg max-w-xs mx-auto font-mono">
+                      THIS SHALL MUTATE ALL ACTIVE RUNNING ACCOUNTS INDELIBLY
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                    <button
+                      onClick={() => setBulkSettleType(null)}
+                      className="w-full sm:w-1/2 py-4 bg-white/5 border border-white/5 text-slate-400 font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white/10 hover:text-white transition-all cursor-pointer font-sans"
+                    >
+                      Refuse / Back
+                    </button>
+                    <button
+                      onClick={handleExecuteBulkSettle}
+                      className={`w-full sm:w-1/2 py-4 font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl transition-all cursor-pointer border-0 font-sans ${
+                        bulkSettleType === 'win'
+                          ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-emerald-500/15 hover:scale-[1.02]'
+                          : 'bg-rose-500 text-rose-950 hover:bg-rose-400 shadow-rose-500/15 hover:scale-[1.02]'
+                      }`}
+                    >
+                      Authorize Settle
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
