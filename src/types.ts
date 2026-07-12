@@ -10,12 +10,22 @@ export interface Transaction {
 export interface WithdrawalRequest {
   id: string;
   playerId: string;
+  playerName?: string; // name of the player requesting
   amount: number;
   method: string;
   details: string;
-  status: 'pending' | 'completed' | 'rejected';
+  blockchain?: string; // selected blockchain network
+  walletAddress?: string; // wallet address entered by user
+  status: 'pending' | 'reviewing' | 'approved' | 'processing' | 'broadcasted' | 'completed' | 'rejected' | 'cancelled' | 'failed';
   timestamp: number;
+  completedDate?: number; // timestamp when approved or completed
   playerBalanceAtRequest: number;
+  transactionHash?: string; // blockchain transaction hash
+  adminNotes?: string; // notes added by administrator
+  fee?: number; // network fee applied
+  finalAmount?: number; // amount user receives (amount - fee)
+  riskScore?: number; // administrative risk evaluation score (0-100)
+  notes?: string; // user submitted notes during withdrawal
 }
 
 export interface DepositRequest {
@@ -43,6 +53,41 @@ export interface Player {
   referralCode: string;
   referredBy?: string;
   referralCount: number;
+  totalWagered?: number;
+  preferredCurrency?: string;
+}
+
+export interface FAQItem {
+  question: string;
+  answer: string;
+}
+
+export interface DepositNetwork {
+  id: string; // e.g. 'tron', 'bsc'
+  name: string; // e.g. 'TRON (TRC20)'
+  logoUrl: string; // Image URL/base64
+  bannerUrl: string; // Image URL/base64
+  title: string;
+  subtitle: string;
+  description: string;
+  networkFeeText: string;
+  typicalFeeUsd: number;
+  estimatedTime: string;
+  confirmations: number;
+  warningMessage: string;
+  depositInstructions: string;
+  faqs: FAQItem[];
+  helpText: string;
+  maintenanceMessage: string;
+  statusBadge: 'Online' | 'Maintenance';
+  enabled: boolean;
+  minDepositUsd: number;
+  maxDepositUsd: number;
+  depositAddress: string;
+  qrCodeUrl: string;
+  priority: number;
+  featured: boolean;
+  supportedCoins?: string;
 }
 
 export interface PaymentSettings {
@@ -57,6 +102,7 @@ export interface AppState {
   transactions: Transaction[];
   withdrawals: WithdrawalRequest[];
   deposits: DepositRequest[];
+  depositNetworks?: DepositNetwork[];
   winRate: number; // 0 to 1
   totalEarned: number;
   manualMode: boolean;
@@ -75,4 +121,56 @@ export interface AppState {
   houseProfitResetTimestamp?: number;
   isBettingClosed?: boolean;
   teaBreakMode?: boolean;
+  lotteryTargetTimestamp?: number;
+  lotteryTimerDuration?: number;
+  lotteryTimerActive?: boolean;
+  playersWonCount?: number;
+  isPlayersWonShown?: boolean;
+  announcementText?: string;
+  isAnnouncementEnabled?: boolean;
+  withdrawalNetworks?: WithdrawalNetwork[];
+  withdrawalSettings?: WithdrawalSettings;
+}
+
+export interface WithdrawalNetwork {
+  id: string; // e.g. 'tron', 'bsc', 'eth', 'btc', 'sol', 'polygon', 'ltc'
+  name: string; // e.g. 'TRON (TRC20)'
+  logoUrl: string; // Network Logo
+  bannerUrl: string; // Banner Image
+  title: string;
+  subtitle: string;
+  description: string;
+  averageFee: number; // Average Network Fee
+  networkFeeText: string; // e.g. '0.8 USDT'
+  estimatedTime: string; // e.g. '2-5 mins'
+  popularityBadge: string; // e.g. 'Most Popular', 'Low Fee', 'Fastest'
+  securityRating: number; // e.g. 1 to 5
+  status: 'Online' | 'Maintenance';
+  warningMessage: string;
+  instructions: string;
+  minWithdraw: number;
+  maxWithdraw: number;
+  faq: FAQItem[];
+  priority: number;
+  enabled: boolean;
+  autoWithdrawEnabled?: boolean;
+  manualApprovalEnabled?: boolean;
+  supportedCoins?: string;
+}
+
+export interface WithdrawalSettings {
+  minWithdraw: number;
+  maxWithdraw: number;
+  dailyWithdrawLimit: number;
+  weeklyWithdrawLimit?: number;
+  monthlyWithdrawLimit?: number;
+  autoWithdrawEnabled: boolean;
+  manualApprovalEnabled: boolean;
+  maintenanceMode: boolean;
+  allowedBlockchains: string[];
+  networkPriority: Record<string, number>;
+  defaultFee: number;
+  feePercentage?: number;
+  kycRequired?: boolean;
+  defaultProcessingTime: string;
 }

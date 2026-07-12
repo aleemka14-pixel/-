@@ -110,8 +110,18 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /config/admin {
+    match /config/{docId} {
       allow read: if isSignedIn(); // All users need to read config
+      allow write: if isAdmin();
+    }
+
+    match /deposit_networks/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /withdrawal_networks/{id} {
+      allow read: if isSignedIn();
       allow write: if isAdmin();
     }
   }

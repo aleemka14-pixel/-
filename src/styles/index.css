@@ -34,8 +34,12 @@ input[type='range'] {
 }
 
 input[type='range']::-webkit-slider-thumb {
-  @apply w-5 h-5 bg-emerald-500 rounded-full border-4 border-[#030303] shadow-lg cursor-pointer transition-transform duration-200 hover:scale-125 hover:bg-emerald-400;
+  @apply w-5 h-5 bg-emerald-500 rounded-full border-4 border-[#030303] shadow-lg cursor-pointer transition-all duration-200 hover:scale-125 hover:bg-emerald-400;
   -webkit-appearance: none;
+}
+
+input[type='range'].is-dragging::-webkit-slider-thumb {
+  @apply shadow-[0_0_25px_rgba(16,185,129,1)] scale-[1.35] bg-emerald-300 border-white;
 }
 
 /* Scrollbar styling */

@@ -2,11 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // 0. Global Safety Net
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // --- Helpers ---
     function isSignedIn() {
       return request.auth != null;
@@ -45,6 +40,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /users/{userId} {
+      // Allow self-reads, profile reads, and updates (including referral updates) for authenticated users
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId);
+      allow update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
     match /transactions/{id} {
       // Users can only see their own transactions, admins see all
       allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
@@ -67,9 +70,18 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /config/admin {
-      // Everyone needs to read config for maintenance and win rate
-      allow read: if true; 
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /deposit_networks/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /withdrawal_networks/{id} {
+      allow read: if true;
       allow write: if isAdmin();
     }
 

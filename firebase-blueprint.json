@@ -1,5 +1,18 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents the secure user wallet and profile.",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "walletBalance": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["username", "email", "walletBalance", "createdAt", "updatedAt"]
+    },
     "Player": {
       "title": "Player",
       "description": "Represents a user profile in the game.",
@@ -90,9 +103,109 @@
           }
         }
       }
+    },
+    "FAQItem": {
+      "title": "FAQItem",
+      "description": "Single FAQ question and answer",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" },
+        "answer": { "type": "string" }
+      },
+      "required": ["question", "answer"]
+    },
+    "DepositNetwork": {
+      "title": "DepositNetwork",
+      "description": "Represents a blockchain network configuration for deposit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "bannerUrl": { "type": "string" },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "description": { "type": "string" },
+        "networkFeeText": { "type": "string" },
+        "typicalFeeUsd": { "type": "number" },
+        "estimatedTime": { "type": "string" },
+        "confirmations": { "type": "number" },
+        "warningMessage": { "type": "string" },
+        "depositInstructions": { "type": "string" },
+        "helpText": { "type": "string" },
+        "maintenanceMessage": { "type": "string" },
+        "statusBadge": { "type": "string", "enum": ["Online", "Maintenance"] },
+        "enabled": { "type": "boolean" },
+        "minDepositUsd": { "type": "number" },
+        "maxDepositUsd": { "type": "number" },
+        "depositAddress": { "type": "string" },
+        "qrCodeUrl": { "type": "string" },
+        "priority": { "type": "number" },
+        "featured": { "type": "boolean" }
+      },
+      "required": ["id", "name", "depositAddress", "minDepositUsd", "maxDepositUsd", "enabled", "priority", "statusBadge"]
+    },
+    "WithdrawalNetwork": {
+      "title": "WithdrawalNetwork",
+      "description": "Represents a blockchain network configuration for withdrawal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "bannerUrl": { "type": "string" },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "description": { "type": "string" },
+        "averageFee": { "type": "number" },
+        "networkFeeText": { "type": "string" },
+        "estimatedTime": { "type": "string" },
+        "popularityBadge": { "type": "string" },
+        "securityRating": { "type": "number" },
+        "status": { "type": "string", "enum": ["Online", "Maintenance"] },
+        "warningMessage": { "type": "string" },
+        "instructions": { "type": "string" },
+        "minWithdraw": { "type": "number" },
+        "maxWithdraw": { "type": "number" },
+        "priority": { "type": "number" },
+        "enabled": { "type": "boolean" }
+      },
+      "required": ["id", "name", "minWithdraw", "maxWithdraw", "enabled", "priority", "status"]
+    },
+    "WithdrawalSettings": {
+      "title": "WithdrawalSettings",
+      "description": "Administrator settings for withdrawals.",
+      "type": "object",
+      "properties": {
+        "minWithdraw": { "type": "number" },
+        "maxWithdraw": { "type": "number" },
+        "dailyWithdrawLimit": { "type": "number" },
+        "autoWithdrawEnabled": { "type": "boolean" },
+        "manualApprovalEnabled": { "type": "boolean" },
+        "maintenanceMode": { "type": "boolean" },
+        "allowedBlockchains": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "networkPriority": { "type": "object" },
+        "defaultFee": { "type": "number" },
+        "defaultProcessingTime": { "type": "string" }
+      }
     }
   },
   "firestore": {
+    "users": {
+      "schema": "User",
+      "description": "Secure wallets and user accounts indexed by UID."
+    },
+    "deposit_networks": {
+      "schema": "DepositNetwork",
+      "description": "Dynamic configurations for deposit blockchain networks."
+    },
+    "withdrawal_networks": {
+      "schema": "WithdrawalNetwork",
+      "description": "Dynamic configurations for withdrawal blockchain networks."
+    },
     "players": {
       "schema": "Player",
       "description": "User profiles indexed by UID."
@@ -112,6 +225,10 @@
     "config/admin": {
       "schema": "Settings",
       "description": "Global settings document."
+    },
+    "config/withdrawal_settings": {
+      "schema": "WithdrawalSettings",
+      "description": "Withdrawal specific global settings."
     }
   }
 }

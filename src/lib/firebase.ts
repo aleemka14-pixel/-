@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAuth, GoogleAuthProvider, signInWithPopup, signOut, browserLocalPersistence, browserPopupRedirectResolver } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // Support loading Firebase config from environment variables (useful for Vercel deployments)
@@ -19,9 +19,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Improved Firestore initialization with long-polling as fallback for environments where WebSockets might be blocked
+// Improved Firestore initialization with auto-detect long-polling and multi-tab persistent offline cache
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: true,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
 }, firebaseConfig.firestoreDatabaseId);
 
 // Use initializeAuth with explicit persistence and resolver for better iframe compatibility
@@ -60,17 +63,32 @@ export async function logout() {
   await signOut(auth);
 }
 
-// Critical connection test
+// Critical connection test (Deferred and made connection-resilient)
 async function testConnection() {
-  try {
-    const snap = await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firebase Connection Successful:", snap.exists());
-  } catch (error: any) {
-    console.error("Firebase Connection Failed:", error.message, error.code);
-    if (error.message && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+  setTimeout(async () => {
+    try {
+      const snap = await getDocFromServer(doc(db, 'test', 'connection'));
+      console.log("[Firebase Info] Connection test successful. Remote server reached:", snap.exists());
+    } catch (error: any) {
+      const isUnavailable = error.code === 'unavailable' || (error.message && error.message.toLowerCase().includes('unavailable')) || (error.message && error.message.toLowerCase().includes('could not reach'));
+      if (isUnavailable) {
+        console.warn("[Firebase Info] Firestore backend is temporarily unreachable. Client is operating seamlessly in OFFLINE/CACHE mode and will auto-sync with the cloud.");
+      } else {
+        console.error("[Firebase Error] Connection test failed:", error.message, error.code);
+        if (error.message && error.message.includes('the client is offline')) {
+          console.warn("[Firebase Info] Please verify your network and Firebase configuration.");
+        }
+      }
+      
+      const msg = String(error.message || '').toLowerCase();
+      if (msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded')) {
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: error.message } }));
+        }
+      }
     }
-  }
+  }, 1500); // Small delay to prioritize main thread loading
 }
 testConnection();
 
@@ -119,5 +137,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
+  
+  if (typeof window !== 'undefined') {
+    const msg = errInfo.error.toLowerCase();
+    if (msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('resource_exhausted') || msg.includes('limit exceeded')) {
+      (window as any).__firestoreQuotaExceeded = true;
+      window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: errInfo }));
+    }
+  }
+
   throw new Error(JSON.stringify(errInfo));
 }
