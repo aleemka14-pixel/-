@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // --- Helpers ---
+    // --- Security Helpers ---
     function isSignedIn() {
       return request.auth != null;
     }
@@ -21,58 +21,72 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function incoming() {
-      return request.resource.data;
+    // --- Users & Profiles Security ---
+    match /users/{userId} {
+      // Secure private user info - Only the owner or an admin can read/write
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
     }
-
-    function existing() {
-      return resource.data;
-    }
-
-    // --- Collection Rules ---
 
     match /players/{playerId} {
-      // Allow everyone to see the leaderboard (list) and individual profiles (get)
+      // Public profile/leaderboard - all signed-in users can read profiles
       allow read: if isSignedIn(); 
       allow create: if isOwner(playerId);
-      // Allow self-update OR update by joining user (referral logic)
-      allow update: if isSignedIn(); 
+      allow update: if isSignedIn(); // Allow profile, score updates, and referrals
       allow delete: if isAdmin();
     }
 
-    match /users/{userId} {
-      // Allow self-reads, profile reads, and updates (including referral updates) for authenticated users
-      allow read: if isSignedIn();
-      allow create: if isOwner(userId);
-      allow update: if isSignedIn();
-      allow delete: if isAdmin();
+    match /wallets/{walletId} {
+      // Wallets security
+      allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin() || (resource.data.userId == request.auth.uid);
     }
 
+    // --- Ledger Transactions Security ---
     match /transactions/{id} {
       // Users can only see their own transactions, admins see all
-      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
+      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid || resource.data.userId == request.auth.uid);
+      // Transactions should only be created by system transactions or users themselves for bets
       allow create: if isSignedIn(); 
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
+    // --- Gameplay History Security ---
+    match /gameHistory/{id} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // --- Deposits & Withdrawals Security ---
     match /withdrawals/{id} {
-      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
-      allow create: if isOwner(request.resource.data.playerId);
+      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid || resource.data.userId == request.auth.uid);
+      allow create: if isOwner(request.resource.data.playerId) || isOwner(request.resource.data.userId);
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
     match /deposits/{id} {
-      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid);
-      allow create: if isOwner(request.resource.data.playerId);
-      allow update: if isAdmin();
+      allow read: if isSignedIn() && (isAdmin() || resource.data.playerId == request.auth.uid || resource.data.userId == request.auth.uid);
+      allow create: if isOwner(request.resource.data.playerId) || isOwner(request.resource.data.userId);
+      allow update: if isAdmin() || (
+        (isOwner(resource.data.playerId) || isOwner(resource.data.userId)) && 
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount == resource.data.amount
+      );
       allow delete: if isAdmin();
     }
 
+    // --- Global Configurations & Settings Security ---
     match /config/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read: if true; // Public config options are read-only to frontend
+      allow write: if isAdmin(); // Strictly restricted to authorized admins
     }
 
     match /deposit_networks/{id} {
@@ -83,6 +97,12 @@ service cloud.firestore {
     match /withdrawal_networks/{id} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /auditLogs/{id} {
+      allow read: if isSignedIn();
+      allow update, delete: if isAdmin();
+      allow create: if isSignedIn();
     }
 
     // Explicitly allow connection test

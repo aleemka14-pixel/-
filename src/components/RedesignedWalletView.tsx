@@ -356,6 +356,21 @@ export function RedesignedWalletView({
     });
   }, [unifiedHistory, searchQuery, txTypeFilter]);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Reset page when filter/search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, txTypeFilter]);
+
+  const paginatedHistory = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredHistory.slice(start, start + itemsPerPage);
+  }, [filteredHistory, currentPage, itemsPerPage]);
+
+  const totalPages = Math.ceil(filteredHistory.length / itemsPerPage);
+
   // Helper to generate explorers links
   const getExplorerUrl = (blockchain: string, hash: string) => {
     const chain = blockchain.toLowerCase();
@@ -719,14 +734,14 @@ export function RedesignedWalletView({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                      {filteredHistory.length === 0 ? (
+                      {paginatedHistory.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="px-8 py-16 text-center text-slate-500 font-sans italic text-sm">
                             No ledger history matching current filter criteria.
                           </td>
                         </tr>
                       ) : (
-                        filteredHistory.map((tx, idx) => {
+                        paginatedHistory.map((tx, idx) => {
                           const isDeposit = tx.type === 'deposit';
                           const status = tx.status;
                           
@@ -812,10 +827,10 @@ export function RedesignedWalletView({
 
                 {/* Mobile View: Collapsed ledger cards */}
                 <div className="md:hidden divide-y divide-white/5">
-                  {filteredHistory.length === 0 ? (
+                  {paginatedHistory.length === 0 ? (
                     <p className="p-8 text-center text-slate-500 text-xs italic">No matching transactions found.</p>
                   ) : (
-                    filteredHistory.map((tx) => {
+                    paginatedHistory.map((tx) => {
                       const isDeposit = tx.type === 'deposit';
                       const status = tx.status;
                       
@@ -887,6 +902,56 @@ export function RedesignedWalletView({
                     })
                   )}
                 </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between border-t border-white/5 px-8 py-5 gap-4 bg-white/[0.01]">
+                    <div className="text-xs text-slate-500 font-sans">
+                      Showing <span className="font-semibold text-slate-400">{(currentPage - 1) * itemsPerPage + 1}</span> to{' '}
+                      <span className="font-semibold text-slate-400">
+                        {Math.min(currentPage * itemsPerPage, filteredHistory.length)}
+                      </span>{' '}
+                      of <span className="font-semibold text-slate-400">{filteredHistory.length}</span> transactions
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          if (currentPage > 1) {
+                            setCurrentPage(prev => prev - 1);
+                            playSound('CLICK');
+                          }
+                        }}
+                        disabled={currentPage === 1}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold select-none transition-all ${
+                          currentPage === 1
+                            ? 'border-white/5 text-slate-600 cursor-not-allowed bg-transparent'
+                            : 'border-white/10 text-slate-300 hover:bg-white/5 hover:border-white/20 active:scale-95 cursor-pointer'
+                        }`}
+                      >
+                        Previous
+                      </button>
+                      <span className="text-xs font-semibold text-slate-400 px-2 font-mono">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (currentPage < totalPages) {
+                            setCurrentPage(prev => prev + 1);
+                            playSound('CLICK');
+                          }
+                        }}
+                        disabled={currentPage === totalPages}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold select-none transition-all ${
+                          currentPage === totalPages
+                            ? 'border-white/5 text-slate-600 cursor-not-allowed bg-transparent'
+                            : 'border-white/10 text-slate-300 hover:bg-white/5 hover:border-white/20 active:scale-95 cursor-pointer'
+                        }`}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
 
               </div>
             </div>

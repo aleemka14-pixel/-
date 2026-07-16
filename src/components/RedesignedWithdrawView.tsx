@@ -19,6 +19,7 @@ import {
   Activity
 } from 'lucide-react';
 import { WithdrawalNetwork, WithdrawalSettings, Player, WithdrawalRequest } from '../types.ts';
+import { DEFAULT_RATES } from '../lib/currency.ts';
 
 // Helper to convert USD to target currency
 const getCurrencySymbol = (code: string) => {
@@ -62,7 +63,7 @@ interface RedesignedWithdrawViewProps {
   currentPlayer: Player;
   withdrawalsHistory: WithdrawalRequest[];
   onBack: () => void;
-  onWithdraw: (amountUsd: number, networkId: string, walletAddress: string, feeUsd: number) => Promise<void>;
+  onWithdraw: (amountUsd: number, networkId: string, walletAddress: string, feeUsd: number, prefCurrency?: string, exRate?: number, prefAmount?: number) => Promise<void>;
   preferredCurrency: string;
   rates: Record<string, number>;
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
@@ -137,18 +138,26 @@ export function RedesignedWithdrawView({
   }, [walletAddress, selectedNetworkId]);
 
   // Calculations
-  const amountUsdNum = parseFloat(withdrawAmountUsd) || 0;
+  const exchangeRate = rates[preferredCurrency] || DEFAULT_RATES[preferredCurrency] || 1;
+  const amountPreferredNum = parseFloat(withdrawAmountUsd) || 0;
+  const amountUsdNum = amountPreferredNum / exchangeRate; // High precision USDT equivalent
   const currentNetworkFeeUsd = selectedNetwork ? selectedNetwork.averageFee : (withdrawalSettings?.defaultFee || 1.0);
+  const currentNetworkFeePref = currentNetworkFeeUsd * exchangeRate;
   const userReceivesUsd = Math.max(0, amountUsdNum - currentNetworkFeeUsd);
+  const userReceivesPref = Math.max(0, amountPreferredNum - currentNetworkFeePref);
 
   // Currency Helpers
   const symbol = getCurrencySymbol(preferredCurrency);
   const formatVal = (val: number) => formatCurrencyValue(val, preferredCurrency, rates);
 
-  const availableBalanceFiat = currentPlayer?.balance ?? 0;
+  const availableBalanceFiat = currentPlayer?.balance ?? 0; // Keeping raw USD/USDT balance for formatVal conversion
+  const availableBalancePref = (currentPlayer?.balance ?? 0) * exchangeRate; // Balance converted to preferred currency
   const minWithdrawLimitUsd = selectedNetwork ? selectedNetwork.minWithdraw : (withdrawalSettings?.minWithdraw || 10);
+  const minWithdrawLimitPref = minWithdrawLimitUsd * exchangeRate;
   const maxWithdrawLimitUsd = selectedNetwork ? selectedNetwork.maxWithdraw : (withdrawalSettings?.maxWithdraw || 50000);
+  const maxWithdrawLimitPref = maxWithdrawLimitUsd * exchangeRate;
   const dailyWithdrawLimitUsd = withdrawalSettings?.dailyWithdrawLimit || 100000;
+  const dailyWithdrawLimitPref = dailyWithdrawLimitUsd * exchangeRate;
 
   const pendingRequests = useMemo(() => {
     return withdrawalsHistory.filter(w => 
@@ -173,6 +182,7 @@ export function RedesignedWithdrawView({
   }, [withdrawalsHistory, currentPlayer.id]);
 
   const remainingDailyLimitUsd = Math.max(0, dailyWithdrawLimitUsd - withdrawnLast24hUsd);
+  const remainingDailyLimitPref = remainingDailyLimitUsd * exchangeRate;
 
   // 24h frequency check
   const isLocked24h = useMemo(() => {
@@ -230,23 +240,23 @@ export function RedesignedWithdrawView({
       setErrorMessage(`Invalid address format for ${selectedNetwork.name}.`);
       return;
     }
-    if (amountUsdNum <= 0) {
+    if (amountPreferredNum <= 0) {
       setErrorMessage('Please enter a valid withdrawal amount.');
       return;
     }
-    if (amountUsdNum < minWithdrawLimitUsd) {
+    if (amountPreferredNum < minWithdrawLimitPref) {
       setErrorMessage(`Minimum withdrawal for this network is ${symbol}${formatVal(minWithdrawLimitUsd)}.`);
       return;
     }
-    if (amountUsdNum > maxWithdrawLimitUsd) {
+    if (amountPreferredNum > maxWithdrawLimitPref) {
       setErrorMessage(`Maximum withdrawal limit is ${symbol}${formatVal(maxWithdrawLimitUsd)}.`);
       return;
     }
-    if (amountUsdNum > availableBalanceFiat) {
+    if (amountPreferredNum > availableBalancePref) {
       setErrorMessage('Insufficient balance.');
       return;
     }
-    if (amountUsdNum > remainingDailyLimitUsd) {
+    if (amountPreferredNum > remainingDailyLimitPref) {
       setErrorMessage(`Amount exceeds remaining daily limit of ${symbol}${formatVal(remainingDailyLimitUsd)}.`);
       return;
     }
@@ -260,10 +270,18 @@ export function RedesignedWithdrawView({
     setErrorMessage(null);
 
     try {
-      if (amountUsdNum > availableBalanceFiat) {
+      if (amountPreferredNum > availableBalancePref) {
         throw new Error('Insufficient balance to perform this withdrawal.');
       }
-      await onWithdraw(amountUsdNum, selectedNetworkId, walletAddress.trim(), currentNetworkFeeUsd);
+      await onWithdraw(
+        amountUsdNum,
+        selectedNetworkId,
+        walletAddress.trim(),
+        currentNetworkFeeUsd,
+        preferredCurrency,
+        exchangeRate,
+        amountPreferredNum
+      );
       setWithdrawAmountUsd('');
       setWalletAddress('');
       setWithdrawalNotes('');
@@ -814,7 +832,7 @@ export function RedesignedWithdrawView({
                           <button
                             type="button"
                             disabled={isLocked24h || submitting}
-                            onClick={() => { playSound('CLICK'); setWithdrawAmountUsd(Math.floor(availableBalanceFiat).toString()); }}
+                            onClick={() => { playSound('CLICK'); setWithdrawAmountUsd(Math.floor(availableBalancePref).toString()); }}
                             className="bg-white/5 border border-white/10 text-slate-300 px-2.5 py-1.5 rounded-xl font-black uppercase text-[9px] hover:bg-white/10 active:scale-95 transition-all disabled:opacity-40 cursor-pointer"
                           >
                             MAX
@@ -822,7 +840,7 @@ export function RedesignedWithdrawView({
                           <button
                             type="button"
                             disabled={isLocked24h || submitting}
-                            onClick={() => { playSound('CLICK'); setWithdrawAmountUsd(availableBalanceFiat.toString()); }}
+                            onClick={() => { playSound('CLICK'); setWithdrawAmountUsd(availableBalancePref.toString()); }}
                             className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-1.5 rounded-xl font-black uppercase text-[9px] hover:bg-emerald-500/20 active:scale-95 transition-all disabled:opacity-40 cursor-pointer"
                           >
                             ALL
@@ -900,9 +918,9 @@ export function RedesignedWithdrawView({
                         submitting || 
                         !walletAddress.trim() || 
                         !isAddressValid || 
-                        amountUsdNum < minWithdrawLimitUsd || 
-                        amountUsdNum > maxWithdrawLimitUsd || 
-                        amountUsdNum > availableBalanceFiat
+                        amountPreferredNum < minWithdrawLimitPref || 
+                        amountPreferredNum > maxWithdrawLimitPref || 
+                        amountPreferredNum > availableBalancePref
                       }
                       className="w-full py-4 bg-gradient-to-r from-emerald-400 to-teal-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.01] active:scale-95 transition-all disabled:opacity-25 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer border-0"
                     >
@@ -956,22 +974,43 @@ export function RedesignedWithdrawView({
                         )}
 
                         <div className="p-5 bg-black/40 border border-white/5 rounded-2xl space-y-3 font-mono text-xs">
-                          <div className="flex justify-between text-slate-400">
+                          <div className="flex justify-between items-center text-slate-400">
                             <span>Withdrawal Value:</span>
-                            <span className="text-white font-bold">{symbol}{formatVal(amountUsdNum)}</span>
+                            <div className="text-right">
+                              <span className="text-white font-bold block text-sm">{symbol}{amountPreferredNum.toFixed(2)}</span>
+                              <span className="text-[10px] text-slate-500 block">{amountUsdNum.toFixed(4)} USDT</span>
+                            </div>
                           </div>
-                          <div className="flex justify-between text-slate-400">
+                          
+                          <div className="flex justify-between items-center text-slate-400 border-t border-white/5 pt-3">
                             <span>Estimated Network Fee:</span>
-                            <span className="text-rose-400 font-bold">-{symbol}{formatVal(currentNetworkFeeUsd)}</span>
+                            <div className="text-right">
+                              <span className="text-rose-400 font-bold block text-sm">-{symbol}{currentNetworkFeePref.toFixed(2)}</span>
+                              <span className="text-[10px] text-slate-500 block">-{currentNetworkFeeUsd.toFixed(2)} USDT</span>
+                            </div>
                           </div>
-                          <div className="border-t border-white/5 pt-3 flex justify-between text-sm">
-                            <span className="text-slate-300 font-bold uppercase font-sans">Total Balance Deduction:</span>
-                            <span className="text-white font-bold">{symbol}{formatVal(amountUsdNum)}</span>
+
+                          <div className="border-t border-white/5 pt-3 flex justify-between items-center text-sm">
+                            <span className="text-slate-300 font-bold uppercase font-sans text-xs">Total Balance Deduction:</span>
+                            <div className="text-right">
+                              <span className="text-white font-bold block text-sm">{symbol}{amountPreferredNum.toFixed(2)}</span>
+                              <span className="text-[10px] text-slate-500 block">{amountUsdNum.toFixed(4)} USDT</span>
+                            </div>
                           </div>
-                          <div className="flex justify-between text-sm pt-1">
-                            <span className="text-slate-200 font-bold uppercase font-sans">Final Received Amount:</span>
-                            <span className="text-emerald-400 font-black text-lg">{symbol}{formatVal(userReceivesUsd)}</span>
+
+                          <div className="border-t border-white/5 pt-3 flex justify-between items-center">
+                            <span className="text-slate-200 font-bold uppercase font-sans text-xs">Final Received Amount:</span>
+                            <div className="text-right">
+                              <span className="text-emerald-400 font-black text-lg block">{symbol}{userReceivesPref.toFixed(2)}</span>
+                              <span className="text-[11px] text-slate-400 font-bold block">{userReceivesUsd.toFixed(4)} USDT</span>
+                            </div>
                           </div>
+
+                          <div className="border-t border-white/5 pt-3 flex justify-between items-center text-[10px] text-slate-400">
+                            <span>Exchange Rate:</span>
+                            <span className="font-bold text-white">1 USDT = {symbol}{exchangeRate.toFixed(4)} {preferredCurrency}</span>
+                          </div>
+
                           <div className="flex justify-between text-[9px] text-slate-500 font-sans pt-1">
                             <span>Estimated Arrival:</span>
                             <span>{selectedNetwork?.estimatedTime}</span>
@@ -1023,14 +1062,41 @@ export function RedesignedWithdrawView({
                     <div className="space-y-4">
                       {activeTrackingWithdrawal ? (
                         <>
-                          <div className="grid grid-cols-2 gap-4 font-mono text-xs">
-                            <div className="bg-white/[0.01] border border-white/5 p-3 rounded-xl">
-                              <span className="text-[8px] text-slate-500 uppercase block font-black mb-0.5">Asset Network</span>
+                          <div className="bg-white/[0.01] border border-white/5 p-4 rounded-xl font-mono text-xs space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[8px] text-slate-500 uppercase font-black">Asset Network</span>
                               <span className="text-white font-bold">{selectedNetwork?.name}</span>
                             </div>
-                            <div className="bg-white/[0.01] border border-white/5 p-3 rounded-xl">
-                              <span className="text-[8px] text-slate-500 uppercase block font-black mb-0.5">Disbursed Value</span>
-                              <span className="text-emerald-400 font-extrabold">{symbol}{formatVal(activeTrackingWithdrawal.finalAmount || (activeTrackingWithdrawal.amount - (activeTrackingWithdrawal.fee || 0)))}</span>
+                            <div className="flex justify-between items-center border-t border-white/5 pt-2">
+                              <span className="text-[8px] text-slate-500 uppercase font-black">Disbursed Value</span>
+                              <div className="text-right">
+                                <span className="text-emerald-400 font-extrabold block text-sm">
+                                  {getCurrencySymbol(activeTrackingWithdrawal.preferredCurrency || preferredCurrency)}
+                                  {(activeTrackingWithdrawal.preferredAmount || (activeTrackingWithdrawal.amount * exchangeRate)).toFixed(2)}
+                                </span>
+                                <span className="text-[10px] text-slate-500 block">
+                                  {(activeTrackingWithdrawal.finalAmount || (activeTrackingWithdrawal.amount - (activeTrackingWithdrawal.fee || 0))).toFixed(4)} USDT
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-center border-t border-white/5 pt-2">
+                              <span className="text-[8px] text-slate-500 uppercase font-black">Network Fee</span>
+                              <div className="text-right">
+                                <span className="text-rose-400 font-bold block">
+                                  -{getCurrencySymbol(activeTrackingWithdrawal.preferredCurrency || preferredCurrency)}
+                                  {((activeTrackingWithdrawal.fee || currentNetworkFeeUsd) * (activeTrackingWithdrawal.exchangeRate || exchangeRate)).toFixed(2)}
+                                </span>
+                                <span className="text-[10px] text-slate-500 block">
+                                  -{(activeTrackingWithdrawal.fee || currentNetworkFeeUsd).toFixed(2)} USDT
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-center border-t border-white/5 pt-2 text-[10px]">
+                              <span className="text-[8px] text-slate-500 uppercase font-black">Exchange Rate Used</span>
+                              <span className="text-slate-400 font-bold">
+                                1 USDT = {getCurrencySymbol(activeTrackingWithdrawal.preferredCurrency || preferredCurrency)}
+                                {(activeTrackingWithdrawal.exchangeRate || exchangeRate).toFixed(4)}
+                              </span>
                             </div>
                           </div>
 
@@ -1255,7 +1321,10 @@ export function RedesignedWithdrawView({
                           {getCoinTicker(item.blockchain)}
                         </td>
                         <td className="py-4 px-6 font-sans text-slate-300 font-medium">
-                          {net.name}
+                          <div>{net.name}</div>
+                          <div className="text-[9px] text-slate-500 font-mono mt-0.5 uppercase">
+                            Settle: {item.settlementCurrency || 'USDT'}
+                          </div>
                         </td>
                         <td className="py-4 px-6">
                           <div className="flex items-center gap-2">
@@ -1270,11 +1339,38 @@ export function RedesignedWithdrawView({
                             </button>
                           </div>
                         </td>
-                        <td className="py-4 px-6 text-right font-bold text-white text-[12px]">
-                          {symbol}{formatVal(item.amount)}
+                        <td className="py-4 px-6 text-right space-y-1">
+                          <div className="font-bold text-white text-[12px]">
+                            {item.preferredCurrency && item.preferredAmount !== undefined ? (
+                              <span title="Preferred Currency Amount">
+                                {getCurrencySymbol(item.preferredCurrency)}
+                                {item.preferredAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            ) : (
+                              <span title="Dynamic Conversion">
+                                {symbol}{formatVal(item.amount)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {item.amount.toFixed(2)} USDT
+                          </div>
+                          <div className="text-[8px] text-slate-500 font-mono">
+                            Rate: 1 USDT = {getCurrencySymbol(item.preferredCurrency || 'USD')}
+                            {(item.exchangeRate || (rates[preferredCurrency] || DEFAULT_RATES[preferredCurrency] || 1)).toFixed(2)}
+                          </div>
                         </td>
-                        <td className="py-4 px-6 text-right text-rose-400 text-[11px]">
-                          -{symbol}{formatVal(item.fee || 0)}
+                        <td className="py-4 px-6 text-right space-y-1">
+                          <div className="text-rose-400 text-[11px] font-bold">
+                            {item.preferredCurrency && item.exchangeRate ? (
+                              <span>-{getCurrencySymbol(item.preferredCurrency)}{(item.fee * item.exchangeRate).toFixed(2)}</span>
+                            ) : (
+                              <span>-{symbol}{formatVal(item.fee || 0)}</span>
+                            )}
+                          </div>
+                          <div className="text-[9px] text-slate-500 font-mono">
+                            -{(item.fee || 0).toFixed(2)} USDT
+                          </div>
                         </td>
                         <td className="py-4 px-6 text-center">
                           <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border ${sStyle.bg}`}>
@@ -1347,10 +1443,22 @@ export function RedesignedWithdrawView({
                       <div>
                         <span className="text-[8px] text-slate-500 uppercase block font-black mb-0.5 font-sans">Coin & Chain</span>
                         <span className="text-white font-bold">{getCoinTicker(item.blockchain)} ({net.name})</span>
+                        <span className="block text-[8px] text-slate-500 mt-0.5">Settle: {item.settlementCurrency || 'USDT'}</span>
                       </div>
-                      <div className="text-right">
-                        <span className="text-[8px] text-slate-500 uppercase block font-black mb-0.5 font-sans font-bold">Payout</span>
-                        <span className="text-emerald-400 font-black">{symbol}{formatVal(item.amount)}</span>
+                      <div className="text-right space-y-0.5">
+                        <span className="text-[8px] text-slate-500 uppercase block font-black font-sans font-bold">Payout</span>
+                        <span className="text-emerald-400 font-black block">
+                          {item.preferredCurrency && item.preferredAmount !== undefined ? (
+                            <span>{getCurrencySymbol(item.preferredCurrency)}{item.preferredAmount.toFixed(2)}</span>
+                          ) : (
+                            <span>{symbol}{formatVal(item.amount)}</span>
+                          )}
+                        </span>
+                        <span className="text-[9px] text-slate-400 block">{item.amount.toFixed(2)} USDT</span>
+                        <span className="text-[8px] text-slate-500 block">
+                          Rate: 1 USDT = {getCurrencySymbol(item.preferredCurrency || 'USD')}
+                          {(item.exchangeRate || (rates[preferredCurrency] || DEFAULT_RATES[preferredCurrency] || 1)).toFixed(2)}
+                        </span>
                       </div>
                     </div>
 

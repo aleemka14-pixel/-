@@ -60,6 +60,7 @@ import { RedesignedWithdrawView } from './components/RedesignedWithdrawView.tsx'
 import { RedesignedWalletView } from './components/RedesignedWalletView.tsx';
 import { AdminDepositManager } from './components/AdminDepositManager.tsx';
 import { AdminWithdrawalManager } from './components/AdminWithdrawalManager.tsx';
+import { AdminDepositLedger } from './components/AdminDepositLedger.tsx';
 import { VercelDiagnosticModal } from './components/VercelDiagnosticModal.tsx';
 import { CurrencySelector } from './components/CurrencySelector.tsx';
 import {
@@ -1076,13 +1077,30 @@ export default function App() {
     }
   };
 
-  const handleDeposit = async (amount: number, method: string, details: string, screenshotUrl?: string) => {
+  const handleDeposit = async (amount: number, method: string, details: string, screenshotUrl?: string, existingDepositId?: string, transactionHash?: string) => {
     if (!user || amount < 10) return;
     if (demoMode) {
-      return handleDepositDemo(amount, method, details, screenshotUrl);
+      return handleDepositDemo(amount, method, details, screenshotUrl, existingDepositId, transactionHash);
     }
     playSound('BET'); 
     
+    if (existingDepositId) {
+      try {
+        const batch = writeBatch(db);
+        const depRef = doc(db, 'deposits', existingDepositId);
+        batch.update(depRef, {
+          screenshotUrl: screenshotUrl || '',
+          details: details,
+          transactionHash: transactionHash || '',
+          updatedAt: Date.now()
+        });
+        await batch.commit();
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, 'deposits');
+      }
+      return;
+    }
+
     const id = Math.random().toString(36).substr(2, 9);
     const txnId = Math.random().toString(36).substr(2, 9);
     const timestamp = Date.now();
@@ -1125,66 +1143,41 @@ export default function App() {
     blockchain?: string,
     walletAddress?: string,
     fee?: number,
-    finalAmount?: number
+    finalAmount?: number,
+    preferredCurrency?: string,
+    exchangeRate?: number,
+    preferredAmount?: number
   ) => {
-    if (!user || !currentPlayer || amount < 10 || amount > currentPlayer.balance) return;
+    if (!user || !currentPlayer) return;
     if (demoMode) {
-      return handleWithdrawDemo(amount, method, details, blockchain, walletAddress, fee, finalAmount);
+      return handleWithdrawDemo(amount, method, details, blockchain, walletAddress, fee, finalAmount, preferredCurrency, exchangeRate, preferredAmount);
     }
-
-    if (state.isWithdrawLimit24hEnabled) {
-      const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-      const recentWithdrawal = state.withdrawals.find(w => 
-        w.playerId === user.uid && 
-        w.timestamp >= twentyFourHoursAgo &&
-        (w.status === 'pending' || w.status === 'completed')
-      );
-      if (recentWithdrawal) {
-        return; // Silent block or fail-safe guard
-      }
-    }
-
-    const id = Math.random().toString(36).substr(2, 9);
-    const txnId = Math.random().toString(36).substr(2, 9);
-    const timestamp = Date.now();
-
-    const newRequest: WithdrawalRequest = {
-      id,
-      playerId: user.uid,
-      playerName: currentPlayer.name || user.displayName || 'Player',
-      amount,
-      method,
-      details,
-      status: 'pending',
-      timestamp,
-      playerBalanceAtRequest: currentPlayer.balance,
-      blockchain: blockchain || method,
-      walletAddress: walletAddress || details,
-      fee: fee !== undefined ? fee : 0,
-      finalAmount: finalAmount !== undefined ? finalAmount : amount
-    };
-
-    const txn: Transaction = {
-      id: txnId,
-      playerId: user.uid,
-      type: 'withdrawal',
-      amount,
-      timestamp,
-      status: 'pending'
-    };
 
     try {
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'withdrawals', id), newRequest);
-      batch.set(doc(db, 'transactions', txnId), txn);
-      batch.update(doc(db, 'players', user.uid), { balance: increment(-amount) });
-      batch.update(doc(db, 'users', user.uid), { 
-        walletBalance: increment(-amount),
-        updatedAt: Date.now()
+      const response = await fetch('/api/create-withdrawal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          amount,
+          network: blockchain || method,
+          withdrawalAddress: walletAddress || details,
+          preferredCurrency,
+          exchangeRate,
+          preferredAmount,
+          settlementCurrency: 'USDT'
+        })
       });
-      await batch.commit();
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'withdrawals');
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to submit withdrawal request via secure API.');
+      }
+    } catch (e: any) {
+      console.error("API create-withdrawal failed:", e);
+      throw e;
     }
   };
 
@@ -1255,8 +1248,9 @@ export default function App() {
     }
   };
 
-  const resultBet = async (playerId: string, outcome: 'win' | 'lose') => {
+  const resultBet = async (playerId: string, outcome: 'win' | 'lose', settlementCurrency: string = 'USDT') => {
     try {
+      const currentRates = exchangeRates || getCachedRates().rates;
       const playerRef = doc(db, 'players', playerId);
       const playerSnap = await getDoc(playerRef);
       if (!playerSnap.exists()) return;
@@ -1271,14 +1265,21 @@ export default function App() {
 
       if (isWin) {
         const winTxnId = Math.random().toString(36).substr(2, 9);
+        const exRate = currentRates[settlementCurrency] || 1.0;
+        const settledAmt = winAmount * exRate;
+
         const winTxn: Transaction = {
           id: winTxnId,
           playerId: playerId,
           type: 'win',
           amount: winAmount,
           timestamp: Date.now(),
-          status: 'completed'
-        };
+          status: 'completed',
+          settlementCurrency,
+          exchangeRate: exRate,
+          preferredCurrency: settlementCurrency,
+          preferredAmount: settledAmt
+        } as any;
         batch.set(doc(db, 'transactions', winTxnId), winTxn);
         batch.update(playerRef, { 
           balance: increment(winAmount),
@@ -1303,11 +1304,12 @@ export default function App() {
     }
   };
 
-  const resultAllBets = async (outcome: 'win' | 'lose') => {
+  const resultAllBets = async (outcome: 'win' | 'lose', settlementCurrency: string = 'USDT') => {
     const pendingPlayers = state.players.filter(p => p.pendingBet);
     if (pendingPlayers.length === 0) return;
 
     try {
+      const currentRates = exchangeRates || getCachedRates().rates;
       const batch = writeBatch(db);
       let winSoundPlayed = false;
       let loseSoundPlayed = false;
@@ -1321,14 +1323,21 @@ export default function App() {
 
         if (isWin) {
           const winTxnId = Math.random().toString(36).substr(2, 9);
+          const exRate = currentRates[settlementCurrency] || 1.0;
+          const settledAmt = winAmount * exRate;
+
           const winTxn: Transaction = {
             id: winTxnId,
             playerId: player.id,
             type: 'win',
             amount: winAmount,
             timestamp: Date.now(),
-            status: 'completed'
-          };
+            status: 'completed',
+            settlementCurrency,
+            exchangeRate: exRate,
+            preferredCurrency: settlementCurrency,
+            preferredAmount: settledAmt
+          } as any;
           batch.set(doc(db, 'transactions', winTxnId), winTxn);
           batch.update(playerRef, { 
             balance: increment(winAmount),
@@ -1977,7 +1986,7 @@ export default function App() {
     }
   };
 
-  const handleDepositDemo = async (amount: number, method: string, details: string, screenshotUrl?: string) => {
+  const handleDepositDemo = async (amount: number, method: string, details: string, screenshotUrl?: string, existingDepositId?: string, transactionHash?: string) => {
     if (!user) return;
     playSound('BET'); 
     const timestamp = Date.now();
@@ -2003,7 +2012,10 @@ export default function App() {
     blockchain?: string,
     walletAddress?: string,
     fee?: number,
-    finalAmount?: number
+    finalAmount?: number,
+    preferredCurrency?: string,
+    exchangeRate?: number,
+    preferredAmount?: number
   ) => {
     if (!user || !activePlayer || amount < 10 || amount > activePlayer.balance) return;
     const timestamp = Date.now();
@@ -2015,8 +2027,12 @@ export default function App() {
       type: 'withdrawal',
       amount,
       timestamp,
-      status: 'completed'
-    };
+      status: 'completed',
+      preferredCurrency: preferredCurrency || 'USD',
+      exchangeRate: exchangeRate ? Number(exchangeRate) : 1.0,
+      preferredAmount: preferredAmount ? Number(preferredAmount) : amount,
+      settlementCurrency: 'USDT'
+    } as any;
 
     const demoRequest: WithdrawalRequest = {
       id: 'demo-req-' + Math.random().toString(36).substr(2, 9),
@@ -2031,8 +2047,12 @@ export default function App() {
       blockchain: blockchain || method,
       walletAddress: walletAddress || details,
       fee: fee !== undefined ? fee : 0,
-      finalAmount: finalAmount !== undefined ? finalAmount : amount
-    };
+      finalAmount: finalAmount !== undefined ? finalAmount : amount,
+      preferredCurrency: preferredCurrency || 'USD',
+      exchangeRate: exchangeRate ? Number(exchangeRate) : 1.0,
+      preferredAmount: preferredAmount ? Number(preferredAmount) : amount,
+      settlementCurrency: 'USDT'
+    } as any;
 
     setState(prev => ({
       ...prev,
@@ -2764,11 +2784,16 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
   const [result, setResult] = useState<'win' | 'lose' | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const maxBetPossible = Math.min(Math.max(1, Math.floor(currentPlayer?.balance || 0)), state.isBetLimitEnabled ? (state.maxBet || 500) : 1000000);
-  const isMaxBet = betAmount === maxBetPossible;
-
   const currentCurrency = preferredCurrency || localStorage.getItem('preferred_currency') || 'USD';
   const currentRates = rates || getCachedRates().rates;
+  const rate = currentRates[currentCurrency] || 1;
+
+  const isZeroDecimal = ['JPY', 'IDR', 'KRW', 'VND', 'CLP', 'HNL', 'GNF', 'KMF', 'BIF'].includes(currentCurrency);
+  const minLocalBet = isZeroDecimal ? 1 : 0.01;
+  const minBetInUsd = minLocalBet / rate;
+
+  const maxBetPossible = Math.min(currentPlayer?.balance || 0, state.isBetLimitEnabled ? (state.maxBet || 500) : 1000000);
+  const isMaxBet = Math.abs(betAmount - maxBetPossible) < 0.00001;
 
   const formatBalanceLocal = (val: number) => {
     return `${getCurrencySymbol(currentCurrency)}${formatCurrencyValue(val, currentCurrency, currentRates)}`;
@@ -2812,9 +2837,9 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
   // Sync betAmount if balance drops below current bet
   useEffect(() => {
     if (currentPlayer && betAmount > currentPlayer.balance) {
-      setBetAmount(Math.max(1, Math.min(Math.floor(currentPlayer.balance), 10)));
+      setBetAmount(Math.max(minBetInUsd, Math.min(currentPlayer.balance, 10)));
     }
-  }, [currentPlayer?.balance]);
+  }, [currentPlayer?.balance, minBetInUsd]);
 
   const playerTransactions = useMemo(() => 
     currentPlayer ? state.transactions.filter(t => t.playerId === currentPlayer.id) : [], 
@@ -3174,11 +3199,13 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
               </div>
                 <input 
                 type="range" 
-                min="1" 
-                max={maxBetPossible}
-                value={betAmount || 0} 
+                min={minLocalBet} 
+                max={Math.max(minLocalBet, maxBetPossible * rate)}
+                step={minLocalBet}
+                value={isZeroDecimal ? Math.round(betAmount * rate) : Math.round(betAmount * rate * 100) / 100} 
                 onChange={(e) => {
-                  setBetAmount(Number(e.target.value));
+                  const localVal = Number(e.target.value);
+                  setBetAmount(localVal / rate);
                   playSound('CLICK'); 
                 }}
                 onMouseDown={() => setIsDragging(true)}
@@ -4144,9 +4171,12 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
     blockchain?: string,
     walletAddress?: string,
     fee?: number,
-    finalAmount?: number
+    finalAmount?: number,
+    preferredCurrency?: string,
+    exchangeRate?: number,
+    preferredAmount?: number
   ) => void,
-  onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string) => void,
+  onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string, existingId?: string, txHash?: string) => void,
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void,
   onResetGraph: () => Promise<void>,
   preferredCurrency?: string,
@@ -4311,9 +4341,21 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
         currentPlayer={currentPlayer}
         deposits={state.deposits || []}
         onBack={() => setShowDepositView(false)}
-        onDeposit={(amt, depMethod, depDetails, screenshotUrl) => {
-          onDeposit(amt, depMethod, depDetails, screenshotUrl);
-          setShowDepositView(false);
+        onDeposit={(amt, depMethod, depDetails, screenshotUrl, existingId, txHash) => {
+          onDeposit(amt, depMethod, depDetails, screenshotUrl, existingId, txHash);
+          // Don't close the view immediately if we are on step 'status' to allow real-time tracking,
+          // but wait, since onDeposit is called on submit, we should stay in the success/status step.
+          // Wait, let's see how RedesignedDepositView handles transitioning to 'status' step.
+          // In RedesignedDepositView, handleSubmitDeposit sets currentStep to 'status'.
+          // If we close the deposit view immediately (setShowDepositView(false)), the user won't see the 'status' timeline!
+          // So we should NOT set setShowDepositView(false) if we are in status step, or we can let RedesignedDepositView handle its own back transitions!
+          // Yes! Let's check: if we are in RedesignedDepositView, onBack is what goes back to Wallet overview.
+          // So onDeposit should just register the transaction but we should NOT do setShowDepositView(false) inside onDeposit!
+          // This is incredibly important! If setShowDepositView(false) is called, it closes the modal/view and the user can't see the real-time status!
+          // Let's modify onDeposit inside RedesignedDepositView so it doesn't close the modal if existingId is provided, or let RedesignedDepositView manage the view state.
+          // Wait, if it is not a crypto deposit, maybe it closes?
+          // Let's look: if we don't close it, onBack will still close it. So let's make it only close if not doing real-time status tracking, or better, don't close it inside onDeposit but let the user close it via "Back to Wallet Overview" (which triggers onBack)!
+          // Yes, that is incredibly smart and matches user expectation perfectly!
         }}
         preferredCurrency={currentCurrency}
         rates={currentRates}
@@ -4331,14 +4373,24 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
         currentPlayer={currentPlayer}
         withdrawalsHistory={history}
         onBack={() => setShowWithdrawView(false)}
-        onWithdraw={async (amountUsd, networkId, walletAddress, feeUsd) => {
+        onWithdraw={async (amountUsd, networkId, walletAddress, feeUsd, prefCurrency, exRate, prefAmount) => {
           const network = (state.withdrawalNetworks || []).find(n => n.id === networkId);
           const blockchainName = network ? network.name : networkId.toUpperCase();
           const finalAmount = amountUsd - feeUsd;
           const methodString = `Crypto ${blockchainName}`;
           const detailsString = `Address: ${walletAddress}`;
-          onWithdraw(amountUsd, methodString, detailsString, blockchainName, walletAddress, feeUsd, finalAmount);
-          setShowWithdrawView(false);
+          await onWithdraw(
+            amountUsd,
+            methodString,
+            detailsString,
+            blockchainName,
+            walletAddress,
+            feeUsd,
+            finalAmount,
+            prefCurrency,
+            exRate,
+            prefAmount
+          );
         }}
         preferredCurrency={currentCurrency}
         rates={currentRates}
@@ -5104,9 +5156,15 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
 
 
 const AdminPendingBetRow = memo(({ 
-  player 
+  player,
+  onResultBet,
+  settlementCurrency,
+  playSound
 }: { 
   player: Player; 
+  onResultBet?: (playerId: string, outcome: 'win' | 'lose', settlementCurrency: string) => void;
+  settlementCurrency: string;
+  playSound: (key: any) => void;
 }) => {
   const [timeLeft, setTimeLeft] = useState<number>(0);
 
@@ -5153,15 +5211,39 @@ const AdminPendingBetRow = memo(({
              </span>
            </div>
            <div className="flex items-center gap-3 mt-1">
-             <p className="text-emerald-400 font-mono text-xl font-black">₹{player.pendingBet?.amount.toFixed(2)}</p>
+             <p className="text-emerald-400 font-mono text-xl font-black">
+               ₹{((player.pendingBet?.amount || 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
+             </p>
              <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest">ID: {player.id}</span>
            </div>
          </div>
       </div>
       
-      <div className="flex items-center gap-2 px-4 py-2 bg-white/[0.02] border border-white/5 rounded-2xl">
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Awaiting Bulk Action</span>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => {
+            playSound('CLICK');
+            onResultBet?.(player.id, 'win', settlementCurrency);
+          }}
+          className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer border-0 transition-colors"
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          Win
+        </button>
+        <button
+          onClick={() => {
+            playSound('CLICK');
+            onResultBet?.(player.id, 'lose', settlementCurrency);
+          }}
+          className="bg-rose-500 hover:bg-rose-400 text-rose-950 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer border-0 transition-colors"
+        >
+          <XCircle className="w-3.5 h-3.5" />
+          Loss
+        </button>
+        <div className="flex items-center gap-2 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-xl font-mono text-[9px]">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-slate-400 font-bold uppercase tracking-wider">In: {settlementCurrency}</span>
+        </div>
       </div>
     </div>
   );
@@ -5183,7 +5265,7 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
         <div className="flex items-center gap-2.5">
           <span className={`w-2.5 h-2.5 rounded-full ${isPositive ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500 animate-pulse'}`} />
           <p className="font-mono font-black text-2xl text-white">
-            {isPositive ? '+' : ''}₹{profit.toFixed(2)}
+            {isPositive ? '+' : ''}₹{(profit * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
           </p>
         </div>
         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
@@ -5193,7 +5275,7 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
           <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between gap-6">
             <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Trigger Type</span>
             <span className={`text-[10px] font-mono font-extrabold px-2.5 py-0.5 rounded-lg ${data.type === 'bet' ? 'bg-white/5 text-slate-300' : 'bg-[#10b981]/10 text-emerald-400 border border-emerald-500/10'}`}>
-              {data.type === 'bet' ? `Placed Bet (₹${data.amount})` : `Payout Win (₹${data.amount})`}
+              {data.type === 'bet' ? `Placed Bet (₹${((data.amount || 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)})` : `Payout Win (₹${((data.amount || 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)})`}
             </span>
           </div>
         )}
@@ -5215,8 +5297,8 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   onToggleBettingStatus: () => void,
   onUpdatePlayerOverride: (id: string, override: 'win' | 'lose' | 'none') => void,
   onSwitchPlayer: (id: string) => void,
-  onResultBet: (playerId: string, outcome: 'win' | 'lose') => void,
-  onResultAllBets: (outcome: 'win' | 'lose') => void,
+  onResultBet: (playerId: string, outcome: 'win' | 'lose', settlementCurrency?: string) => void,
+  onResultAllBets: (outcome: 'win' | 'lose', settlementCurrency?: string) => void,
   onUpdateWithdrawalStatus: (id: string, status: 'completed' | 'rejected') => void,
   onUpdateDepositStatus: (id: string, status: 'completed' | 'rejected') => void,
   onToggleMaintenanceMode: () => void,
@@ -5246,6 +5328,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   const [activeSpreadsheet, setActiveSpreadsheet] = useState<'deposits' | 'withdrawals' | null>(null);
 
   const [bulkSettleType, setBulkSettleType] = useState<'win' | 'lose' | null>(null);
+  const [settlementCurrency, setSettlementCurrency] = useState<string>('USDT');
   const [isProcessingBulk, setIsProcessingBulk] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [bulkSettleError, setBulkSettleError] = useState<string | null>(null);
@@ -5297,15 +5380,18 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
       const activeBets = state.players.filter(p => p.pendingBet);
       const betCount = activeBets.length;
       const totalSum = activeBets.reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0);
+      const rates = getCachedRates().rates;
+      const inrRate = rates['INR'] || 83.50;
+      const totalSumInr = totalSum * inrRate;
       
-      await onResultAllBets(bulkSettleType);
+      await onResultAllBets(bulkSettleType, settlementCurrency);
 
       // Settle animation to 100%
       clearInterval(progressInterval);
       setProcessingProgress(100);
       setTimeout(() => {
         setIsProcessingBulk(false);
-        setBulkSettleSuccess(`All ${betCount} pending bets (totaling ₹${totalSum.toFixed(2)}) were successfully settled as ${bulkSettleType.toUpperCase()}!`);
+        setBulkSettleSuccess(`All ${betCount} pending bets (totaling ₹${totalSumInr.toFixed(2)}) were successfully settled as ${bulkSettleType.toUpperCase()}!`);
         setBulkSettleType(null);
 
         // Auto-dismiss after 2.5 seconds
@@ -5595,19 +5681,39 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
               <div className="flex flex-wrap items-center gap-2 mt-1 justify-center lg:justify-start">
                 <span className="text-slate-400 text-xs">Total Pool Accumulation:</span>
                 <span className="text-emerald-400 font-mono text-base font-black">
-                  ₹{state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0).toFixed(2)}
+                  ₹{(state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
                 </span>
                 <span className="text-slate-600 font-mono text-xs">|</span>
                 <span className="text-slate-400 text-xs">{state.players.filter(p => p.pendingBet).length} active bets</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-center lg:justify-end">
+            <div className="flex flex-wrap items-end gap-3 w-full lg:w-auto justify-center lg:justify-end">
+              {/* Settlement Currency Selector */}
+              <div className="flex flex-col items-start gap-1 w-full sm:w-auto">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider font-mono">Settle In Currency</span>
+                <select
+                  value={settlementCurrency}
+                  onChange={(e) => {
+                    playSound('CLICK');
+                    setSettlementCurrency(e.target.value);
+                  }}
+                  className="w-full sm:w-auto bg-black/60 text-white border border-white/10 rounded-xl px-3 py-2.5 text-xs font-mono font-bold focus:outline-none focus:border-emerald-500/50 cursor-pointer min-w-[140px]"
+                >
+                  <option value="USDT">USDT (Native)</option>
+                  {Object.values(SUPPORTED_CURRENCIES).map((curr) => (
+                    <option key={curr.code} value={curr.code}>
+                      {curr.flag} {curr.code} ({curr.symbol})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <motion.button 
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => handleInitiateBulkSettle('win')}
-                className="w-full sm:w-auto bg-emerald-500 text-emerald-950 px-5 py-2.5 rounded-xl text-[10px] font-black hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full sm:w-auto bg-emerald-500 text-emerald-950 px-5 py-2.5 rounded-xl text-[10px] font-black hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer h-[38px]"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 Settle All as Win
@@ -5617,7 +5723,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => handleInitiateBulkSettle('lose')}
-                className="w-full sm:w-auto bg-rose-500 text-rose-950 px-5 py-2.5 rounded-xl text-[10px] font-black hover:bg-rose-400 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full sm:w-auto bg-rose-500 text-rose-950 px-5 py-2.5 rounded-xl text-[10px] font-black hover:bg-rose-400 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer h-[38px]"
               >
                 <XCircle className="w-4 h-4" />
                 Settle All as Loss
@@ -5631,7 +5737,13 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
             <div className="p-20 text-center text-slate-600 font-display italic">No active bets currently awaiting outcome</div>
           ) : (
             state.players.filter(p => p.pendingBet).map(player => (
-              <AdminPendingBetRow key={player.id} player={player} />
+              <AdminPendingBetRow 
+                key={player.id} 
+                player={player} 
+                onResultBet={onResultBet}
+                settlementCurrency={settlementCurrency}
+                playSound={playSound}
+              />
             ))
           )}
         </div>
@@ -5666,7 +5778,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">DEPOSIT REQUESTS LEDGER</p>
             <div className="flex items-baseline gap-2">
-              <p className="text-2xl font-display font-black text-white">₹{state.deposits.filter(d => d.status === 'pending').reduce((s, d) => s + d.amount, 0).toLocaleString('en-IN')}</p>
+              <p className="text-2xl font-display font-black text-white">
+                ₹{(state.deposits.filter(d => d.status === 'pending').reduce((s, d) => s + d.amount, 0) * (getCachedRates().rates['INR'] || 83.50)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
               <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">Open Spreadsheet ↗</span>
             </div>
           </div>
@@ -5699,7 +5813,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
           <div>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">WITHDRAWAL REQUESTS LEDGER</p>
             <div className="flex items-baseline gap-2">
-              <p className="text-2xl font-display font-black text-white">₹{state.withdrawals.filter(w => w.status === 'pending').reduce((s, d) => s + d.amount, 0).toLocaleString('en-IN')}</p>
+              <p className="text-2xl font-display font-black text-white">
+                ₹{(state.withdrawals.filter(w => w.status === 'pending').reduce((s, d) => s + d.amount, 0) * (getCachedRates().rates['INR'] || 83.50)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
               <span className="text-[9px] text-blue-400 font-bold uppercase tracking-tight">Open Spreadsheet ↗</span>
             </div>
           </div>
@@ -5886,9 +6002,16 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                     networks={state.withdrawalNetworks || []}
                     settings={state.withdrawalSettings}
                     players={state.players}
+                    deposits={state.deposits || []}
                     playSound={playSound}
                   />
                 ) : activeSpreadsheet === 'deposits' ? (
+                  <AdminDepositLedger 
+                    deposits={state.deposits || []}
+                    players={state.players}
+                    playSound={playSound}
+                  />
+                ) : activeSpreadsheet === 'old_deposits_unused' ? (
                   <div className="space-y-6 w-full text-left">
                     {/* Advanced Filter Control Bar */}
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-4 bg-slate-950/40 p-4 border border-white/5 rounded-2xl">
@@ -6059,8 +6182,12 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                                         </div>
                                       </div>
                                     </td>
-                                    <td className="p-4 border-r border-white/5 text-right text-slate-400">₹{(req.playerBalanceAtRequest ?? 0).toFixed(2)}</td>
-                                    <td className="p-4 border-r border-white/5 text-right font-bold text-emerald-400 text-sm">₹{(req.amount ?? 0).toFixed(2)}</td>
+                                    <td className="p-4 border-r border-white/5 text-right text-slate-400">
+                                      ₹{((req.playerBalanceAtRequest ?? 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
+                                    </td>
+                                    <td className="p-4 border-r border-white/5 text-right font-bold text-emerald-400 text-sm">
+                                      ₹{((req.amount ?? 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
+                                    </td>
                                     <td className="p-4 border-r border-white/5">
                                       <span className="bg-white/5 text-[9px] font-black px-2 py-0.5 rounded uppercase text-slate-400 border border-white/5">{req.method}</span>
                                     </td>
@@ -6177,11 +6304,15 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                                 <div className="grid grid-cols-2 gap-3 bg-white/[0.01] border border-white/5 p-3 rounded-xl font-mono text-[11px]">
                                   <div>
                                     <p className="text-[8px] text-slate-500 uppercase tracking-widest mb-0.5">Balance At Req</p>
-                                    <span className="font-bold text-slate-400">₹{(req.playerBalanceAtRequest ?? 0).toFixed(2)}</span>
+                                    <span className="font-bold text-slate-400">
+                                      ₹{((req.playerBalanceAtRequest ?? 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
+                                    </span>
                                   </div>
                                   <div className="text-right">
                                     <p className="text-[8px] text-slate-500 uppercase tracking-widest mb-0.5 text-emerald-400">Deposit Amount</p>
-                                    <span className="font-bold text-emerald-400 text-sm">₹{(req.amount ?? 0).toFixed(2)}</span>
+                                    <span className="font-bold text-emerald-400 text-sm">
+                                      ₹{((req.amount ?? 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
+                                    </span>
                                   </div>
                                 </div>
 
@@ -6813,6 +6944,42 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                     className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 focus:outline-none focus:border-emerald-500 text-slate-300 text-sm min-h-[140px] resize-none shadow-inner leading-relaxed"
                   />
                 </div>
+
+                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl space-y-6">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2 px-1 text-emerald-400">Crypto Deposit Wallets Settings</label>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-2">TRC20 Wallet Address (USDT)</label>
+                      <input 
+                        type="text" 
+                        value={paymentEdit.usdtTrc20Address || ''}
+                        onChange={(e) => setPaymentEdit(prev => ({ ...prev, usdtTrc20Address: e.target.value }))}
+                        placeholder="TRC20 Wallet Address (e.g., TYb3j...)"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 text-slate-200 font-mono text-xs shadow-inner"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-2">BEP20 Wallet Address (USDT)</label>
+                      <input 
+                        type="text" 
+                        value={paymentEdit.usdtBep20Address || ''}
+                        onChange={(e) => setPaymentEdit(prev => ({ ...prev, usdtBep20Address: e.target.value }))}
+                        placeholder="BEP20 Wallet Address (e.g., 0x2791...)"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 text-slate-200 font-mono text-xs shadow-inner"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-2">ERC20 Wallet Address (USDT)</label>
+                      <input 
+                        type="text" 
+                        value={paymentEdit.usdtErc20Address || ''}
+                        onChange={(e) => setPaymentEdit(prev => ({ ...prev, usdtErc20Address: e.target.value }))}
+                        placeholder="ERC20 Wallet Address (e.g., 0xdAC1...)"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 text-slate-200 font-mono text-xs shadow-inner"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-6">
@@ -7025,7 +7192,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                               <span className="bg-emerald-500/10 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest border border-emerald-500/20">Active Player</span>
                             )}
                           </div>
-                          <p className="text-xs text-slate-500 font-mono mt-0.5">Balance: ₹{(player.balance ?? 0).toFixed(2)} | Code: {player.referralCode} | Refs: {player.referralCount}</p>
+                          <p className="text-xs text-slate-500 font-mono mt-0.5">
+                            Balance: ₹{((player.balance ?? 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)} | Code: {player.referralCode} | Refs: {player.referralCount}
+                          </p>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-3">
@@ -7084,7 +7253,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
             <div className={`px-5 py-3 rounded-2xl bg-white/[0.02] border text-left min-w-[200px] transition-all duration-300 ${currentHouseProfit >= 0 ? 'border-emerald-500/10' : 'border-rose-500/10'}`}>
               <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">TODAY'S NET INTEREST</p>
               <p className={`font-mono text-2xl font-black transition-all ${currentHouseProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {currentHouseProfit >= 0 ? '+' : ''}₹{currentHouseProfit.toFixed(2)}
+                {currentHouseProfit >= 0 ? '+' : ''}₹{(currentHouseProfit * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
               </p>
             </div>
           </div>
@@ -7114,7 +7283,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                   stroke="rgba(255,255,255,0.15)" 
                   fontSize={9} 
                   fontFamily="monospace"
-                  tickFormatter={(v) => `₹${v}`}
+                  tickFormatter={(v) => `₹${(v * (getCachedRates().rates['INR'] || 83.50)).toFixed(0)}`}
                   tickLine={false}
                   axisLine={false}
                   dx={-10}
@@ -7229,48 +7398,78 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
               )}
 
               {/* Confirmation View */}
-              {bulkSettleType && !isProcessingBulk && !bulkSettleSuccess && !bulkSettleError && (
-                <div className="space-y-6">
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-xl ${
-                    bulkSettleType === 'win' 
-                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
-                      : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
-                  }`}>
-                    {bulkSettleType === 'win' ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
-                  </div>
+              {bulkSettleType && !isProcessingBulk && !bulkSettleSuccess && !bulkSettleError && (() => {
+                const currentRates = getCachedRates().rates;
+                const exRate = currentRates[settlementCurrency] || 1.0;
+                const isUsdt = settlementCurrency === 'USDT';
+                const symbol = isUsdt ? 'USDT' : (SUPPORTED_CURRENCIES[settlementCurrency]?.symbol || '$');
+                const flag = isUsdt ? '🪙' : (SUPPORTED_CURRENCIES[settlementCurrency]?.flag || '💵');
+                return (
+                  <div className="space-y-6">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-xl ${
+                      bulkSettleType === 'win' 
+                        ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
+                        : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                    }`}>
+                      {bulkSettleType === 'win' ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
+                    </div>
 
-                  <div className="space-y-2">
-                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">
-                      Confirm Bulk {bulkSettleType === 'win' ? 'Win' : 'Loss'}?
-                    </h3>
-                    <p className="text-slate-400 text-sm leading-relaxed">
-                      You are about to resolve <strong className="text-white">{state.players.filter(p => p.pendingBet).length} active bets</strong> totaling <span className="text-emerald-400 font-mono font-bold">₹{state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0).toFixed(2)}</span> at once.
-                    </p>
-                    <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest bg-white/5 py-1.5 px-3 rounded-lg max-w-xs mx-auto font-mono">
-                      THIS SHALL MUTATE ALL ACTIVE RUNNING ACCOUNTS INDELIBLY
-                    </p>
-                  </div>
+                    <div className="space-y-2">
+                      <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">
+                        Confirm Bulk {bulkSettleType === 'win' ? 'Win' : 'Loss'}?
+                      </h3>
+                      <p className="text-slate-400 text-sm leading-relaxed">
+                        You are about to resolve <strong className="text-white">{state.players.filter(p => p.pendingBet).length} active bets</strong> totaling <span className="text-emerald-400 font-mono font-bold">₹{(state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}</span> at once.
+                      </p>
 
-                  <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                    <button
-                      onClick={() => setBulkSettleType(null)}
-                      className="w-full sm:w-1/2 py-4 bg-white/5 border border-white/5 text-slate-400 font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white/10 hover:text-white transition-all cursor-pointer font-sans"
-                    >
-                      Refuse / Back
-                    </button>
-                    <button
-                      onClick={handleExecuteBulkSettle}
-                      className={`w-full sm:w-1/2 py-4 font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl transition-all cursor-pointer border-0 font-sans ${
-                        bulkSettleType === 'win'
-                          ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-emerald-500/15 hover:scale-[1.02]'
-                          : 'bg-rose-500 text-rose-950 hover:bg-rose-400 shadow-rose-500/15 hover:scale-[1.02]'
-                      }`}
-                    >
-                      Authorize Settle
-                    </button>
+                      {bulkSettleType === 'win' && (
+                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-2 text-left max-w-xs mx-auto">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-slate-500">Settle In:</span>
+                            <span className="text-white font-bold">{flag} {settlementCurrency}</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-slate-500">Exchange Rate:</span>
+                            <span className="text-white">1 USDT = {exRate.toFixed(4)} {settlementCurrency}</span>
+                          </div>
+                          <div className="border-t border-white/5 my-1" />
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-emerald-400 font-bold">Est. Total Payout:</span>
+                            <span className="text-emerald-400 font-bold">
+                              {isUsdt ? '' : symbol}
+                              {((state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) * 2) * exRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {isUsdt ? ' USDT' : ''}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest bg-white/5 py-1.5 px-3 rounded-lg max-w-xs mx-auto font-mono">
+                        THIS SHALL MUTATE ALL ACTIVE RUNNING ACCOUNTS INDELIBLY
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                      <button
+                        onClick={() => setBulkSettleType(null)}
+                        className="w-full sm:w-1/2 py-4 bg-white/5 border border-white/5 text-slate-400 font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white/10 hover:text-white transition-all cursor-pointer font-sans"
+                      >
+                        Refuse / Back
+                      </button>
+                      <button
+                        onClick={handleExecuteBulkSettle}
+                        className={`w-full sm:w-1/2 py-4 font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl transition-all cursor-pointer border-0 font-sans ${
+                          bulkSettleType === 'win'
+                            ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-emerald-500/15 hover:scale-[1.02]'
+                            : 'bg-rose-500 text-rose-950 hover:bg-rose-400 shadow-rose-500/15 hover:scale-[1.02]'
+                        }`}
+                      >
+                        Authorize Settle
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </motion.div>
           </div>
         )}

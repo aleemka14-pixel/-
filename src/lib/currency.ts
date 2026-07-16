@@ -165,7 +165,7 @@ export function getCachedRates(): { rates: Record<string, number>; lastUpdated: 
       }
     }
   } catch (e) {
-    console.error('Failed to parse cached exchange rates:', e);
+    console.warn('Failed to parse cached exchange rates:', e);
   }
   return { rates: DEFAULT_RATES, lastUpdated: 0 };
 }
@@ -175,7 +175,7 @@ export function setCachedRates(rates: Record<string, number>, timestamp: number)
     localStorage.setItem('cached_exchange_rates', JSON.stringify(rates));
     localStorage.setItem('last_exchange_rate_update', timestamp.toString());
   } catch (e) {
-    console.error('Failed to cache exchange rates:', e);
+    console.warn('Failed to cache exchange rates:', e);
   }
 }
 
@@ -191,8 +191,8 @@ export async function fetchExchangeRates(): Promise<Record<string, number>> {
     }
     throw new Error('Invalid format returned by exchange rate API');
   } catch (err) {
-    console.error('Failed fetching exchange rates from live API:', err);
-    throw err;
+    console.warn('Failed fetching exchange rates from live API, falling back to cached or default rates:', err);
+    return getCachedRates().rates;
   }
 }
 

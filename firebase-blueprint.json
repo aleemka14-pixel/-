@@ -5,13 +5,16 @@
       "description": "Represents the secure user wallet and profile.",
       "type": "object",
       "properties": {
+        "userId": { "type": "string" },
         "username": { "type": "string" },
         "email": { "type": "string" },
+        "balance": { "type": "number" },
         "walletBalance": { "type": "number" },
         "createdAt": { "type": "number" },
-        "updatedAt": { "type": "number" }
+        "updatedAt": { "type": "number" },
+        "status": { "type": "string" }
       },
-      "required": ["username", "email", "walletBalance", "createdAt", "updatedAt"]
+      "required": ["username", "email", "balance", "createdAt"]
     },
     "Player": {
       "title": "Player",
@@ -36,6 +39,18 @@
       },
       "required": ["id", "name", "balance", "override", "referralCode", "referralCount"]
     },
+    "Wallet": {
+      "title": "Wallet",
+      "description": "Blockchain wallet assigned to a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "walletAddress": { "type": "string" },
+        "network": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "walletAddress", "network", "createdAt"]
+    },
     "Transaction": {
       "title": "Transaction",
       "description": "Financial records of the player.",
@@ -46,7 +61,15 @@
         "type": { "type": "string", "enum": ["deposit", "bet", "win", "withdrawal"] },
         "amount": { "type": "number" },
         "timestamp": { "type": "number" },
-        "status": { "type": "string", "enum": ["pending", "completed", "failed"] }
+        "status": { "type": "string", "enum": ["pending", "completed", "failed", "confirmed"] },
+        "transactionId": { "type": "string" },
+        "userId": { "type": "string" },
+        "network": { "type": "string" },
+        "transactionHash": { "type": "string" },
+        "balanceBefore": { "type": "number" },
+        "balanceAfter": { "type": "number" },
+        "referenceId": { "type": "string" },
+        "createdAt": { "type": "number" }
       },
       "required": ["id", "playerId", "type", "amount", "timestamp", "status"]
     },
@@ -60,11 +83,19 @@
         "amount": { "type": "number" },
         "method": { "type": "string" },
         "details": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "completed", "rejected"] },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "rejected", "failed", "cancelled", "reviewing", "approved", "broadcasted"] },
         "timestamp": { "type": "number" },
-        "playerBalanceAtRequest": { "type": "number" }
+        "playerBalanceAtRequest": { "type": "number" },
+        "withdrawalId": { "type": "string" },
+        "userId": { "type": "string" },
+        "network": { "type": "string" },
+        "withdrawalAddress": { "type": "string" },
+        "transactionHash": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "completedAt": { "type": "number" },
+        "processedAt": { "type": "number" }
       },
-      "required": ["id", "playerId", "amount", "method", "details", "status", "timestamp", "playerBalanceAtRequest"]
+      "required": ["id", "playerId", "amount", "status", "timestamp"]
     },
     "DepositRequest": {
       "title": "Deposit",
@@ -77,11 +108,33 @@
         "method": { "type": "string" },
         "details": { "type": "string" },
         "screenshotUrl": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "completed", "rejected"] },
+        "status": { "type": "string", "enum": ["pending", "completed", "rejected", "confirmed"] },
         "timestamp": { "type": "number" },
-        "playerBalanceAtRequest": { "type": "number" }
+        "playerBalanceAtRequest": { "type": "number" },
+        "depositId": { "type": "string" },
+        "userId": { "type": "string" },
+        "network": { "type": "string" },
+        "walletAddress": { "type": "string" },
+        "transactionHash": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "confirmedAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
       },
-      "required": ["id", "playerId", "amount", "method", "details", "status", "timestamp", "playerBalanceAtRequest"]
+      "required": ["id", "playerId", "amount", "status", "timestamp"]
+    },
+    "GameHistory": {
+      "title": "GameHistory",
+      "description": "Gameplay record of bets and outcomes.",
+      "type": "object",
+      "properties": {
+        "gameId": { "type": "string" },
+        "userId": { "type": "string" },
+        "entryAmount": { "type": "number" },
+        "result": { "type": "string" },
+        "payout": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["gameId", "userId", "entryAmount", "result", "payout", "createdAt"]
     },
     "Settings": {
       "title": "Settings",
@@ -198,6 +251,10 @@
       "schema": "User",
       "description": "Secure wallets and user accounts indexed by UID."
     },
+    "wallets": {
+      "schema": "Wallet",
+      "description": "Configured user crypto wallets."
+    },
     "deposit_networks": {
       "schema": "DepositNetwork",
       "description": "Dynamic configurations for deposit blockchain networks."
@@ -221,6 +278,10 @@
     "deposits": {
       "schema": "DepositRequest",
       "description": "Confirmation requests."
+    },
+    "gameHistory": {
+      "schema": "GameHistory",
+      "description": "Gameplay ledger for analytics and history tracing."
     },
     "config/admin": {
       "schema": "Settings",

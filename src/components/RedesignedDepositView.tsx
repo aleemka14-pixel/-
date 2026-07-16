@@ -17,7 +17,7 @@ interface RedesignedDepositViewProps {
   currentPlayer?: Player;
   deposits?: DepositRequest[];
   onBack: () => void;
-  onDeposit: (amount: number, method: string, details: string, screenshotUrl?: string) => void;
+  onDeposit: (amount: number, method: string, details: string, screenshotUrl?: string, existingDepositId?: string, transactionHash?: string) => void;
   preferredCurrency: string;
   rates: Record<string, number>;
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
@@ -72,7 +72,38 @@ export function RedesignedDepositView({
   const [activePayment, setActivePayment] = useState<ActivePayment | null>(null);
   const [isCreatingPayment, setIsCreatingPayment] = useState<boolean>(false);
 
-  // Call backend API /api/create-payment or use robust client-side fallback
+  // Helper mappings for the new crypto deposit backend
+  const mapNetworkIdToName = (id: string): string | null => {
+    if (id === 'tron') return 'TRC20';
+    if (id === 'bsc') return 'BEP20';
+    if (id === 'ethereum') return 'ERC20';
+    return null;
+  };
+
+  const isCryptoDepositAPI = useMemo(() => {
+    return selectedNetwork ? ['tron', 'bsc', 'ethereum'].includes(selectedNetwork.id) : false;
+  }, [selectedNetwork]);
+
+  // Track deposit real-time status from the Firestore deposits array
+  const trackedDeposit = useMemo(() => {
+    if (!activePayment?.paymentId) return null;
+    return deposits.find(d => d.id === activePayment.paymentId || d.depositId === activePayment.paymentId);
+  }, [deposits, activePayment]);
+
+  const [playedWinSound, setPlayedWinSound] = useState(false);
+
+  React.useEffect(() => {
+    if (trackedDeposit && (trackedDeposit.status === 'confirmed' || trackedDeposit.status === 'completed')) {
+      if (!playedWinSound) {
+        playSound('WIN');
+        setPlayedWinSound(true);
+      }
+    } else {
+      setPlayedWinSound(false);
+    }
+  }, [trackedDeposit?.status, playSound, playedWinSound]);
+
+  // Call backend API /api/create-deposit for crypto networks or /api/create-payment for others
   const handleCreatePayment = async () => {
     if (!selectedNetwork) {
       showToast("Please choose a blockchain network", "error");
@@ -91,6 +122,54 @@ export function RedesignedDepositView({
     }
     if (Number(amount) > maxRequired) {
       showToast(`The maximum deposit is ${formatCurrency(selectedNetwork.maxDepositUsd)}`, "error");
+      return;
+    }
+
+    const targetNetwork = mapNetworkIdToName(selectedNetwork.id);
+    if (targetNetwork) {
+      setIsCreatingPayment(true);
+      playSound('CLICK');
+      try {
+        const response = await fetch('/api/create-deposit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId: currentPlayer?.id || 'guest',
+            amount: Number(amount),
+            network: targetNetwork
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.depositId) {
+            const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.qrData)}`;
+            setActivePayment({
+              paymentId: data.depositId,
+              walletAddress: data.walletAddress,
+              amount: data.amount,
+              qrCode: qrCodeUrl,
+              paymentStatus: data.status || 'pending',
+              createdAt: new Date().toISOString(),
+              isMock: false
+            });
+            setCurrentStep('review');
+            showToast(`Dynamic ${targetNetwork} deposit address generated!`, "success");
+          } else {
+            throw new Error("Invalid response format from crypto deposit API");
+          }
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP error ${response.status}`);
+        }
+      } catch (err: any) {
+        console.error("API create-deposit failed:", err);
+        showToast(err.message || "Failed to create crypto deposit request. Please try again.", "error");
+      } finally {
+        setIsCreatingPayment(false);
+      }
       return;
     }
 
@@ -363,7 +442,7 @@ export function RedesignedDepositView({
     const fullDetails = `Network: ${selectedNetwork.name} | Payment ID: ${activePayment?.paymentId || 'N/A'} | Target Address: ${activePayment?.walletAddress || selectedNetwork.depositAddress} | TXID/Address: ${txDetails.trim()}`;
 
     setTimeout(() => {
-      onDeposit(amountInUsd, selectedNetwork.name, fullDetails, screenshot);
+      onDeposit(amountInUsd, selectedNetwork.name, fullDetails, screenshot, activePayment?.paymentId, txDetails.trim());
       setIsSubmitting(false);
       setIsSuccess(true);
       setCurrentStep('status');
@@ -901,7 +980,7 @@ export function RedesignedDepositView({
                           {/* Presets + Amount input */}
                           <div className="space-y-3">
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
-                              Enter Deposit Amount ({preferredCurrency})
+                              Enter Deposit Amount {isCryptoDepositAPI ? '(USDT)' : `(${preferredCurrency})`}
                             </label>
                             
                             {/* Presets Grid */}
@@ -925,7 +1004,7 @@ export function RedesignedDepositView({
                                           : 'bg-slate-950 border-slate-800 hover:border-slate-700 text-slate-200 cursor-pointer font-bold'
                                     }`}
                                   >
-                                    {getCurrencySymbol(preferredCurrency)}{preset.toLocaleString()}
+                                    {isCryptoDepositAPI ? '' : getCurrencySymbol(preferredCurrency)}{preset.toLocaleString()}{isCryptoDepositAPI ? ' USDT' : ''}
                                   </button>
                                 );
                               })}
@@ -934,14 +1013,14 @@ export function RedesignedDepositView({
                             {/* Custom Numeric Input */}
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold font-mono text-sm">
-                                {getCurrencySymbol(preferredCurrency)}
+                                {isCryptoDepositAPI ? 'USDT' : getCurrencySymbol(preferredCurrency)}
                               </span>
                               <input
                                 type="number"
                                 value={amount}
                                 onChange={(e) => setAmount(e.target.value)}
-                                className="w-full bg-slate-950/80 border border-slate-800 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 rounded-lg pl-9 pr-4 py-3 text-xs focus:outline-none transition-all text-white font-mono font-bold"
-                                placeholder="Or specify custom amount"
+                                className="w-full bg-slate-950/80 border border-slate-800 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 rounded-lg pl-14 pr-4 py-3 text-xs focus:outline-none transition-all text-white font-mono font-bold"
+                                placeholder={isCryptoDepositAPI ? "Or specify custom USDT amount" : "Or specify custom amount"}
                                 min={convertUsdToCurrency(selectedNetwork.minDepositUsd)}
                                 max={convertUsdToCurrency(selectedNetwork.maxDepositUsd)}
                               />
@@ -984,7 +1063,7 @@ export function RedesignedDepositView({
                           <div className="flex justify-between py-1 border-b border-slate-800/40">
                             <span className="text-slate-400 font-sans">Settle Amount:</span>
                             <span className="text-emerald-400 font-black text-sm font-bold">
-                              {amount ? `${getCurrencySymbol(preferredCurrency)}${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
+                              {amount ? `${isCryptoDepositAPI ? '' : getCurrencySymbol(preferredCurrency)}${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}${isCryptoDepositAPI ? ' USDT' : ''}` : '—'}
                             </span>
                           </div>
                           <div className="flex justify-between py-1 border-b border-slate-800/40">
@@ -1001,7 +1080,7 @@ export function RedesignedDepositView({
 
                         <div className="bg-slate-950/50 border border-slate-800/85 rounded-xl p-3 text-[10px] text-slate-400/80 leading-relaxed">
                           <Info className="w-3.5 h-3.5 inline text-emerald-400 mr-1 shrink-0 -translate-y-0.5" />
-                          Clicking <strong>"Create Deposit"</strong> will call our payment gateway to establish a unique on-chain transaction session.
+                          Clicking <strong>"{isCryptoDepositAPI ? 'Generate QR' : 'Create Deposit'}"</strong> will call our payment gateway to establish a unique on-chain transaction session.
                         </div>
                       </div>
 
@@ -1031,7 +1110,7 @@ export function RedesignedDepositView({
                             </>
                           ) : (
                             <>
-                              <span>Create Deposit</span>
+                              <span>{isCryptoDepositAPI ? 'Generate QR' : 'Create Deposit'}</span>
                               <ArrowRight className="w-3.5 h-3.5" />
                             </>
                           )}
@@ -1204,6 +1283,45 @@ export function RedesignedDepositView({
                             </button>
                           </div>
                         </div>
+
+                        {/* Extra details below the QR when using the real crypto deposit endpoint */}
+                        {isCryptoDepositAPI && (
+                          <div className="mt-4 p-4 bg-slate-950/70 border border-emerald-500/10 rounded-xl space-y-2.5 font-mono text-xs">
+                            <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider font-sans pb-1 border-b border-slate-800/60">
+                              USDT Crypto Deposit Invoice
+                            </div>
+                            <div className="flex justify-between items-center gap-4 py-0.5 border-b border-slate-900/60">
+                              <span className="text-slate-500 text-[10px]">Wallet Address:</span>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-slate-200 text-[10px] truncate select-all font-bold">{activePayment?.walletAddress}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopy(activePayment?.walletAddress || '')}
+                                  className="text-slate-400 hover:text-white transition-colors border-0 p-0"
+                                  title="Copy Wallet Address"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex justify-between py-0.5 border-b border-slate-900/60">
+                              <span className="text-slate-500 text-[10px]">Network Name:</span>
+                              <span className="text-slate-200 font-bold">{mapNetworkIdToName(selectedNetwork.id)} ({selectedNetwork.name})</span>
+                            </div>
+                            <div className="flex justify-between py-0.5 border-b border-slate-900/60">
+                              <span className="text-slate-500 text-[10px]">Deposit Amount:</span>
+                              <span className="text-emerald-400 font-bold">{activePayment?.amount} USDT</span>
+                            </div>
+                            <div className="flex justify-between py-0.5 border-b border-slate-900/60">
+                              <span className="text-slate-500 text-[10px]">Deposit ID:</span>
+                              <span className="text-slate-200 font-bold">{activePayment?.paymentId}</span>
+                            </div>
+                            <div className="flex justify-between py-0.5">
+                              <span className="text-slate-500 text-[10px]">Status:</span>
+                              <span className="text-amber-400 font-bold uppercase tracking-wider animate-pulse">Pending</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="pt-4 border-t border-slate-800/50">
@@ -1326,119 +1444,206 @@ export function RedesignedDepositView({
               )}
 
               {/* STEP 4: TIMELINE */}
-              {currentStep === 'status' && (
-                <div className="space-y-6">
-                  {/* Claim Confirmed Card */}
-                  <div className="p-6 bg-slate-900 border border-emerald-500/20 rounded-2xl text-center space-y-4 shadow-2xl relative overflow-hidden">
-                    <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-emerald-500 to-teal-400" />
-                    <div className="w-14 h-14 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto border border-emerald-500/25">
-                      <CheckCircle2 className="w-7 h-7 text-emerald-400 animate-pulse" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-white uppercase tracking-wider font-mono">Deposit Request Filed Successfully</h3>
-                      <p className="text-slate-400 text-xs mt-1">
-                        Receipt matched to {selectedNetwork?.name} Node
+              {currentStep === 'status' && (() => {
+                const isConfirmed = trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed';
+                const txHash = trackedDeposit?.transactionHash || '';
+                
+                return (
+                  <div className="space-y-6">
+                    {/* Claim Confirmed Card */}
+                    <div className={`p-6 bg-slate-900 border ${isConfirmed ? 'border-emerald-500/40' : 'border-amber-500/20'} rounded-2xl text-center space-y-4 shadow-2xl relative overflow-hidden transition-all duration-500`}>
+                      <div className={`absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${isConfirmed ? 'from-emerald-500 to-teal-400' : 'from-amber-500 to-orange-400 animate-pulse'}`} />
+                      
+                      <div className={`w-14 h-14 ${isConfirmed ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-amber-500/10 border-amber-500/25'} rounded-full flex items-center justify-center mx-auto border`}>
+                        {isConfirmed ? (
+                          <ShieldCheck className="w-7 h-7 text-emerald-400" />
+                        ) : (
+                          <Activity className="w-7 h-7 text-amber-400 animate-pulse" />
+                        )}
+                      </div>
+                      
+                      <div>
+                        <h3 className="text-lg font-bold text-white uppercase tracking-wider font-mono">
+                          {isConfirmed ? 'Deposit Fully Confirmed' : 'Payment Pending Verification'}
+                        </h3>
+                        <p className="text-slate-400 text-xs mt-1">
+                          {isConfirmed ? `USDT credited to ${selectedNetwork?.name} Wallet` : `Awaiting Blockchain Webhook Confirmations`}
+                        </p>
+                      </div>
+                      
+                      <p className="text-slate-300 text-[11px] leading-relaxed max-w-md mx-auto">
+                        {isConfirmed ? (
+                          <span>
+                            Success! Your deposit of <strong className="text-emerald-400 font-mono text-sm">{getCurrencySymbol(preferredCurrency)}{Number(amount).toLocaleString()}</strong> has been verified by the blockchain oracle, and your account balance was automatically updated.
+                          </span>
+                        ) : (
+                          <span>
+                            Your deposit claim of <strong className="text-amber-400 font-mono">{getCurrencySymbol(preferredCurrency)}{Number(amount).toLocaleString()}</strong> was logged. Our automated payment hook is scanning the mempools. Please keep this tab open.
+                          </span>
+                        )}
                       </p>
+
+                      {/* Display transaction details after webhook confirmation */}
+                      {isConfirmed && (
+                        <div className="mt-4 p-4 bg-slate-950/60 rounded-xl border border-emerald-500/10 text-left space-y-2.5 max-w-md mx-auto">
+                          <div className="flex justify-between text-[10px] font-mono">
+                            <span className="text-slate-500">DEPOSIT ID:</span>
+                            <span className="text-slate-300 font-bold">{activePayment?.paymentId}</span>
+                          </div>
+                          <div className="flex justify-between text-[10px] font-mono">
+                            <span className="text-slate-500">NETWORK:</span>
+                            <span className="text-emerald-400 font-black">{selectedNetwork?.name}</span>
+                          </div>
+                          {txHash && (
+                            <div className="space-y-1 pt-1.5 border-t border-slate-900">
+                              <span className="text-[9px] font-mono text-slate-500 block">TRANSACTION HASH:</span>
+                              <div className="flex items-center justify-between gap-2 bg-slate-900 px-2 py-1.5 rounded border border-slate-800">
+                                <span className="text-[10px] font-mono text-slate-300 truncate max-w-[280px]">{txHash}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(txHash);
+                                    showToast("Transaction hash copied!", "success");
+                                    playSound('CLICK');
+                                  }}
+                                  className="p-1 bg-slate-950 text-slate-400 hover:text-emerald-400 rounded transition-colors border-0 cursor-pointer"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-slate-300 text-[11px] leading-relaxed max-w-md mx-auto">
-                      Your claim of <strong className="text-emerald-400 font-mono">{getCurrencySymbol(preferredCurrency)}{Number(amount).toLocaleString()}</strong> was logged into the secure audit ledger. The blockchain confirmation tracker is scanning the blockchain mempools to credit your balance.
-                    </p>
+
+                    {/* Progressive timeline tracker */}
+                    <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-5 shadow-xl">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-3.5">
+                        <p className="text-xs font-black uppercase text-slate-300 tracking-wider flex items-center gap-1.5 font-bold">
+                          <Activity className={`w-4 h-4 ${isConfirmed ? 'text-emerald-400' : 'text-amber-400 animate-pulse'}`} />
+                          Blockchain Confirmation Hub
+                        </p>
+                        <span className={`text-[10px] font-mono ${isConfirmed ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-amber-400 bg-amber-500/10 border-amber-500/20 animate-pulse'} px-2 py-0.5 border rounded uppercase font-black tracking-wider`}>
+                          {isConfirmed ? 'SYNC COMPLETE' : 'LIVE MEMPOOL SYNC'}
+                        </span>
+                      </div>
+
+                      {/* Timeline elements */}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
+                        {/* 1. Submitted */}
+                        <div className="bg-slate-950/80 p-3 rounded-lg border border-emerald-500/30 flex flex-col justify-between min-h-[90px] relative">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[8px] font-mono text-emerald-400 font-black uppercase">Completed</span>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-bold text-slate-200 block">Submitted</span>
+                            <span className="text-[9px] text-slate-500 block leading-tight font-sans mt-0.5">Audit ledger logged</span>
+                          </div>
+                        </div>
+
+                        {/* 2. Verification */}
+                        <div className={`bg-slate-950/80 p-3 rounded-lg border ${isConfirmed ? 'border-emerald-500/30' : 'border-cyan-500/20'} flex flex-col justify-between min-h-[90px]`}>
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[8px] font-mono ${isConfirmed ? 'text-emerald-400' : 'text-cyan-400'} font-bold uppercase`}>
+                              {isConfirmed ? 'Completed' : 'In Progress'}
+                            </span>
+                            {isConfirmed ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Activity className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                            )}
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-bold text-slate-200 block">Verification</span>
+                            <span className="text-[9px] text-slate-500 block leading-tight font-sans mt-0.5">
+                              {isConfirmed ? 'Screenshot verified' : 'Checking screenshot'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 3. Node Consensus */}
+                        <div className={`bg-slate-950/80 p-3 rounded-lg border ${isConfirmed ? 'border-emerald-500/30' : 'border-slate-800'} flex flex-col justify-between min-h-[90px]`}>
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[8px] font-mono ${isConfirmed ? 'text-emerald-400' : 'text-slate-500'} font-bold uppercase`}>
+                              {isConfirmed ? 'Completed' : 'Pending'}
+                            </span>
+                            {isConfirmed ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Clock className="w-3.5 h-3.5 text-slate-600" />
+                            )}
+                          </div>
+                          <div>
+                            <span className={`text-[11px] font-bold ${isConfirmed ? 'text-slate-200' : 'text-slate-400'} block`}>Node Consensus</span>
+                            <span className={`text-[9px] ${isConfirmed ? 'text-slate-500' : 'text-slate-600'} block leading-tight font-sans mt-0.5`}>
+                              {isConfirmed ? 'Oracle matches' : 'Querying miners'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 4. Ledger Balance */}
+                        <div className={`bg-slate-950/80 p-3 rounded-lg border ${isConfirmed ? 'border-emerald-500/30' : 'border-slate-800'} flex flex-col justify-between min-h-[90px]`}>
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[8px] font-mono ${isConfirmed ? 'text-emerald-400' : 'text-slate-500'} font-bold uppercase`}>
+                              {isConfirmed ? 'Completed' : 'Pending'}
+                            </span>
+                            {isConfirmed ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Clock className="w-3.5 h-3.5 text-slate-600" />
+                            )}
+                          </div>
+                          <div>
+                            <span className={`text-[11px] font-bold ${isConfirmed ? 'text-slate-200' : 'text-slate-400'} block`}>Ledger Balance</span>
+                            <span className={`text-[9px] ${isConfirmed ? 'text-slate-500' : 'text-slate-600'} block leading-tight font-sans mt-0.5`}>
+                              {isConfirmed ? 'Balance credited' : 'Adding balance'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 5. Completed */}
+                        <div className={`bg-slate-950/80 p-3 rounded-lg border ${isConfirmed ? 'border-emerald-500/30' : 'border-slate-800'} flex flex-col justify-between min-h-[90px] col-span-2 md:col-span-1`}>
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[8px] font-mono ${isConfirmed ? 'text-emerald-400' : 'text-slate-500'} font-bold uppercase`}>
+                              {isConfirmed ? 'Completed' : 'Pending'}
+                            </span>
+                            {isConfirmed ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Clock className="w-3.5 h-3.5 text-slate-600" />
+                            )}
+                          </div>
+                          <div>
+                            <span className={`text-[11px] font-bold ${isConfirmed ? 'text-slate-200' : 'text-slate-400'} block`}>Completed</span>
+                            <span className={`text-[9px] ${isConfirmed ? 'text-slate-500' : 'text-slate-600'} block leading-tight font-sans mt-0.5`}>
+                              {isConfirmed ? 'Settled securely' : 'Verified wallet'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4 border-t border-slate-800">
+                        <button
+                          type="button"
+                          onClick={handleReset}
+                          className="py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black uppercase text-[10px] tracking-widest rounded-lg transition-all cursor-pointer shadow-lg shadow-emerald-500/10 border-0 flex items-center justify-center gap-1.5 font-bold"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Initiate Another Deposit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { playSound('CLICK'); onBack(); }}
+                          className="py-3 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 font-mono font-black uppercase text-[10px] tracking-widest rounded-lg transition-all cursor-pointer font-bold"
+                        >
+                          Back to Wallet Overview
+                        </button>
+                      </div>
+                    </div>
                   </div>
-
-                  {/* Progressive timeline tracker */}
-                  <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-5 shadow-xl">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-3.5">
-                      <p className="text-xs font-black uppercase text-slate-300 tracking-wider flex items-center gap-1.5 font-bold">
-                        <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
-                        Blockchain Confirmation Hub
-                      </p>
-                      <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded uppercase font-black tracking-wider animate-pulse">
-                        LIVE MEMPOOL SYNC
-                      </span>
-                    </div>
-
-                    {/* Timeline elements */}
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-                      {/* 1. Submitted */}
-                      <div className="bg-slate-950/80 p-3 rounded-lg border border-emerald-500/30 flex flex-col justify-between min-h-[90px] relative">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[8px] font-mono text-emerald-400 font-black uppercase">Completed</span>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        </div>
-                        <div>
-                          <span className="text-[11px] font-bold text-slate-200 block">Submitted</span>
-                          <span className="text-[9px] text-slate-500 block leading-tight font-sans mt-0.5">Audit ledger logged</span>
-                        </div>
-                      </div>
-
-                      {/* 2. Verification */}
-                      <div className="bg-slate-950/80 p-3 rounded-lg border border-cyan-500/20 flex flex-col justify-between min-h-[90px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[8px] font-mono text-cyan-400 font-bold uppercase">In Progress</span>
-                          <Activity className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                        </div>
-                        <div>
-                          <span className="text-[11px] font-bold text-slate-200 block">Verification</span>
-                          <span className="text-[9px] text-slate-500 block leading-tight font-sans mt-0.5">Checking screenshot</span>
-                        </div>
-                      </div>
-
-                      {/* 3. Node Consensus */}
-                      <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800 flex flex-col justify-between min-h-[90px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[8px] font-mono text-slate-500 font-bold uppercase">Pending</span>
-                          <Clock className="w-3.5 h-3.5 text-slate-600" />
-                        </div>
-                        <div>
-                          <span className="text-[11px] font-bold text-slate-400 block">Node Consensus</span>
-                          <span className="text-[9px] text-slate-600 block leading-tight font-sans mt-0.5">Querying miners</span>
-                        </div>
-                      </div>
-
-                      {/* 4. Ledger Balance */}
-                      <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800 flex flex-col justify-between min-h-[90px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[8px] font-mono text-slate-500 font-bold uppercase">Pending</span>
-                          <Clock className="w-3.5 h-3.5 text-slate-600" />
-                        </div>
-                        <div>
-                          <span className="text-[11px] font-bold text-slate-400 block">Ledger Balance</span>
-                          <span className="text-[9px] text-slate-600 block leading-tight font-sans mt-0.5">Adding balance</span>
-                        </div>
-                      </div>
-
-                      {/* 5. Completed */}
-                      <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800 flex flex-col justify-between min-h-[90px] col-span-2 md:col-span-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[8px] font-mono text-slate-500 font-bold uppercase">Pending</span>
-                          <Clock className="w-3.5 h-3.5 text-slate-600" />
-                        </div>
-                        <div>
-                          <span className="text-[11px] font-bold text-slate-400 block">Completed</span>
-                          <span className="text-[9px] text-slate-600 block leading-tight font-sans mt-0.5">Settled securely</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4 border-t border-slate-800">
-                      <button
-                        type="button"
-                        onClick={handleReset}
-                        className="py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black uppercase text-[10px] tracking-widest rounded-lg transition-all cursor-pointer shadow-lg shadow-emerald-500/10 border-0 flex items-center justify-center gap-1.5 font-bold"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" /> Initiate Another Deposit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { playSound('CLICK'); onBack(); }}
-                        className="py-3 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 font-mono font-black uppercase text-[10px] tracking-widest rounded-lg transition-all cursor-pointer font-bold"
-                      >
-                        Back to Wallet Overview
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
             </motion.div>
           </AnimatePresence>
@@ -1609,13 +1814,13 @@ export function RedesignedDepositView({
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-widest text-[9px] font-mono bg-slate-950/80">
-                    <th className="p-4">Timestamp</th>
-                    <th className="p-4">Coins Target</th>
-                    <th className="p-4">Network Node</th>
-                    <th className="p-4 text-right">Claim Amount ({preferredCurrency})</th>
-                    <th className="p-4 text-center">Audit Status</th>
-                    <th className="p-4">TX Hash / Identifier</th>
-                    <th className="p-4 text-right">Audit Options</th>
+                    <th className="p-4">Deposit ID</th>
+                    <th className="p-4">Date</th>
+                    <th className="p-4">Network</th>
+                    <th className="p-4">Wallet Address</th>
+                    <th className="p-4 text-right">Amount</th>
+                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4">TX Hash / Proof</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -1623,19 +1828,36 @@ export function RedesignedDepositView({
                     const txHash = dep.details.includes('| TXID/Address:') 
                       ? dep.details.split('| TXID/Address:')[1]?.trim() 
                       : dep.details;
+                    
+                    const displayWallet = dep.walletAddress || (dep.details.includes('| Target Address:') 
+                      ? dep.details.split('| Target Address:')[1]?.split('|')[0]?.trim() 
+                      : dep.details.split('|')[0]?.trim() || dep.details);
 
                     return (
                       <tr key={dep.id} className="hover:bg-slate-900/40 transition-all font-mono">
+                        <td className="p-4 text-white font-bold text-[11px]">
+                          {dep.depositId || dep.id}
+                        </td>
                         <td className="p-4 text-slate-400 text-[11px]">
                           {new Date(dep.timestamp).toLocaleString()}
                         </td>
-                        <td className="p-4">
-                          <span className="px-2 py-0.5 bg-slate-900 text-slate-300 rounded text-[10px] font-bold uppercase font-sans">
-                            USDT / USD
-                          </span>
+                        <td className="p-4 font-bold text-slate-300 font-sans text-[11px]">
+                          {dep.network || dep.method}
                         </td>
-                        <td className="p-4 font-bold text-white font-sans text-[11px]">
-                          {dep.method}
+                        <td className="p-4">
+                          <div className="flex items-center gap-1.5 max-w-[150px]">
+                            <span className="text-slate-400 truncate text-[11px]" title={displayWallet}>
+                              {displayWallet}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(displayWallet)}
+                              className="p-1 bg-transparent hover:bg-slate-850 rounded text-slate-400 hover:text-white border-0 cursor-pointer"
+                              title="Copy Wallet"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
                         </td>
                         <td className="p-4 text-right font-bold text-emerald-400 text-xs">
                           {getCurrencySymbol(preferredCurrency)}{convertUsdToCurrency(dep.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1652,42 +1874,32 @@ export function RedesignedDepositView({
                           </span>
                         </td>
                         <td className="p-4">
-                          <div className="flex items-center gap-1.5 max-w-[150px]">
-                            <span className="text-slate-500 truncate text-[11px]" title={txHash}>
-                              {txHash}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(txHash)}
-                              className="p-1 bg-transparent hover:bg-slate-800 rounded text-slate-400 hover:text-white border-0 cursor-pointer"
-                              title="Copy Hash"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                        <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-2 font-sans">
-                            {dep.screenshotUrl && (
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 max-w-[120px]">
+                              <span className="text-slate-500 truncate text-[11px]" title={txHash}>
+                                {txHash}
+                              </span>
                               <button
                                 type="button"
-                                onClick={() => { setSelectedTxForModal(dep); playSound('CLICK'); }}
-                                className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-md text-[10px] font-mono border border-slate-800 flex items-center gap-1 cursor-pointer"
+                                onClick={() => handleCopy(txHash)}
+                                className="p-1 bg-transparent hover:bg-slate-800 rounded text-slate-400 hover:text-white border-0 cursor-pointer"
+                                title="Copy Hash"
                               >
-                                <ImageIcon className="w-3.5 h-3.5" /> Proof
+                                <Copy className="w-3 h-3" />
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                showToast("Opening customized explorer lookup...", "info");
-                                playSound('CLICK');
-                              }}
-                              className="p-1.5 bg-slate-900 hover:bg-slate-800 rounded-md border border-slate-800 text-slate-400 hover:text-white cursor-pointer"
-                              title="Open Explorer Link"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </button>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {dep.screenshotUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setSelectedTxForModal(dep); playSound('CLICK'); }}
+                                  className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded border border-slate-800 text-[9px] flex items-center gap-1 cursor-pointer"
+                                  title="View Proof Screenshot"
+                                >
+                                  <ImageIcon className="w-3 h-3" /> Proof
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -1704,13 +1916,20 @@ export function RedesignedDepositView({
                   ? dep.details.split('| TXID/Address:')[1]?.trim() 
                   : dep.details;
 
+                const displayWallet = dep.walletAddress || (dep.details.includes('| Target Address:') 
+                  ? dep.details.split('| Target Address:')[1]?.split('|')[0]?.trim() 
+                  : dep.details.split('|')[0]?.trim() || dep.details);
+
                 return (
                   <div key={dep.id} className="bg-slate-950 border border-slate-800/80 rounded-xl p-4 space-y-3.5 text-xs font-mono">
                     
                     {/* Header bar */}
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-start">
                       <div>
-                        <span className="font-bold text-white block text-sm font-sans">{dep.method}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-white text-sm font-sans">{dep.network || dep.method}</span>
+                          <span className="text-[9px] bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded uppercase">{dep.depositId || dep.id}</span>
+                        </div>
                         <span className="text-[9px] text-slate-500">{new Date(dep.timestamp).toLocaleString()}</span>
                       </div>
                       <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${
@@ -1727,8 +1946,17 @@ export function RedesignedDepositView({
                     {/* Data Specs */}
                     <div className="grid grid-cols-2 gap-2 text-[11px] border-t border-slate-800/60 pt-3">
                       <div>
-                        <span className="text-slate-500 block text-[9px] uppercase font-sans">Token</span>
-                        <span className="font-bold text-slate-200">USDT / USD</span>
+                        <span className="text-slate-500 block text-[9px] uppercase font-sans">USDT Wallet</span>
+                        <div className="flex items-center gap-1 font-bold text-slate-200">
+                          <span className="truncate max-w-[90px]">{displayWallet}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(displayWallet)}
+                            className="text-slate-500 hover:text-white p-0 border-0"
+                          >
+                            <Copy className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
                       </div>
                       <div className="text-right">
                         <span className="text-slate-500 block text-[9px] uppercase font-sans">synced sum</span>

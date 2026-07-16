@@ -4,7 +4,31 @@ export interface Transaction {
   type: 'deposit' | 'bet' | 'win' | 'withdrawal';
   amount: number;
   timestamp: number;
-  status: 'pending' | 'completed' | 'failed';
+  status: 'pending' | 'completed' | 'failed' | 'confirmed';
+  transactionId?: string;
+  userId?: string;
+  network?: string;
+  transactionHash?: string;
+  createdAt?: number;
+  balanceBefore?: number;
+  balanceAfter?: number;
+  referenceId?: string;
+}
+
+export interface Wallet {
+  userId: string;
+  walletAddress: string;
+  network: string;
+  createdAt: number;
+}
+
+export interface GameHistory {
+  gameId: string;
+  userId: string;
+  entryAmount: number;
+  result: string;
+  payout: number;
+  createdAt: number;
 }
 
 export interface WithdrawalRequest {
@@ -35,9 +59,22 @@ export interface DepositRequest {
   method: string;
   details: string;
   screenshotUrl?: string;
-  status: 'pending' | 'completed' | 'rejected';
+  status: 'pending' | 'completed' | 'rejected' | 'confirmed';
   timestamp: number;
   playerBalanceAtRequest: number;
+  depositId?: string;
+  userId?: string;
+  network?: string;
+  walletAddress?: string;
+  transactionHash?: string;
+  confirmedAt?: number;
+  updatedAt?: number;
+  balanceBefore?: number;
+  balanceAfter?: number;
+  adminNotes?: string;
+  rejectionReason?: string;
+  confirmedBy?: string;
+  rejectedBy?: string;
 }
 
 export interface Player {
@@ -94,6 +131,9 @@ export interface PaymentSettings {
   upiId?: string;
   qrCodeUrl?: string; // Will store base64 string
   additionalInstructions?: string;
+  usdtTrc20Address?: string;
+  usdtBep20Address?: string;
+  usdtErc20Address?: string;
 }
 
 export interface AppState {
