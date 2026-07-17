@@ -1,10 +1,8 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
-import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { reliabilityManager } from "./backend/services/reliability-manager.js";
 
 async function startServer() {
   const app = express();
@@ -57,6 +55,8 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    // Start reliability management and background jobs scheduler
+    reliabilityManager.start();
   });
 }
 

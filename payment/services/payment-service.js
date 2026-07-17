@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, setLogLevel } from 'firebase/firestore';
 import { getPaymentProviderAdapter } from '../providers/index.js';
 import { PaymentLogger } from '../utils/payment-logger.js';
 
@@ -16,10 +16,10 @@ const DEFAULT_PAYMENT_CONFIG = {
       enabled: true,
       mode: 'live',
       credentials: {
-        usdtTrc20Address: 'TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h',
-        usdtBep20Address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
-        usdtErc20Address: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-        ipnSecret: 'DIRECT_CRYPTO_SECRET_992'
+        usdtTrc20Address: process.env.DIRECT_CRYPTO_USDT_TRC20_ADDRESS || 'TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h',
+        usdtBep20Address: process.env.DIRECT_CRYPTO_USDT_BEP20_ADDRESS || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+        usdtErc20Address: process.env.DIRECT_CRYPTO_USDT_ERC20_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        ipnSecret: process.env.CRYPTO_WEBHOOK_SECRET || 'DIRECT_CRYPTO_SECRET_992'
       },
       failureCount: 0,
       lastFailureTime: null,
@@ -31,8 +31,8 @@ const DEFAULT_PAYMENT_CONFIG = {
       enabled: true,
       mode: 'test',
       credentials: {
-        apiKey: '',
-        ipnSecret: ''
+        apiKey: process.env.NOWPAYMENTS_API_KEY || '',
+        ipnSecret: process.env.NOWPAYMENTS_IPN_SECRET || ''
       },
       failureCount: 0,
       lastFailureTime: null,
@@ -44,8 +44,8 @@ const DEFAULT_PAYMENT_CONFIG = {
       enabled: false,
       mode: 'live',
       credentials: {
-        upiId: 'merchant@upi',
-        qrCodeUrl: ''
+        upiId: process.env.UPI_ID || 'merchant@upi',
+        qrCodeUrl: process.env.UPI_QR_CODE_URL || ''
       },
       failureCount: 0,
       lastFailureTime: null,
@@ -82,6 +82,14 @@ export class PaymentService {
     } else {
       app = getApp();
     }
+    
+    // Set Firestore log level to error to avoid harmless stream recycling warnings
+    try {
+      setLogLevel('error');
+    } catch (e) {
+      // Ignored if already set
+    }
+    
     this.db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
     
     // Instantiate core operational logger
@@ -125,6 +133,32 @@ export class PaymentService {
       } else {
         // First-time initialization
         await setDoc(configRef, this.defaultConfig);
+      }
+
+      // Explicitly override database credentials with environment variables if set (Environment-first priority)
+      if (mergedConfig.providers) {
+        if (mergedConfig.providers.cryptodirect && mergedConfig.providers.cryptodirect.credentials) {
+          mergedConfig.providers.cryptodirect.credentials.usdtTrc20Address = 
+            process.env.DIRECT_CRYPTO_USDT_TRC20_ADDRESS || mergedConfig.providers.cryptodirect.credentials.usdtTrc20Address;
+          mergedConfig.providers.cryptodirect.credentials.usdtBep20Address = 
+            process.env.DIRECT_CRYPTO_USDT_BEP20_ADDRESS || mergedConfig.providers.cryptodirect.credentials.usdtBep20Address;
+          mergedConfig.providers.cryptodirect.credentials.usdtErc20Address = 
+            process.env.DIRECT_CRYPTO_USDT_ERC20_ADDRESS || mergedConfig.providers.cryptodirect.credentials.usdtErc20Address;
+          mergedConfig.providers.cryptodirect.credentials.ipnSecret = 
+            process.env.CRYPTO_WEBHOOK_SECRET || mergedConfig.providers.cryptodirect.credentials.ipnSecret;
+        }
+        if (mergedConfig.providers.nowpayments && mergedConfig.providers.nowpayments.credentials) {
+          mergedConfig.providers.nowpayments.credentials.apiKey = 
+            process.env.NOWPAYMENTS_API_KEY || mergedConfig.providers.nowpayments.credentials.apiKey;
+          mergedConfig.providers.nowpayments.credentials.ipnSecret = 
+            process.env.NOWPAYMENTS_IPN_SECRET || mergedConfig.providers.nowpayments.credentials.ipnSecret;
+        }
+        if (mergedConfig.providers.upi && mergedConfig.providers.upi.credentials) {
+          mergedConfig.providers.upi.credentials.upiId = 
+            process.env.UPI_ID || mergedConfig.providers.upi.credentials.upiId;
+          mergedConfig.providers.upi.credentials.qrCodeUrl = 
+            process.env.UPI_QR_CODE_URL || mergedConfig.providers.upi.credentials.qrCodeUrl;
+        }
       }
 
       // Sync layer: load legay admin settings from config/admin to map changes made via existing admin panel UI

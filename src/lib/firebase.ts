@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAuth, GoogleAuthProvider, signInWithPopup, signOut, browserLocalPersistence, browserPopupRedirectResolver } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // Support loading Firebase config from environment variables (useful for Vercel deployments)
@@ -18,6 +18,9 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+// Set log level to 'error' to suppress harmless gRPC stream disconnection warnings
+setLogLevel('error');
 
 // Improved Firestore initialization with auto-detect long-polling and multi-tab persistent offline cache
 export const db = initializeFirestore(app, {

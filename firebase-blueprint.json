@@ -244,9 +244,31 @@
         "defaultFee": { "type": "number" },
         "defaultProcessingTime": { "type": "string" }
       }
+    },
+    "SystemAlert": {
+      "title": "SystemAlert",
+      "description": "Represents an active or resolved system security alert or failure alarm.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "alertId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+        "timestamp": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "resolved": { "type": "boolean" },
+        "resolvedAt": { "type": "number" }
+      },
+      "required": ["id", "title", "message", "severity", "timestamp", "resolved"]
     }
   },
   "firestore": {
+    "system_alerts": {
+      "schema": "SystemAlert",
+      "description": "System-wide automated security alerts and failure alarms."
+    },
     "users": {
       "schema": "User",
       "description": "Secure wallets and user accounts indexed by UID."

@@ -145,8 +145,20 @@ export function AdminWithdrawalManager({
   };
 
   const executeSecureAction = async () => {
-    if (confirmPassword !== 'admin123') {
-      setConfirmError('Invalid authorization password. Please enter "admin123" to authorize.');
+    try {
+      const res = await fetch('/api/admin/verify-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'confirm', value: confirmPassword })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setConfirmError('Invalid authorization password. Please enter the correct password to authorize.');
+        playSound('LOSE');
+        return;
+      }
+    } catch (err) {
+      setConfirmError('Security verification failed: Connection error.');
       playSound('LOSE');
       return;
     }

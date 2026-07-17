@@ -43,7 +43,10 @@ export class CryptoDirectProvider extends PaymentProviderInterface {
 
   verifyWebhook(headers, body) {
     const secret = process.env.CRYPTO_WEBHOOK_SECRET || (this.config.credentials && this.config.credentials.ipnSecret);
-    if (!secret) return true; // Skip signature check if secret is omitted for local debugging
+    if (!secret) {
+      console.warn("[Security Warning] CRYPTO_WEBHOOK_SECRET is not configured. Webhook signature checking is bypassed in local/dev environments.");
+      return process.env.NODE_ENV !== 'production';
+    }
 
     const signatureHeader = headers['x-webhook-signature'];
     const authHeader = headers['authorization'];

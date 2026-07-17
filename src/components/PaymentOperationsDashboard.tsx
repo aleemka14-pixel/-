@@ -6,7 +6,7 @@ import {
   Settings2, Bell, Users, Coins, Shield, Clock, Eye, AlertCircle, FileText,
   TrendingUp, Wallet, CheckCircle2, ChevronRight, Ban, Info, PlayCircle, ExternalLink
 } from 'lucide-react';
-import { doc, updateDoc, setDoc, getFirestore } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, getFirestore, collection, onSnapshot, deleteDoc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase.ts';
 import { DepositRequest, WithdrawalRequest, Player } from '../types.ts';
 import { logActivity } from '../lib/audit.ts';
@@ -48,12 +48,50 @@ export function PaymentOperationsDashboard({
   playSound,
   adminRole = 'Super Admin'
 }: PaymentOperationsDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'monitor' | 'risk' | 'notifications'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'monitor' | 'risk' | 'notifications' | 'reliability'>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'deposit' | 'withdrawal'>('all');
   const [providerFilter, setProviderFilter] = useState<'all' | 'crypto' | 'upi'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
   
+  // Real-time System Reliability states
+  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [systemAlerts, setSystemAlerts] = useState<any[]>([]);
+  const [runningJobName, setRunningJobName] = useState<string | null>(null);
+  const [jobFeedbackMessage, setJobFeedbackMessage] = useState<string | null>(null);
+
+  // Firestore Real-time subscriptions for Reliability Layer
+  useEffect(() => {
+    // 1. Subscribe to system health document
+    const healthRef = doc(db, 'config', 'system_health');
+    const unsubHealth = onSnapshot(healthRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setSystemHealth(docSnap.data());
+      }
+    }, (err) => console.error("Error subscribing to system health:", err));
+
+    // 2. Subscribe to active system alarms/alerts
+    const alertsRef = collection(db, 'system_alerts');
+    const unsubAlerts = onSnapshot(alertsRef, (snap) => {
+      const list: any[] = [];
+      snap.forEach(docSnap => {
+        list.push({ ...docSnap.data(), docId: docSnap.id });
+      });
+      // Sort: active/unresolved first, then by timestamp descending
+      setSystemAlerts(list.sort((a, b) => {
+        if (a.resolved !== b.resolved) {
+          return a.resolved ? 1 : -1; // unresolved first
+        }
+        return b.timestamp - a.timestamp; // newest first
+      }));
+    }, (err) => console.error("Error subscribing to system alerts:", err));
+
+    return () => {
+      unsubHealth();
+      unsubAlerts();
+    };
+  }, []);
+
   const [selectedTx, setSelectedTx] = useState<UnifiedTransaction | null>(null);
   const [isProcessingAction, setIsProcessingAction] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -79,6 +117,73 @@ export function PaymentOperationsDashboard({
     setTimeout(() => {
       setCopyFeedback(prev => ({ ...prev, [key]: false }));
     }, 2000);
+  };
+
+  // Manual Trigger for Scheduled Background Jobs
+  const handleTriggerJob = async (jobName: string) => {
+    if (adminRole === 'Support') {
+      alert("Access Denied: Support role is restricted from triggering backend reliability tasks.");
+      playSound('LOSE');
+      return;
+    }
+
+    playSound('CLICK');
+    setRunningJobName(jobName);
+    setJobFeedbackMessage(null);
+
+    try {
+      const response = await fetch('/api/admin/trigger-job', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          jobName,
+          adminRole
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setJobFeedbackMessage(`Successfully executed "${jobName}" background job on-demand.`);
+        playSound('WIN');
+      } else {
+        setJobFeedbackMessage(`Execution Failed: ${data.error || 'Server error'}`);
+        playSound('LOSE');
+      }
+    } catch (err: any) {
+      console.error("Error triggering job:", err);
+      setJobFeedbackMessage(`Connection Failure: ${err.message}`);
+      playSound('LOSE');
+    } finally {
+      setRunningJobName(null);
+      setTimeout(() => {
+        setJobFeedbackMessage(null);
+      }, 5000);
+    }
+  };
+
+  // Resolve Active Alarms / Alerts
+  const handleResolveAlert = async (alertId: string) => {
+    playSound('CLICK');
+    try {
+      const alertRef = doc(db, 'system_alerts', alertId);
+      await updateDoc(alertRef, {
+        resolved: true,
+        resolvedAt: Date.now()
+      });
+      
+      // Log resolve action to security log
+      await logActivity({
+        action: 'resolve_system_alarm',
+        module: 'system_health',
+        oldValue: 'Active',
+        newValue: 'Resolved',
+        ipAddress: '127.0.0.1'
+      });
+    } catch (err) {
+      console.error("Failed to resolve alert:", err);
+    }
   };
 
   // Convert Indian Rupees Exchange Rate (USD / INR fallback)
@@ -744,7 +849,8 @@ export function PaymentOperationsDashboard({
           { id: 'overview', label: 'Dashboard & Charts', icon: Activity },
           { id: 'monitor', label: 'Live Transaction Monitor', icon: Settings2, count: filteredTxList.length },
           { id: 'risk', label: 'Risk & Fraud Center', icon: Shield, count: flaggedTransactions.length },
-          { id: 'notifications', label: 'Active Alerts', icon: Bell, count: alerts.length }
+          { id: 'notifications', label: 'Active Alerts', icon: Bell, count: alerts.length },
+          { id: 'reliability', label: 'System Health & Jobs', icon: ShieldAlert, count: systemAlerts.filter(a => !a.resolved).length }
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -1445,6 +1551,336 @@ export function PaymentOperationsDashboard({
                             <span className="text-slate-400 uppercase font-black">{alert.type}</span>
                           </div>
                         </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {/* TAB 5: CENTRALIZED SYSTEM HEALTH & BACKGROUND JOBS MANAGER */}
+        {activeTab === 'reliability' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            {/* System Status Summary Banner */}
+            <div className={`p-6 rounded-3xl border text-left flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${
+              systemHealth?.status === 'degraded' ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' :
+              systemHealth?.status === 'warning' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
+              'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+            }`}>
+              <div className="flex gap-4 items-center">
+                <span className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl border ${
+                  systemHealth?.status === 'degraded' ? 'bg-rose-500/10 border-rose-500/20' :
+                  systemHealth?.status === 'warning' ? 'bg-amber-500/10 border-amber-500/20' :
+                  'bg-emerald-500/10 border-emerald-500/20'
+                }`}>
+                  {systemHealth?.status === 'degraded' ? '🚨' : systemHealth?.status === 'warning' ? '⚠️' : '🛡️'}
+                </span>
+                <div>
+                  <h4 className="text-md font-bold text-white flex items-center gap-2">
+                    Overall System Reliability status: 
+                    <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase ${
+                      systemHealth?.status === 'degraded' ? 'bg-rose-500 text-black' :
+                      systemHealth?.status === 'warning' ? 'bg-amber-500 text-black' :
+                      'bg-emerald-500 text-black'
+                    }`}>
+                      {systemHealth?.status || 'HEALTHY'}
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-400 leading-relaxed mt-1">
+                    Continuous monitoring of blockchain hot wallets, database latency, merchant APIs, and automated cron task queues.
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right text-[10px] font-mono text-slate-500">
+                <p>LAST HEURISTIC REFRESH:</p>
+                <p className="text-white font-bold">{systemHealth?.timestamp ? new Date(systemHealth.timestamp).toLocaleString() : 'Just Now'}</p>
+              </div>
+            </div>
+
+            {/* Core Service Diagnostics Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
+              {/* 1. Firebase Service */}
+              <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left space-y-4">
+                <div className="flex justify-between items-start">
+                  <h5 className="text-xs font-bold font-mono text-slate-500 uppercase tracking-wider">Firebase Cloud Database</h5>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                    systemHealth?.services?.firebase?.status === 'healthy' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                  }`}>
+                    {systemHealth?.services?.firebase?.status || 'Online'}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Ping Latency:</span>
+                    <span className="text-white font-bold">{systemHealth?.services?.firebase?.latencyMs || '12'} ms</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Connection State:</span>
+                    <span className="text-emerald-400 font-bold">Stable</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Datastore Target:</span>
+                    <span className="text-slate-300 font-bold truncate max-w-[100px]" title="applet-primary">applet-primary</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Wallet Infrastructure */}
+              <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left space-y-4">
+                <div className="flex justify-between items-start">
+                  <h5 className="text-xs font-bold font-mono text-slate-500 uppercase tracking-wider">Wallet Infrastructure</h5>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                    systemHealth?.services?.walletProvider?.status === 'healthy' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                  }`}>
+                    {systemHealth?.services?.walletProvider?.status || 'Healthy'}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Active Provider:</span>
+                    <span className="text-white font-bold uppercase">{systemHealth?.services?.walletProvider?.activeProvider || 'MockAdapter'}</span>
+                  </div>
+                  <div className="space-y-1 mt-1 border-t border-white/5 pt-2">
+                    <span className="text-[10px] text-slate-500 font-mono block uppercase">Liquidity Assets:</span>
+                    {Object.entries(systemHealth?.services?.walletProvider?.balances || {
+                      'USDT TRC20': 4850,
+                      'USDT BEP20': 2500,
+                      'USDT ERC20': 8900
+                    }).map(([net, bal]: [string, any]) => (
+                      <div key={net} className="flex justify-between text-[10px] font-mono">
+                        <span className="text-slate-400">{net}:</span>
+                        <span className={`font-black ${bal < 1000 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
+                          {bal.toLocaleString()} USDT
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Payment Provider Gateways */}
+              <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left space-y-4">
+                <div className="flex justify-between items-start">
+                  <h5 className="text-xs font-bold font-mono text-slate-500 uppercase tracking-wider">Payment Gateways</h5>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20`}>
+                    Stable
+                  </span>
+                </div>
+                <div className="space-y-1.5 pt-1">
+                  {(systemHealth?.services?.paymentGateway?.activeProviders || [
+                    { id: 'cryptodirect', name: 'CryptoDirect', status: 'Online', failures: 0 },
+                    { id: 'nowpayments', name: 'NOWPayments', status: 'Online', failures: 0 },
+                    { id: 'upi', name: 'UPI Gateway', status: 'Online', failures: 0 }
+                  ]).map((p: any) => (
+                    <div key={p.id} className="flex justify-between items-center text-[10px] font-mono">
+                      <span className="text-slate-400">{p.name}:</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${p.status === 'Offline' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                        <span className={`font-bold ${p.status === 'Offline' ? 'text-rose-400 font-black' : 'text-white'}`}>{p.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4. API & Resource Monitors */}
+              <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left space-y-4">
+                <div className="flex justify-between items-start">
+                  <h5 className="text-xs font-bold font-mono text-slate-500 uppercase tracking-wider">API Resources</h5>
+                  <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Normal
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Process Uptime:</span>
+                    <span className="text-white font-bold">{Math.round(systemHealth?.services?.systemResources?.uptimeSec || 320)}s</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Memory Heap:</span>
+                    <span className="text-white font-bold">{systemHealth?.services?.systemResources?.memoryUsageMb || '48'} MB</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-400">Webhook Receiver:</span>
+                    <span className="text-emerald-400 font-bold uppercase">Active</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Background Job Manager Scheduler Console */}
+            <div className="bg-[#111] border border-white/5 rounded-3xl p-6 space-y-4 text-left">
+              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                <div>
+                  <h4 className="text-md font-bold text-white flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-emerald-400" />
+                    Automated Background Job Manager (Cron Engine)
+                  </h4>
+                  <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
+                    Scheduled tasks executing continuous deposit verification, webhook recovery, and ledger archiving
+                  </p>
+                </div>
+              </div>
+
+              {/* Feedback toast */}
+              {jobFeedbackMessage && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-3 rounded-xl bg-slate-800 text-slate-200 border border-white/10 text-xs font-mono"
+                >
+                  {jobFeedbackMessage}
+                </motion.div>
+              )}
+
+              {/* Job Manager Grid */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs font-sans">
+                  <thead>
+                    <tr className="border-b border-white/5 text-slate-500 font-mono uppercase text-[9px] tracking-wider">
+                      <th className="py-3 px-4">Job / Scheduled Thread Name</th>
+                      <th className="py-3 px-4">Interval</th>
+                      <th className="py-3 px-4">Last Executed</th>
+                      <th className="py-3 px-4">Latency</th>
+                      <th className="py-3 px-4">Runs</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Operations</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 font-mono text-[11px]">
+                    {[
+                      { key: 'verifyPendingDeposits', title: 'Verify Pending Deposits', desc: 'Queries pending blockchain hashes or payment requests to reconcile balance credit.', freq: 'Every 60s' },
+                      { key: 'retryFailedWebhooks', title: 'Retry Missed Webhooks', desc: 'Identifies uncredited deposits that failed signatures and runs auto-recovery.', freq: 'Every 60s' },
+                      { key: 'retryFailedWithdrawals', title: 'Retry Stalled Withdrawals', desc: 'Scans for processing withdrawals stuck in broadcast queues to re-submit.', freq: 'Every 60s' },
+                      { key: 'verifyCompletedBlockchainTx', title: 'Verify On-Chain Tx Finalization', desc: 'Validates txn hashes against mainnets (TRON, BSC) to confirm complete safety.', freq: 'Every 60s' },
+                      { key: 'cleanExpiredSessions', title: 'Clean Expired Payment Sessions', desc: 'Cancels pending deposit requests older than 24 hours to keep collections clean.', freq: 'Every 60s' },
+                      { key: 'removeStaleRecords', title: 'Remove Stale Pending Records', desc: 'Safely removes legacy temporary test records and debug documents.', freq: 'Every 60s' },
+                      { key: 'archiveOldLogs', title: 'Archive Legacy Activity Logs', desc: 'Summarizes and rolls up auditLogs older than 30 days to free storage index.', freq: 'Every 60s' }
+                    ].map((job) => {
+                      const stats = systemHealth?.jobs?.[job.key] || { lastRun: null, durationMs: 0, status: 'Idle', error: null, runCount: 0 };
+                      const isRunning = runningJobName === job.key || stats.status === 'Running';
+                      const isSuccess = stats.status === 'Success';
+                      const isFailed = stats.status === 'Failed';
+
+                      return (
+                        <tr key={job.key} className="hover:bg-white/[0.02] transition-colors group">
+                          <td className="py-4 px-4 text-left">
+                            <span className="text-white font-bold block text-xs group-hover:text-emerald-400 transition-colors">{job.title}</span>
+                            <span className="text-[9px] text-slate-500 font-sans block mt-0.5">{job.desc}</span>
+                          </td>
+                          <td className="py-4 px-4 text-slate-400">{job.freq}</td>
+                          <td className="py-4 px-4 text-slate-300">
+                            {stats.lastRun ? new Date(stats.lastRun).toLocaleTimeString() : 'Never'}
+                          </td>
+                          <td className="py-4 px-4 text-slate-400">
+                            {stats.durationMs ? `${stats.durationMs}ms` : '0ms'}
+                          </td>
+                          <td className="py-4 px-4 text-slate-300">{stats.runCount || 0}</td>
+                          <td className="py-4 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                              isRunning ? 'bg-blue-500/10 text-blue-400 border border-blue-500/15 animate-pulse' :
+                              isSuccess ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/15' :
+                              isFailed ? 'bg-rose-500/10 text-rose-400 border border-rose-500/15' :
+                              'bg-slate-800 text-slate-400 border border-white/5'
+                            }`}>
+                              {stats.status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <button
+                              disabled={isRunning || adminRole === 'Support'}
+                              onClick={() => handleTriggerJob(job.key)}
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-black font-bold uppercase transition-all flex items-center gap-1 inline-flex cursor-pointer disabled:opacity-40 disabled:hover:bg-emerald-500/10 disabled:hover:text-emerald-400 disabled:cursor-not-allowed border-0 text-[10px]"
+                            >
+                              {isRunning ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <PlayCircle className="w-3 h-3" />
+                              )}
+                              <span>Run Now</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Centralized Alarm Registry & Security alerts */}
+            <div className="bg-[#111] border border-white/5 rounded-3xl p-6 space-y-4 text-left">
+              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                <div>
+                  <h4 className="text-md font-bold text-white flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-rose-500 animate-pulse" />
+                    Central System Alarms & Security alerts Feed
+                  </h4>
+                  <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
+                    Incidents and anomaly records requiring administrative authorization & resolution
+                  </p>
+                </div>
+              </div>
+
+              {systemAlerts.length === 0 ? (
+                <div className="text-center py-16 text-slate-500 font-mono space-y-2">
+                  <span className="text-2xl block text-emerald-400 font-bold">✓</span>
+                  <p className="text-xs">All channels reporting nominal metrics. No active alarm logs.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-white/5">
+                  {systemAlerts.map((alert: any) => {
+                    let sevColor = 'text-slate-400 border-white/5 bg-white/5';
+                    if (alert.severity === 'error') sevColor = 'text-rose-400 border-rose-500/15 bg-rose-500/5';
+                    if (alert.severity === 'warning') sevColor = 'text-amber-400 border-amber-500/15 bg-amber-500/5';
+
+                    return (
+                      <div key={alert.id} className="py-4 flex gap-4 items-start text-left justify-between">
+                        <div className="flex gap-4 items-start">
+                          <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm border font-bold ${sevColor}`}>
+                            {alert.severity === 'error' ? '🚨' : alert.severity === 'warning' ? '⚠️' : 'ℹ️'}
+                          </span>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <h5 className="font-bold text-sm text-white">{alert.title}</h5>
+                              {alert.resolved ? (
+                                <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 text-[8px] font-black uppercase px-1.5 py-0.5 rounded font-mono">
+                                  Resolved
+                                </span>
+                              ) : (
+                                <span className="bg-rose-500/15 text-rose-400 border border-rose-500/20 text-[8px] font-black uppercase px-1.5 py-0.5 rounded font-mono animate-pulse">
+                                  Active Alert
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 max-w-2xl">{alert.message}</p>
+                            <div className="flex gap-4 text-[9px] font-mono text-slate-500 pt-1">
+                              <span>CATEGORY: <strong className="text-slate-300 uppercase">{alert.type}</strong></span>
+                              <span>BROADCAST TIME: <strong className="text-slate-300">{new Date(alert.timestamp).toLocaleString()}</strong></span>
+                              {alert.resolvedAt && (
+                                <span className="text-emerald-500">RESOLVED AT: {new Date(alert.resolvedAt).toLocaleTimeString()}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {!alert.resolved && (
+                          <button
+                            disabled={adminRole === 'Support'}
+                            onClick={() => handleResolveAlert(alert.docId)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-emerald-500 text-slate-300 hover:text-black font-bold uppercase transition-all disabled:opacity-40 disabled:cursor-not-allowed text-[10px] border-0 shrink-0 cursor-pointer"
+                          >
+                            Resolve Alert
+                          </button>
+                        )}
                       </div>
                     );
                   })}

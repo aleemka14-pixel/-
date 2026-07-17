@@ -1683,9 +1683,11 @@ export default function App() {
         }
       }
     } catch (e: any) {
-      if (e.code !== 'auth/cancelled-popup-request' && e.code !== 'auth/popup-closed-by-user') {
-        setVercelDiagError({ code: e.code, message: e.message });
+      if (e.code === 'auth/unauthorized-domain' || (e.message && e.message.includes('auth/unauthorized-domain'))) {
+        setVercelDiagError({ code: e.code || 'auth/unauthorized-domain', message: e.message });
         setShowVercelDiag(true);
+      } else if (e.code !== 'auth/cancelled-popup-request' && e.code !== 'auth/popup-closed-by-user') {
+        alert(`Google Sign-In Failed: ${e.message || e.code || 'Please try again.'}`);
       }
     }
   };
@@ -2409,15 +2411,29 @@ export default function App() {
                     </div>
                     
                     <button 
-                      onClick={() => {
-                        if (adminEmails.includes(adminEmailInput.toLowerCase()) && adminPasswordInput === '9113278916') {
-                          setIsAdminLoggedIn(true);
-                          setShowAdminLogin(false);
-                          setActiveTab('admin');
-                          setAdminEmailInput('');
-                          setAdminPasswordInput('');
-                        } else {
-                          alert('Authentication Failed: Signal Terminated');
+                      onClick={async () => {
+                        if (!adminEmails.includes(adminEmailInput.toLowerCase())) {
+                          alert('Authentication Failed: Unauthorized Identifier');
+                          return;
+                        }
+                        try {
+                          const res = await fetch('/api/admin/verify-auth', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ type: 'login', value: adminPasswordInput })
+                          });
+                          const data = await res.json();
+                          if (res.ok && data.success) {
+                            setIsAdminLoggedIn(true);
+                            setShowAdminLogin(false);
+                            setActiveTab('admin');
+                            setAdminEmailInput('');
+                            setAdminPasswordInput('');
+                          } else {
+                            alert(data.error || 'Authentication Failed: Signal Terminated');
+                          }
+                        } catch (err) {
+                          alert('Authentication Error: Cannot reach authorization system.');
                         }
                       }}
                       className="w-full py-5 mt-4 bg-emerald-500 text-black font-black rounded-2xl shadow-[0_10px_30px_rgba(16,185,129,0.2)] hover:shadow-[0_15px_40px_rgba(16,185,129,0.3)] hover:-translate-y-0.5 transition-all active:scale-[0.98] relative text-lg"
@@ -2461,17 +2477,6 @@ export default function App() {
                           <p className="text-slate-600 text-[10px] leading-relaxed">
                             Secured by Enterprise Protocol.
                           </p>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setVercelDiagError(null);
-                              setShowVercelDiag(true);
-                            }}
-                            className="mt-2 text-[10px] font-bold text-teal-400 hover:text-teal-300 underline underline-offset-4 cursor-pointer transition-colors uppercase tracking-widest block mx-auto select-none"
-                          >
-                            Deploying on Vercel? Setup Guide
-                          </button>
                         </div>
                       ) : (
                         <div className="space-y-6 text-left relative">
