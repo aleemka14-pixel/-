@@ -688,6 +688,7 @@ export default function App() {
 
     const unsubUsersList = onSnapshot(collection(db, 'users'), (snap) => {
       rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      console.log('Total users fetched:', rawUsers.length);
       setUsersLoading(false);
       setUsersError(null);
       mergeAndSetPlayers();
@@ -700,6 +701,7 @@ export default function App() {
 
     const unsubPlayersList = onSnapshot(collection(db, 'players'), (snap) => {
       rawPlayers = snap.docs.map(d => d.data() as Player);
+      console.log('Total players fetched:', rawPlayers.length);
       setUsersLoading(false);
       setUsersError(null);
       mergeAndSetPlayers();
@@ -4246,6 +4248,10 @@ function LeaderboardView({
   const currentCurrency = preferredCurrency || localStorage.getItem('preferred_currency') || 'USD';
   const currentRates = rates || getCachedRates().rates;
 
+  useEffect(() => {
+    console.log('Total players rendered in Leaderboard:', sortedPlayers.length);
+  }, [sortedPlayers]);
+
   const formatBalanceLocal = (bal: number) => {
     return `${getCurrencySymbol(currentCurrency)}${formatCurrencyValue(bal, currentCurrency, currentRates)}`;
   };
@@ -5476,6 +5482,10 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   onUpdateAnnouncementText: (text: string) => void,
   onToggleAnnouncementEnabled: () => void
 }) {
+  useEffect(() => {
+    console.log('Total users rendered in Admin Panel:', state.players.length);
+  }, [state.players]);
+
   const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositSearch, setDepositSearch] = useState('');
