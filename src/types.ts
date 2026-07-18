@@ -1,10 +1,10 @@
 export interface Transaction {
   id: string;
   playerId: string;
-  type: 'deposit' | 'bet' | 'win' | 'withdrawal';
+  type: 'deposit' | 'bet' | 'win' | 'withdrawal' | 'game_win' | 'game_loss' | 'bonus' | 'admin_adjustment';
   amount: number;
   timestamp: number;
-  status: 'pending' | 'completed' | 'failed' | 'confirmed';
+  status: 'pending' | 'completed' | 'failed' | 'confirmed' | string;
   transactionId?: string;
   userId?: string;
   network?: string;
@@ -13,6 +13,7 @@ export interface Transaction {
   balanceBefore?: number;
   balanceAfter?: number;
   referenceId?: string;
+  description?: string;
 }
 
 export interface Wallet {
