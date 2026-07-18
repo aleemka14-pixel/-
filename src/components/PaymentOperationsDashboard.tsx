@@ -720,6 +720,7 @@ export function PaymentOperationsDashboard({
       });
       await setDoc(doc(db, 'users', tx.playerId), {
         walletBalance: newBalance,
+        balance: newBalance,
         updatedAt: Date.now()
       }, { merge: true });
 
@@ -2047,7 +2048,7 @@ export function PaymentOperationsDashboard({
                           const player = players.find(p => p.id === t.playerId || p.id === t.userId);
                           const isPositive = t.type === 'deposit' || t.type === 'game_win' || t.type === 'bonus' || (t.type === 'admin_adjustment' && (t.balanceAfter ?? 0) >= (t.balanceBefore ?? 0));
                           
-                          let typeLabel = t.type;
+                          let typeLabel: string = t.type;
                           let typeColor = 'bg-slate-800 text-slate-400 border border-white/5';
                           if (t.type === 'deposit') {
                             typeLabel = 'DEPOSIT';

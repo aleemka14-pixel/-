@@ -51,7 +51,9 @@ import {
   Users,
   Crown,
   Megaphone,
-  Sliders
+  Sliders,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
@@ -382,6 +384,8 @@ export default function App() {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [loading, setLoading] = useState(true);
   const [walletLoading, setWalletLoading] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [showVercelDiag, setShowVercelDiag] = useState(false);
   const [vercelDiagError, setVercelDiagError] = useState<{ code?: string; message?: string } | null>(null);
 
@@ -489,7 +493,28 @@ export default function App() {
         setUser(firebaseUser);
         if (firebaseUser) {
           setWalletLoading(true);
-          setState(prev => ({ ...prev, currentPlayerId: firebaseUser.uid }));
+          const cachedBalanceStr = localStorage.getItem(`last_known_balance_${firebaseUser.uid}`);
+          const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : null;
+          
+          setState(prev => {
+            const exists = prev.players.some(p => p.id === firebaseUser.uid);
+            if (!exists && cachedBalance !== null && !Number.isNaN(cachedBalance)) {
+              return {
+                ...prev,
+                currentPlayerId: firebaseUser.uid,
+                players: [...prev.players, {
+                  id: firebaseUser.uid,
+                  name: firebaseUser.displayName || 'Player',
+                  email: firebaseUser.email || '',
+                  balance: cachedBalance,
+                  override: 'none',
+                  referralCode: '',
+                  referralCount: 0
+                } as Player]
+              };
+            }
+            return { ...prev, currentPlayerId: firebaseUser.uid };
+          });
         } else {
           // Clear sensitive state on logout
           setState(prev => ({ 
@@ -612,11 +637,17 @@ export default function App() {
     const mergeAndSetPlayers = () => {
       const mergedPlayers = rawUsers.map(u => {
         const p = rawPlayers.find(pl => pl.id === u.id);
+        const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+          ? Number(u.walletBalance)
+          : (u.balance !== undefined && !Number.isNaN(Number(u.balance))
+            ? Number(u.balance)
+            : (p?.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0));
+        
         return {
           id: u.id,
           name: u.username || u.name || u.displayName || 'Player',
           email: u.email || '',
-          balance: u.walletBalance !== undefined ? u.walletBalance : (u.balance ?? p?.balance ?? 0),
+          balance: walletBalance,
           override: p?.override || u.override || 'none',
           referralCode: p?.referralCode || u.referralCode || '',
           referredBy: p?.referredBy || u.referredBy || '',
@@ -631,9 +662,10 @@ export default function App() {
       rawPlayers.forEach(p => {
         const exists = mergedPlayers.some(mp => mp.id === p.id);
         if (!exists) {
+          const playerBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
           mergedPlayers.push({
             ...p,
-            balance: p.balance ?? 0
+            balance: playerBalance
           });
         }
       });
@@ -656,17 +688,25 @@ export default function App() {
 
     const unsubUsersList = onSnapshot(collection(db, 'users'), (snap) => {
       rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setUsersLoading(false);
+      setUsersError(null);
       mergeAndSetPlayers();
     }, (err) => {
       console.warn('Failed to listen to users collection:', err);
+      setUsersError('Failed to load users from collection.');
+      setUsersLoading(false);
       handleListenerError(err);
     });
 
     const unsubPlayersList = onSnapshot(collection(db, 'players'), (snap) => {
       rawPlayers = snap.docs.map(d => d.data() as Player);
+      setUsersLoading(false);
+      setUsersError(null);
       mergeAndSetPlayers();
     }, (err) => {
       console.warn('Failed to listen to players collection:', err);
+      setUsersError('Failed to load players from collection.');
+      setUsersLoading(false);
       handleListenerError(err);
     });
 
@@ -694,7 +734,23 @@ export default function App() {
     const unsubUserDoc = onSnapshot(doc(db, 'users', user.uid), (snap) => {
       if (snap.exists()) {
         const u = snap.data();
-        const walletBalance = u.walletBalance ?? 0;
+        
+        // Use a safe fallback for the balance, prioritizing walletBalance then balance
+        const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+          ? Number(u.walletBalance)
+          : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+        
+        // Self-heal: ensure 'balance' and 'walletBalance' are consistent in Firestore
+        if (u.walletBalance === undefined || u.balance === undefined || u.walletBalance !== u.balance) {
+          updateDoc(doc(db, 'users', user.uid), {
+            balance: walletBalance,
+            walletBalance: walletBalance,
+            updatedAt: Date.now()
+          }).catch(err => console.warn('Failed to self-heal user balances:', err));
+        }
+
+        // Cache the live balance to avoid 0-balance resets on refresh or login
+        localStorage.setItem(`last_known_balance_${user.uid}`, String(walletBalance));
         
         setState(prev => {
           const updatedPlayers = prev.players.map(p => {
@@ -713,9 +769,9 @@ export default function App() {
                 name: u.username || user.displayName || 'Player',
                 email: u.email || user.email || '',
                 balance: walletBalance,
-                override: 'none',
-                referralCode: '',
-                referralCount: 0
+                override: u.override || 'none',
+                referralCode: u.referralCode || '',
+                referralCount: u.referralCount || 0
               }]
             };
           }
@@ -730,6 +786,7 @@ export default function App() {
             await setDoc(doc(db, 'users', user.uid), {
               username: playerObj.name || user.displayName || 'Player',
               email: playerObj.email || user.email || '',
+              balance: playerObj.balance || 0,
               walletBalance: playerObj.balance || 0,
               createdAt: Date.now(),
               updatedAt: Date.now()
@@ -962,11 +1019,13 @@ export default function App() {
   const currentPlayer = useMemo(() => {
     const p = state.players.find(p => p.id === user?.uid) || state.players.find(p => p.id === state.currentPlayerId);
     if (!p) {
+      const cachedBalanceStr = user?.uid ? localStorage.getItem(`last_known_balance_${user.uid}`) : null;
+      const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : 0;
       return {
         id: user?.uid || state.currentPlayerId || 'temp',
         name: user?.displayName || 'New Player',
         email: user?.email || '',
-        balance: 0,
+        balance: Number.isNaN(cachedBalance) ? 0 : cachedBalance,
         override: 'none',
         referralCode: '',
         referralCount: 0
@@ -1108,6 +1167,7 @@ export default function App() {
       const userRef = doc(db, 'users', user.uid);
       batch.update(userRef, { 
         walletBalance: increment(balanceChange),
+        balance: increment(balanceChange),
         updatedAt: Date.now()
       });
       
@@ -1250,6 +1310,7 @@ export default function App() {
         const userRef = doc(db, 'users', withdrawalData.playerId);
         batch.update(userRef, { 
           walletBalance: increment(withdrawalData.amount),
+          balance: increment(withdrawalData.amount),
           updatedAt: Date.now()
         });
       }
@@ -1277,6 +1338,7 @@ export default function App() {
         const userRef = doc(db, 'users', deposit.playerId);
         batch.update(userRef, { 
           walletBalance: increment(deposit.amount),
+          balance: increment(deposit.amount),
           updatedAt: Date.now()
         });
         playSound('WIN');
@@ -1327,6 +1389,7 @@ export default function App() {
         });
         batch.update(doc(db, 'users', playerId), {
           walletBalance: increment(winAmount),
+          balance: increment(winAmount),
           updatedAt: Date.now()
         });
         playSound('WIN', winAmount);
@@ -1385,6 +1448,7 @@ export default function App() {
           });
           batch.update(doc(db, 'users', player.id), {
             walletBalance: increment(winAmount),
+            balance: increment(winAmount),
             updatedAt: Date.now()
           });
           winSoundPlayed = true;
@@ -1702,6 +1766,7 @@ export default function App() {
           });
           batch.update(doc(db, 'users', referrerId), {
             walletBalance: increment(state.referralAmount ?? 10),
+            balance: increment(state.referralAmount ?? 10),
             updatedAt: Date.now()
           });
         }
@@ -1948,6 +2013,7 @@ export default function App() {
 
       batch.update(doc(db, 'users', user.uid), {
         walletBalance: increment(-amt),
+        balance: increment(-amt),
         updatedAt: Date.now()
       });
 
@@ -2703,7 +2769,13 @@ export default function App() {
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 >
-                  <LeaderboardView state={activeState} preferredCurrency={preferredCurrency} rates={exchangeRates} />
+                  <LeaderboardView 
+                    state={activeState} 
+                    preferredCurrency={preferredCurrency} 
+                    rates={exchangeRates} 
+                    isLoading={usersLoading}
+                    error={usersError}
+                  />
                 </motion.div>
               )}
 
@@ -4157,7 +4229,19 @@ function OldVIPView({ state, currentPlayer, preferredCurrency, rates }: VIPViewP
   );
 }
 
-function LeaderboardView({ state, preferredCurrency, rates }: { state: AppState; preferredCurrency?: string; rates?: Record<string, number> }) {
+function LeaderboardView({ 
+  state, 
+  preferredCurrency, 
+  rates,
+  isLoading,
+  error 
+}: { 
+  state: AppState; 
+  preferredCurrency?: string; 
+  rates?: Record<string, number>;
+  isLoading?: boolean;
+  error?: string | null;
+}) {
   const sortedPlayers = [...state.players].sort((a, b) => b.balance - a.balance);
   const currentCurrency = preferredCurrency || localStorage.getItem('preferred_currency') || 'USD';
   const currentRates = rates || getCachedRates().rates;
@@ -4186,8 +4270,25 @@ function LeaderboardView({ state, preferredCurrency, rates }: { state: AppState;
            </h4>
            <span className="text-slate-500 font-mono text-[10px] uppercase tracking-widest">{state.players.length} Competitors</span>
         </div>
-        <div className="divide-y divide-white/5">
-          {sortedPlayers.map((player, index) => (
+        
+        {isLoading ? (
+          <div className="p-12 text-center flex flex-col items-center justify-center gap-4">
+            <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
+            <p className="text-sm text-slate-400 font-mono uppercase tracking-widest">Loading Leaderboard...</p>
+          </div>
+        ) : error ? (
+          <div className="p-12 text-center flex flex-col items-center justify-center gap-4 text-rose-400">
+            <AlertTriangle className="w-8 h-8" />
+            <p className="text-sm font-semibold">{error}</p>
+          </div>
+        ) : sortedPlayers.length === 0 ? (
+          <div className="p-12 text-center flex flex-col items-center justify-center gap-2 text-slate-500">
+            <Trophy className="w-8 h-8 text-slate-600" />
+            <p className="text-sm font-mono uppercase tracking-widest">No Players Found</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-white/5">
+            {sortedPlayers.map((player, index) => (
             <div key={player.id} className="p-8 flex items-center justify-between gap-6 hover:bg-white/[0.01] transition-all duration-300">
                <div className="flex items-center gap-6">
                   <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-xl ${
@@ -4212,7 +4313,8 @@ function LeaderboardView({ state, preferredCurrency, rates }: { state: AppState;
                </div>
             </div>
           ))}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -930,6 +930,7 @@ export function AdminWithdrawalManager({
               });
               await setDoc(doc(db, 'users', requestObj.playerId), {
                 walletBalance: newBalance,
+                balance: newBalance,
                 updatedAt: Date.now()
               }, { merge: true });
             }
@@ -1026,6 +1027,7 @@ export function AdminWithdrawalManager({
           });
           await setDoc(doc(db, 'users', requestObj.playerId), {
             walletBalance: newBalance,
+            balance: newBalance,
             updatedAt: Date.now()
           }, { merge: true });
         }
