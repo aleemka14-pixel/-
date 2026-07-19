@@ -51,7 +51,9 @@ import {
   Users,
   Crown,
   Megaphone,
-  Sliders
+  Sliders,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
@@ -377,6 +379,71 @@ const INITIAL_STATE: AppState = {
   isAnnouncementEnabled: false
 };
 
+const synchronizeUserAndPlayer = async (uid: string, uData: any, pData: any) => {
+  if (!uid) return;
+  const updatesUser: any = {};
+  const updatesPlayer: any = {};
+
+  // 1. Sync ID
+  if (uData && uData.id !== uid) updatesUser.id = uid;
+  if (pData && pData.id !== uid) updatesPlayer.id = uid;
+
+  // 2. Sync username/name
+  const nameVal = pData?.name || uData?.username || uData?.name || uData?.displayName || 'Player';
+  if (uData && uData.username !== nameVal) updatesUser.username = nameVal;
+  if (pData && pData.name !== nameVal) updatesPlayer.name = nameVal;
+
+  // 3. Sync email
+  const emailVal = pData?.email || uData?.email || '';
+  if (uData && uData.email !== emailVal) updatesUser.email = emailVal;
+  if (pData && pData.email !== emailVal) updatesPlayer.email = emailVal;
+
+  // 4. Sync walletBalance/balance
+  const balanceVal = uData?.walletBalance !== undefined ? Number(uData.walletBalance) : (uData?.balance !== undefined ? Number(uData.balance) : (pData?.balance !== undefined ? Number(pData.balance) : 0));
+  if (uData && (uData.walletBalance !== balanceVal || uData.balance !== balanceVal)) {
+    updatesUser.walletBalance = balanceVal;
+    updatesUser.balance = balanceVal;
+  }
+  if (pData && pData.balance !== balanceVal) updatesPlayer.balance = balanceVal;
+
+  // 5. Sync referral data
+  const refCodeVal = pData?.referralCode || uData?.referralCode || '';
+  const refByVal = pData?.referredBy || uData?.referredBy || '';
+  const refCountVal = pData?.referralCount !== undefined ? pData.referralCount : (uData?.referralCount !== undefined ? uData.referralCount : 0);
+
+  if (uData) {
+    if (uData.referralCode !== refCodeVal) updatesUser.referralCode = refCodeVal;
+    if (uData.referredBy !== refByVal) updatesUser.referredBy = refByVal;
+    if (uData.referralCount !== refCountVal) updatesUser.referralCount = refCountVal;
+  }
+  if (pData) {
+    if (pData.referralCode !== refCodeVal) updatesPlayer.referralCode = refCodeVal;
+    if (pData.referredBy !== refByVal) updatesPlayer.referredBy = refByVal;
+    if (pData.referralCount !== refCountVal) updatesPlayer.referralCount = refCountVal;
+  }
+
+  // Apply updates to users collection
+  if (Object.keys(updatesUser).length > 0) {
+    try {
+      updatesUser.updatedAt = Date.now();
+      await updateDoc(doc(db, 'users', uid), updatesUser);
+      console.log(`Auto-Sync: Synced users fields for ${uid}`, updatesUser);
+    } catch (err) {
+      console.warn(`Auto-Sync: Failed to update users doc for ${uid}`, err);
+    }
+  }
+
+  // Apply updates to players collection
+  if (Object.keys(updatesPlayer).length > 0) {
+    try {
+      await updateDoc(doc(db, 'players', uid), updatesPlayer);
+      console.log(`Auto-Sync: Synced players fields for ${uid}`, updatesPlayer);
+    } catch (err) {
+      console.warn(`Auto-Sync: Failed to update players doc for ${uid}`, err);
+    }
+  }
+};
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [state, setState] = useState<AppState>(INITIAL_STATE);
@@ -384,6 +451,9 @@ export default function App() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [showVercelDiag, setShowVercelDiag] = useState(false);
   const [vercelDiagError, setVercelDiagError] = useState<{ code?: string; message?: string } | null>(null);
+
+  const activeListenersRef = useRef<{ uid: string | null; unsubscribes: (() => void)[] }>({ uid: null, unsubscribes: [] });
+  const activeSessionRef = useRef<string | null>(null);
 
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>(() => getCachedRates().rates);
   const [exchangeRatesLastUpdated, setExchangeRatesLastUpdated] = useState<number>(() => getCachedRates().lastUpdated);
@@ -489,7 +559,28 @@ export default function App() {
         setUser(firebaseUser);
         if (firebaseUser) {
           setWalletLoading(true);
-          setState(prev => ({ ...prev, currentPlayerId: firebaseUser.uid }));
+          const cachedBalanceStr = localStorage.getItem(`last_known_balance_${firebaseUser.uid}`);
+          const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : null;
+          
+          setState(prev => {
+            const exists = prev.players.some(p => p.id === firebaseUser.uid);
+            if (!exists && cachedBalance !== null && !Number.isNaN(cachedBalance)) {
+              return {
+                ...prev,
+                currentPlayerId: firebaseUser.uid,
+                players: [...prev.players, {
+                  id: firebaseUser.uid,
+                  name: firebaseUser.displayName || 'Player',
+                  email: firebaseUser.email || '',
+                  balance: cachedBalance,
+                  override: 'none',
+                  referralCode: '',
+                  referralCount: 0
+                } as Player]
+              };
+            }
+            return { ...prev, currentPlayerId: firebaseUser.uid };
+          });
         } else {
           // Clear sensitive state on logout
           setState(prev => ({ 
@@ -527,20 +618,53 @@ export default function App() {
       console.log('Snapshot listeners bypassed because Firestore quota is exceeded.');
       return;
     }
-    
+
+    const currentSessionKey = `${user.uid}_${isAdmin}_${quotaExceeded}`;
+    if (activeSessionRef.current === currentSessionKey) {
+      console.log('Listeners already active for session:', currentSessionKey);
+      return;
+    }
+
+    // Clean up any existing listeners first to prevent duplicates
+    if (activeListenersRef.current.unsubscribes.length > 0) {
+      console.log('Cleaning up old listeners before initializing new ones...');
+      activeListenersRef.current.unsubscribes.forEach(unsub => {
+        try {
+          unsub();
+        } catch (e) {
+          console.warn('Error cleaning up listener:', e);
+        }
+      });
+      activeListenersRef.current.unsubscribes = [];
+    }
+
+    activeSessionRef.current = currentSessionKey;
+
     console.log('Starting Listeners. User:', user.email, user.uid);
     console.log('CurrentUser:', auth.currentUser?.email, auth.currentUser?.uid);
 
+    // Track active unsubscribes for this session
+    const activeUnsubscribes: (() => void)[] = [];
+    activeListenersRef.current.unsubscribes = activeUnsubscribes;
+
+    const reg = (unsub: () => void) => {
+      activeUnsubscribes.push(unsub);
+      return unsub;
+    };
+
     // Config Listener
-    // Config Listener
-    const handleListenerError = (err: any) => {
+    const handleListenerError = (context: string, err: any) => {
       const msg = String(err.message || err).toLowerCase();
-      if (msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded')) {
+      const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded');
+      if (isQuota) {
+        console.warn(`[Firebase Quota Exceeded] ${context}:`, err.message || err);
         window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err.message || String(err) } }));
+      } else {
+        console.error(`${context}:`, err);
       }
     };
 
-    const unsubConfig = onSnapshot(doc(db, 'config', 'admin'), async (snap) => {
+    const unsubConfig = reg(onSnapshot(doc(db, 'config', 'admin'), async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setState(prev => ({
@@ -596,45 +720,335 @@ export default function App() {
             isAnnouncementEnabled: false
           }, { merge: true });
         } catch (e) {
-          console.warn('Failed to initialize admin config:', e);
-          handleListenerError(e);
+          handleListenerError('Failed to initialize admin config', e);
         }
       }
     }, (err) => {
-      console.warn('Config access denied or missing. Using defaults.', err);
-      handleListenerError(err);
-    });
+      handleListenerError('Config access denied or missing. Using defaults.', err);
+    }));
 
-    // Players Listener - Everyone gets at least the top players for the leaderboard
-    const unsubPlayers = onSnapshot(query(collection(db, 'players'), orderBy('balance', 'desc'), limit(50)), (snap) => {
-      const players = snap.docs.map(d => d.data() as Player);
-      setState(prev => {
-        // Merge with existing players to keep the current user's full data if they aren't in the top 50
-        const idMap = new Map<string, Player>(prev.players.map(p => [p.id, p]));
-        players.forEach(p => {
-          if (p.id === user?.uid) {
-            const existing = idMap.get(p.id);
-            if (existing) {
-              idMap.set(p.id, {
-                ...p,
-                balance: existing.balance
-              });
-              return;
+    // Players/Users Combined Listener - Everyone gets at least the top players for the leaderboard
+    let rawPlayers: Player[] = [];
+    let rawUsers: any[] = [];
+    let rawCurrentPlayer: Player | null = null;
+    const syncAttempted = new Set<string>();
+
+    const mergeAndSetPlayers = () => {
+      let mergedPlayers: Player[] = [];
+      
+      if (rawUsers && rawUsers.length > 0) {
+        mergedPlayers = rawUsers
+          .filter(u => u !== undefined && u !== null && u.id)
+          .map(u => {
+            const p = rawPlayers.find(pl => pl && pl.id === u.id);
+            
+            const u_walletBalance = u.walletBalance;
+            const u_balance = u.balance;
+            const p_balance = p?.balance;
+            
+            let walletBalance = 0;
+            if (u_walletBalance !== undefined && u_walletBalance !== null && !Number.isNaN(Number(u_walletBalance))) {
+              walletBalance = Number(u_walletBalance);
+            } else if (u_balance !== undefined && u_balance !== null && !Number.isNaN(Number(u_balance))) {
+              walletBalance = Number(u_balance);
+            } else if (p_balance !== undefined && p_balance !== null && !Number.isNaN(Number(p_balance))) {
+              walletBalance = Number(p_balance);
             }
+            
+            return {
+              id: u.id,
+              name: u.username || u.name || u.displayName || p?.name || 'Player',
+              email: u.email || p?.email || '',
+              balance: walletBalance,
+              walletBalance: walletBalance,
+              override: p?.override || u.override || 'none',
+              referralCode: p?.referralCode || u.referralCode || '',
+              referredBy: p?.referredBy || u.referredBy || '',
+              referralCount: p?.referralCount ?? u.referralCount ?? 0,
+              totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
+              preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
+              pendingBet: p?.pendingBet || undefined,
+              wins: p?.wins ?? u.wins ?? 0,
+              losses: p?.losses ?? u.losses ?? 0,
+            } as Player;
+          });
+
+        // Include players that might not have a user doc yet (backward compatibility/safety)
+        (rawPlayers || []).forEach(p => {
+          if (!p || !p.id) return;
+          const exists = mergedPlayers.some(mp => mp && mp.id === p.id);
+          if (!exists) {
+            const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            mergedPlayers.push({
+              id: p.id,
+              name: p.name || 'Player',
+              email: p.email || '',
+              balance: playerBalance,
+              walletBalance: playerBalance,
+              override: p.override || 'none',
+              referralCode: p.referralCode || '',
+              referredBy: p.referredBy || '',
+              referralCount: p.referralCount ?? 0,
+              totalWagered: p.totalWagered ?? 0,
+              preferredCurrency: p.preferredCurrency || 'USDT',
+              pendingBet: p.pendingBet || undefined,
+              wins: p.wins ?? 0,
+              losses: p.losses ?? 0,
+            } as Player);
           }
-          idMap.set(p.id, p);
         });
-        return { ...prev, players: Array.from(idMap.values()) };
+      } else {
+        // If rawUsers is empty, construct from rawPlayers directly
+        mergedPlayers = (rawPlayers || [])
+          .filter(p => p !== undefined && p !== null)
+          .map(p => {
+            const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            return {
+              id: p.id || '',
+              name: p.name || 'Player',
+              email: p.email || '',
+              balance: playerBalance,
+              walletBalance: playerBalance,
+              override: p.override || 'none',
+              referralCode: p.referralCode || '',
+              referredBy: p.referredBy || '',
+              referralCount: p.referralCount ?? 0,
+              totalWagered: p.totalWagered ?? 0,
+              preferredCurrency: p.preferredCurrency || 'USDT',
+              pendingBet: p.pendingBet || undefined,
+              wins: p.wins ?? 0,
+              losses: p.losses ?? 0,
+            } as Player;
+          });
+      }
+
+      // Ensure the current user is ALWAYS present in the merged list (for profile integrity)
+      if (user && user.uid) {
+        const hasCurrentUser = mergedPlayers.some(p => p && p.id === user.uid);
+        if (!hasCurrentUser) {
+          const p = rawCurrentPlayer || rawPlayers.find(pl => pl && pl.id === user.uid);
+          const cachedBalanceStr = localStorage.getItem(`last_known_balance_${user.uid}`);
+          const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : 0;
+          const currentPlayerBalance = !Number.isNaN(cachedBalance) ? cachedBalance : 0;
+          
+          mergedPlayers.push({
+            id: user.uid,
+            name: p?.name || user.displayName || 'Player',
+            email: p?.email || user.email || '',
+            balance: p?.balance !== undefined ? p.balance : currentPlayerBalance,
+            walletBalance: p?.balance !== undefined ? p.balance : currentPlayerBalance,
+            override: p?.override || 'none',
+            referralCode: p?.referralCode || '',
+            referredBy: p?.referredBy || '',
+            referralCount: p?.referralCount ?? 0,
+            totalWagered: p?.totalWagered ?? 0,
+            preferredCurrency: p?.preferredCurrency || 'USDT',
+            pendingBet: p?.pendingBet || undefined,
+            wins: p?.wins ?? 0,
+            losses: p?.losses ?? 0,
+          } as Player);
+        }
+      }
+
+      // Sort in-memory by balance descending for Leaderboard and Admin Panel
+      mergedPlayers.sort((a, b) => {
+        const balA = a && typeof a.balance === 'number' ? a.balance : 0;
+        const balB = b && typeof b.balance === 'number' ? b.balance : 0;
+        return balB - balA;
       });
+
+      console.log('Users displayed:', rawUsers ? rawUsers.length : 0);
+      console.log('Players displayed:', mergedPlayers ? mergedPlayers.length : 0);
+
+      setState(prev => {
+        const playersList = prev.players || [];
+        // Maintain the active user's current live balance if they are already in the list to avoid flickers
+        const userDocBalance = playersList.find(pl => pl && pl.id === user.uid)?.balance;
+        const updated = mergedPlayers.map(p => {
+          if (p && p.id === user.uid && userDocBalance !== undefined) {
+            return { ...p, balance: userDocBalance };
+          }
+          return p;
+        });
+        return { ...prev, players: updated };
+      });
+
+      // If we are an admin, auto-sync missing player documents for existing users
+      if (isAdmin && rawUsers && rawUsers.length > 0 && rawPlayers && rawPlayers.length > 0) {
+        migrateExistingUsersToPlayers(rawUsers, rawPlayers);
+      }
+    };
+
+    let unsubUsersList = () => {};
+    if (isAdmin) {
+      unsubUsersList = reg(onSnapshot(collection(db, 'users'), (snap) => {
+        rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        console.log('Users fetched:', rawUsers.length);
+        mergeAndSetPlayers();
+      }, (err) => {
+        rawUsers = [];
+        console.log('Users fetched: 0 (permission denied/error)');
+        mergeAndSetPlayers();
+        handleListenerError('Failed to listen to users collection', err);
+      }));
+    } else {
+      // Non-admins do not load users collection
+      rawUsers = [];
+      console.log('Users fetched: 0 (bypassed for non-admin)');
+      mergeAndSetPlayers();
+    }
+
+    // Optimize player list reads by limiting the count to 50 for normal users and ordering by balance
+    const playersQuery = isAdmin
+      ? query(collection(db, 'players'), limit(500))
+      : query(collection(db, 'players'), orderBy('balance', 'desc'), limit(50));
+
+    const unsubPlayersList = reg(onSnapshot(playersQuery, (snap) => {
+      rawPlayers = snap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
+      console.log('Players fetched:', rawPlayers.length);
+      mergeAndSetPlayers();
     }, (err) => {
-      console.warn('Leaderboard players access denied.', err);
-      handleListenerError(err);
-    });
+      handleListenerError('Failed to listen to players collection', err);
+    }));
+
+    const syncCurrentUserDocuments = async (u: any, p: any) => {
+      if (!user || !user.uid || !u || !p) return;
+      
+      const uName = u.username || u.name || '';
+      const pName = p.name || '';
+      const finalName = uName || pName || 'Player';
+
+      const uEmail = u.email || '';
+      const pEmail = p.email || '';
+      const finalEmail = uEmail || pEmail || '';
+
+      const uWalletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+        ? Number(u.walletBalance)
+        : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+      const pBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+      
+      const finalBalance = uWalletBalance !== pBalance ? uWalletBalance : uWalletBalance;
+
+      const uRefCode = u.referralCode || '';
+      const pRefCode = p.referralCode || '';
+      const finalRefCode = pRefCode || uRefCode || ((finalName.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase());
+
+      const uReferredBy = u.referredBy || '';
+      const pReferredBy = p.referredBy || '';
+      const finalReferredBy = pReferredBy || uReferredBy || '';
+
+      const uRefCount = u.referralCount !== undefined ? Number(u.referralCount) : 0;
+      const pRefCount = p.referralCount !== undefined ? Number(p.referralCount) : 0;
+      const finalRefCount = Math.max(uRefCount, pRefCount);
+
+      const finalOverride = p.override || u.override || 'none';
+
+      const userNeedsUpdate = 
+        u.username !== finalName || 
+        u.email !== finalEmail || 
+        u.walletBalance !== finalBalance || 
+        u.balance !== finalBalance ||
+        u.referralCode !== finalRefCode || 
+        u.referredBy !== finalReferredBy || 
+        u.referralCount !== finalRefCount ||
+        u.override !== finalOverride;
+
+      const playerNeedsUpdate = 
+        p.name !== finalName || 
+        p.email !== finalEmail || 
+        p.balance !== finalBalance || 
+        p.referralCode !== finalRefCode || 
+        p.referredBy !== finalReferredBy || 
+        p.referralCount !== finalRefCount ||
+        p.override !== finalOverride;
+
+      if (userNeedsUpdate) {
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            username: finalName,
+            email: finalEmail,
+            walletBalance: finalBalance,
+            balance: finalBalance,
+            referralCode: finalRefCode,
+            referredBy: finalReferredBy,
+            referralCount: finalRefCount,
+            override: finalOverride,
+            updatedAt: Date.now()
+          });
+          console.log(`[Sync] Successfully updated user doc for: ${user.uid}`);
+        } catch (e) {
+          console.warn(`[Sync] Failed to update user doc for: ${user.uid}`, e);
+        }
+      }
+
+      if (playerNeedsUpdate) {
+        try {
+          await updateDoc(doc(db, 'players', user.uid), {
+            name: finalName,
+            email: finalEmail,
+            balance: finalBalance,
+            referralCode: finalRefCode,
+            referredBy: finalReferredBy,
+            referralCount: finalRefCount,
+            override: finalOverride
+          });
+          console.log(`[Sync] Successfully updated player doc for: ${user.uid}`);
+        } catch (e) {
+          console.warn(`[Sync] Failed to update player doc for: ${user.uid}`, e);
+        }
+      }
+    };
+
+    const migrateExistingUsersToPlayers = async (usersList: any[], playersList: Player[]) => {
+      if (!usersList || usersList.length === 0) return;
+      
+      const missingUsers = usersList.filter(u => {
+        if (!u || !u.id) return false;
+        return !playersList.some(p => p && p.id === u.id);
+      });
+
+      if (missingUsers.length > 0) {
+        console.log(`[Migration] Found ${missingUsers.length} users with missing player documents. Migrating...`);
+        for (const u of missingUsers) {
+          if (syncAttempted.has(u.id)) continue;
+          syncAttempted.add(u.id);
+
+          try {
+            const personalReferralCode = ((u.username || u.name || u.displayName || 'Player').substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+            const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+              ? Number(u.walletBalance)
+              : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+
+            const newPlayer: Player = {
+              id: u.id,
+              name: u.username || u.name || u.displayName || 'Player',
+              email: u.email || '',
+              balance: walletBalance,
+              override: u.override || 'none',
+              referralCode: u.referralCode || personalReferralCode,
+              referredBy: u.referredBy || '',
+              referralCount: u.referralCount || 0,
+              totalWagered: u.totalWagered || 0,
+              preferredCurrency: u.preferredCurrency || 'USDT',
+              wins: u.wins ?? 0,
+              losses: u.losses ?? 0,
+            };
+
+            await setDoc(doc(db, 'players', u.id), newPlayer);
+            console.log(`[Migration] Created missing player document for user: ${u.id} (${u.username || 'Player'})`);
+          } catch (err) {
+            console.error(`[Migration] Failed to create player document for user: ${u.id}`, err);
+          }
+        }
+      }
+    };
 
     // Single Player profile listener for updates to own fields and override
-    const unsubPlayer = onSnapshot(doc(db, 'players', user.uid), (snap) => {
+    const unsubPlayer = reg(onSnapshot(doc(db, 'players', user.uid), (snap) => {
       if (snap.exists()) {
         const p = snap.data() as Player;
+        rawCurrentPlayer = p;
+        mergeAndSetPlayers();
         // Keep everything but override balance from the users doc
         setState(prev => {
           const otherPlayers = prev.players.filter(pl => pl.id !== p.id);
@@ -645,17 +1059,65 @@ export default function App() {
           };
           return { ...prev, players: [...otherPlayers, mergedPlayer] };
         });
+
+        // Sync with user doc if it exists
+        getDoc(doc(db, 'users', user.uid)).then((userSnap) => {
+          if (userSnap.exists()) {
+            syncCurrentUserDocuments(userSnap.data(), p);
+          }
+        }).catch(err => console.warn('[Sync] Error checking user doc for sync:', err));
       }
     }, (err) => {
-      console.warn(`Failed to listen to profile players/${user.uid}:`, err);
-      handleListenerError(err);
-    });
+      handleListenerError(`Failed to listen to profile players/${user.uid}`, err);
+    }));
 
     // Single User wallet listener as single source of truth for balances
-    const unsubUserDoc = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+    const unsubUserDoc = reg(onSnapshot(doc(db, 'users', user.uid), (snap) => {
       if (snap.exists()) {
         const u = snap.data();
-        const walletBalance = u.walletBalance ?? 0;
+        
+        // Use a safe fallback for the balance, prioritizing walletBalance then balance
+        const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+          ? Number(u.walletBalance)
+          : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+        
+        // Self-heal: ensure 'balance' and 'walletBalance' are consistent in Firestore
+        if (u.walletBalance === undefined || u.balance === undefined || u.walletBalance !== u.balance) {
+          updateDoc(doc(db, 'users', user.uid), {
+            balance: walletBalance,
+            walletBalance: walletBalance,
+            updatedAt: Date.now()
+          }).catch(err => console.warn('Failed to self-heal user balances:', err));
+        }
+
+        // Cache the live balance to avoid 0-balance resets on refresh or login
+        localStorage.setItem(`last_known_balance_${user.uid}`, String(walletBalance));
+
+        // Self-heal/migration: check if matching player document exists, if not, create it!
+        getDoc(doc(db, 'players', user.uid)).then(async (playerSnap) => {
+          if (!playerSnap.exists()) {
+            const personalReferralCode = ((u.username || user.displayName || 'Player').substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+            const newPlayer: Player = {
+              id: user.uid,
+              name: u.username || user.displayName || 'Player',
+              email: u.email || user.email || '',
+              balance: walletBalance,
+              override: u.override || 'none',
+              referralCode: u.referralCode || personalReferralCode,
+              referredBy: u.referredBy || '',
+              referralCount: u.referralCount || 0,
+              totalWagered: u.totalWagered || 0,
+              preferredCurrency: u.preferredCurrency || 'USDT',
+              wins: u.wins ?? 0,
+              losses: u.losses ?? 0,
+            };
+            await setDoc(doc(db, 'players', user.uid), newPlayer);
+            console.log('Self-healed: Created missing players document for current user');
+          } else {
+            // Already exists, synchronize required fields
+            syncCurrentUserDocuments(u, playerSnap.data());
+          }
+        }).catch(err => console.warn('Failed to check/create missing player document for user:', err));
         
         setState(prev => {
           const updatedPlayers = prev.players.map(p => {
@@ -674,9 +1136,9 @@ export default function App() {
                 name: u.username || user.displayName || 'Player',
                 email: u.email || user.email || '',
                 balance: walletBalance,
-                override: 'none',
-                referralCode: '',
-                referralCount: 0
+                override: u.override || 'none',
+                referralCode: u.referralCode || '',
+                referralCount: u.referralCount || 0
               }]
             };
           }
@@ -691,6 +1153,7 @@ export default function App() {
             await setDoc(doc(db, 'users', user.uid), {
               username: playerObj.name || user.displayName || 'Player',
               email: playerObj.email || user.email || '',
+              balance: playerObj.balance || 0,
               walletBalance: playerObj.balance || 0,
               createdAt: Date.now(),
               updatedAt: Date.now()
@@ -704,10 +1167,9 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.error("Error listening to users/ doc:", err);
-      handleListenerError(err);
+      handleListenerError("Error listening to users/ doc", err);
       setWalletLoading(false);
-    });
+    }));
 
     // Query helper to switch between own and admin data
     const getQuery = (colName: string) => {
@@ -717,65 +1179,58 @@ export default function App() {
         : query(collection(db, colName), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'), limit(l));
     };
 
-    const unsubTxns = onSnapshot(getQuery('transactions'), (snap) => {
+    const unsubTxns = reg(onSnapshot(getQuery('transactions'), (snap) => {
       const transactions = snap.docs.map(d => d.data() as Transaction);
       setState(prev => ({ ...prev, transactions }));
     }, (err) => {
-      handleListenerError(err);
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to transactions denied for ${user.email} (${user.uid}). Falling back to personal view.`);
         const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        const unsubFallback = onSnapshot(fallbackQuery, (s) => {
+        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
            setState(prev => ({ ...prev, transactions: s.docs.map(d => d.data() as Transaction) }));
-        }, (fErr) => {
-           console.warn('Transactions Fallback Error:', fErr);
-           handleListenerError(fErr);
-        });
-        return unsubFallback;
+         }, (fErr) => {
+            handleListenerError('Transactions Fallback Error', fErr);
+         }));
       } else {
-        console.warn('Failed to listen to transactions:', err);
+        handleListenerError('Failed to listen to transactions', err);
       }
-    });
+    }));
 
-    const unsubWithdrawals = onSnapshot(getQuery('withdrawals'), (snap) => {
+    const unsubWithdrawals = reg(onSnapshot(getQuery('withdrawals'), (snap) => {
       const withdrawals = snap.docs.map(d => d.data() as WithdrawalRequest);
       setState(prev => ({ ...prev, withdrawals }));
     }, (err) => {
-      handleListenerError(err);
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to withdrawals denied. Falling back.`);
         const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        onSnapshot(fallbackQuery, (s) => {
+        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
           setState(prev => ({ ...prev, withdrawals: s.docs.map(d => d.data() as WithdrawalRequest) }));
         }, (fErr) => {
-          console.warn('Withdrawals Fallback Error:', fErr);
-          handleListenerError(fErr);
-        });
+          handleListenerError('Withdrawals Fallback Error', fErr);
+        }));
       } else {
-        console.warn('Failed to listen to withdrawals:', err);
+        handleListenerError('Failed to listen to withdrawals', err);
       }
-    });
+    }));
 
-    const unsubDeposits = onSnapshot(getQuery('deposits'), (snap) => {
+    const unsubDeposits = reg(onSnapshot(getQuery('deposits'), (snap) => {
       const deposits = snap.docs.map(d => d.data() as DepositRequest);
       setState(prev => ({ ...prev, deposits }));
     }, (err) => {
-      handleListenerError(err);
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to deposits denied. Falling back.`);
         const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        onSnapshot(fallbackQuery, (s) => {
+        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
           setState(prev => ({ ...prev, deposits: s.docs.map(d => d.data() as DepositRequest) }));
         }, (fErr) => {
-          console.warn('Deposits Fallback Error:', fErr);
-          handleListenerError(fErr);
-        });
+          handleListenerError('Deposits Fallback Error', fErr);
+        }));
       } else {
-        console.warn('Failed to listen to deposits:', err);
+        handleListenerError('Failed to listen to deposits', err);
       }
-    });
+    }));
 
-    const unsubNetworks = onSnapshot(query(collection(db, 'deposit_networks'), orderBy('priority', 'asc')), (snap) => {
+    const unsubNetworks = reg(onSnapshot(query(collection(db, 'deposit_networks'), orderBy('priority', 'asc')), (snap) => {
       if (snap.empty) {
         console.log("No deposit networks found in Firestore, seeding defaults...");
         import('./data/defaultNetworks.ts').then(({ DEFAULT_NETWORKS }) => {
@@ -820,11 +1275,10 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.error('Failed to listen to deposit networks:', err);
-      handleListenerError(err);
-    });
+      handleListenerError('Failed to listen to deposit networks', err);
+    }));
 
-    const unsubWithdrawalNetworks = onSnapshot(query(collection(db, 'withdrawal_networks'), orderBy('priority', 'asc')), (snap) => {
+    const unsubWithdrawalNetworks = reg(onSnapshot(query(collection(db, 'withdrawal_networks'), orderBy('priority', 'asc')), (snap) => {
       if (snap.empty) {
         console.log("No withdrawal networks found in Firestore, seeding defaults...");
         import('./data/defaultWithdrawalNetworks.ts').then(({ DEFAULT_WITHDRAWAL_NETWORKS }) => {
@@ -865,10 +1319,10 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.error('Failed to listen to withdrawal networks:', err);
-    });
+      handleListenerError('Failed to listen to withdrawal networks', err);
+    }));
 
-    const unsubWithdrawalSettings = onSnapshot(doc(db, 'config', 'withdrawal_settings'), (snap) => {
+    const unsubWithdrawalSettings = reg(onSnapshot(doc(db, 'config', 'withdrawal_settings'), (snap) => {
       if (!snap.exists()) {
         console.log("No withdrawal settings found in Firestore, seeding defaults...");
         import('./data/defaultWithdrawalNetworks.ts').then(({ DEFAULT_WITHDRAWAL_SETTINGS }) => {
@@ -881,20 +1335,20 @@ export default function App() {
         setState(prev => ({ ...prev, withdrawalSettings: settings }));
       }
     }, (err) => {
-      console.error('Failed to listen to withdrawal settings:', err);
-    });
+      handleListenerError('Failed to listen to withdrawal settings', err);
+    }));
 
     return () => {
-      unsubConfig();
-      unsubPlayers();
-      unsubPlayer();
-      unsubUserDoc();
-      unsubTxns();
-      unsubWithdrawals();
-      unsubDeposits();
-      unsubNetworks();
-      unsubWithdrawalNetworks();
-      unsubWithdrawalSettings();
+      console.log('Cleaning up listeners on useEffect unmount...');
+      activeUnsubscribes.forEach(unsub => {
+        try {
+          unsub();
+        } catch (e) {
+          console.warn('Error cleaning up listener:', e);
+        }
+      });
+      activeListenersRef.current.unsubscribes = [];
+      activeSessionRef.current = null;
     };
   }, [user, isAdmin, quotaExceeded]);
 
@@ -903,7 +1357,7 @@ export default function App() {
     lastStateRef.current = state;
   }, [state]);
 
-  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'leaderboard' | 'announcement'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'announcement'>('play');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmailInput, setAdminEmailInput] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -922,11 +1376,13 @@ export default function App() {
   const currentPlayer = useMemo(() => {
     const p = state.players.find(p => p.id === user?.uid) || state.players.find(p => p.id === state.currentPlayerId);
     if (!p) {
+      const cachedBalanceStr = user?.uid ? localStorage.getItem(`last_known_balance_${user.uid}`) : null;
+      const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : 0;
       return {
         id: user?.uid || state.currentPlayerId || 'temp',
         name: user?.displayName || 'New Player',
         email: user?.email || '',
-        balance: 0,
+        balance: Number.isNaN(cachedBalance) ? 0 : cachedBalance,
         override: 'none',
         referralCode: '',
         referralCount: 0
@@ -1068,6 +1524,7 @@ export default function App() {
       const userRef = doc(db, 'users', user.uid);
       batch.update(userRef, { 
         walletBalance: increment(balanceChange),
+        balance: increment(balanceChange),
         updatedAt: Date.now()
       });
       
@@ -1210,6 +1667,7 @@ export default function App() {
         const userRef = doc(db, 'users', withdrawalData.playerId);
         batch.update(userRef, { 
           walletBalance: increment(withdrawalData.amount),
+          balance: increment(withdrawalData.amount),
           updatedAt: Date.now()
         });
       }
@@ -1237,6 +1695,7 @@ export default function App() {
         const userRef = doc(db, 'users', deposit.playerId);
         batch.update(userRef, { 
           walletBalance: increment(deposit.amount),
+          balance: increment(deposit.amount),
           updatedAt: Date.now()
         });
         playSound('WIN');
@@ -1287,6 +1746,7 @@ export default function App() {
         });
         batch.update(doc(db, 'users', playerId), {
           walletBalance: increment(winAmount),
+          balance: increment(winAmount),
           updatedAt: Date.now()
         });
         playSound('WIN', winAmount);
@@ -1345,6 +1805,7 @@ export default function App() {
           });
           batch.update(doc(db, 'users', player.id), {
             walletBalance: increment(winAmount),
+            balance: increment(winAmount),
             updatedAt: Date.now()
           });
           winSoundPlayed = true;
@@ -1400,6 +1861,61 @@ export default function App() {
     } catch (e) {
       setLoading(false);
       handleFirestoreError(e, OperationType.DELETE, 'transactions');
+    }
+  };
+
+  const safeMigrateUsersToPlayers = async (): Promise<{ createdCount: number; existedCount: number }> => {
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const playersSnap = await getDocs(collection(db, 'players'));
+      
+      const existingPlayerIds = new Set(playersSnap.docs.map(doc => doc.id));
+      const usersList = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+      
+      let migrationCount = 0;
+      const batch = writeBatch(db);
+      
+      for (const u of usersList) {
+        if (!u.id) continue;
+        if (!existingPlayerIds.has(u.id)) {
+          const personalReferralCode = ((u.username || u.name || 'Player').substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+          const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+            ? Number(u.walletBalance)
+            : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+            
+          const newPlayer: Player = {
+            id: u.id,
+            name: u.username || u.name || 'Player',
+            email: u.email || '',
+            balance: walletBalance,
+            override: u.override || 'none',
+            referralCode: u.referralCode || personalReferralCode,
+            referredBy: u.referredBy || '',
+            referralCount: u.referralCount || 0,
+            totalWagered: u.totalWagered || 0,
+            preferredCurrency: u.preferredCurrency || 'USDT',
+            wins: u.wins ?? 0,
+            losses: u.losses ?? 0,
+          };
+          
+          batch.set(doc(db, 'players', u.id), newPlayer);
+          migrationCount++;
+        }
+      }
+      
+      if (migrationCount > 0) {
+        await batch.commit();
+        console.log(`Successfully migrated ${migrationCount} users to players.`);
+      } else {
+        console.log("No missing players found; migration was clean.");
+      }
+      return {
+        createdCount: migrationCount,
+        existedCount: existingPlayerIds.size,
+      };
+    } catch (err) {
+      console.error("Error during safe user-to-player migration:", err);
+      throw err;
     }
   };
 
@@ -1559,6 +2075,11 @@ export default function App() {
     }
     try {
       await updateDoc(doc(db, 'players', id), { override });
+      try {
+        await updateDoc(doc(db, 'users', id), { override });
+      } catch (err) {
+        console.warn('Could not update override on users collection:', err);
+      }
       playSound('CLICK');
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'players');
@@ -1574,10 +2095,18 @@ export default function App() {
     let referrerId: string | undefined = undefined;
 
     if (referralCode && (state.isReferralEnabled ?? true)) {
-      const q = query(collection(db, 'players'), where('referralCode', '==', referralCode.toUpperCase()));
-      // This is simplified, in real code you'd fetch it.
-      // I'll assume for now I can find it in the state if it's already synced.
-      const referrer = state.players.find(p => p.referralCode === referralCode.toUpperCase());
+      let referrer = state.players.find(p => p.referralCode === referralCode.toUpperCase());
+      if (!referrer) {
+        try {
+          const q = query(collection(db, 'players'), where('referralCode', '==', referralCode.toUpperCase()), limit(1));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            referrer = { id: snap.docs[0].id, ...snap.docs[0].data() } as Player;
+          }
+        } catch (err) {
+          console.warn('Error querying referrer:', err);
+        }
+      }
       if (referrer) {
         bonusAmount = state.referralAmount ?? 10;
         referrerId = referrer.id;
@@ -1618,9 +2147,14 @@ export default function App() {
       const batch = writeBatch(db);
       batch.set(doc(db, 'players', user.uid), newPlayer);
       batch.set(doc(db, 'users', user.uid), {
+        id: user.uid,
         username: name,
         email: user.email || '',
+        balance: bonusAmount,
         walletBalance: bonusAmount,
+        referralCode: personalReferralCode,
+        referredBy: referrerId || '',
+        referralCount: 0,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -1657,6 +2191,7 @@ export default function App() {
           });
           batch.update(doc(db, 'users', referrerId), {
             walletBalance: increment(state.referralAmount ?? 10),
+            balance: increment(state.referralAmount ?? 10),
             updatedAt: Date.now()
           });
         }
@@ -1683,9 +2218,11 @@ export default function App() {
         }
       }
     } catch (e: any) {
-      if (e.code !== 'auth/cancelled-popup-request' && e.code !== 'auth/popup-closed-by-user') {
-        setVercelDiagError({ code: e.code, message: e.message });
+      if (e.code === 'auth/unauthorized-domain' || (e.message && e.message.includes('auth/unauthorized-domain'))) {
+        setVercelDiagError({ code: e.code || 'auth/unauthorized-domain', message: e.message });
         setShowVercelDiag(true);
+      } else if (e.code !== 'auth/cancelled-popup-request' && e.code !== 'auth/popup-closed-by-user') {
+        alert(`Google Sign-In Failed: ${e.message || e.code || 'Please try again.'}`);
       }
     }
   };
@@ -1901,6 +2438,7 @@ export default function App() {
 
       batch.update(doc(db, 'users', user.uid), {
         walletBalance: increment(-amt),
+        balance: increment(-amt),
         updatedAt: Date.now()
       });
 
@@ -1908,17 +2446,24 @@ export default function App() {
 
       if (!state.manualMode) {
         setTimeout(async () => {
+          let playerOverride = 'none';
           const playerSnap = await getDoc(doc(db, 'players', user.uid));
-          if (!playerSnap.exists()) return;
-          const player = playerSnap.data() as Player;
+          if (playerSnap.exists()) {
+            playerOverride = playerSnap.data().override || 'none';
+          } else {
+            const userSnap = await getDoc(doc(db, 'users', user.uid));
+            if (userSnap.exists()) {
+              playerOverride = userSnap.data().override || 'none';
+            }
+          }
           
           const configSnap = await getDoc(doc(db, 'config', 'admin'));
           const config = configSnap.data();
           const winRate = config?.winRate ?? 0.45;
 
           let win = Math.random() < winRate;
-          if (player.override === 'win') win = true;
-          if (player.override === 'lose') win = false;
+          if (playerOverride === 'win') win = true;
+          if (playerOverride === 'lose') win = false;
           
           resultBet(user.uid, win ? 'win' : 'lose');
         }, 1500);
@@ -2205,12 +2750,7 @@ export default function App() {
                 icon={<Wallet className="w-5 h-5" />}
                 label="My Wallet"
               />
-              <NavItem 
-                active={activeTab === 'leaderboard'} 
-                onClick={() => { setActiveTab('leaderboard'); setIsSidebarOpen(false); playSound('CLICK'); }}
-                icon={<Trophy className="w-5 h-5" />}
-                label="Leaderboard"
-              />
+
               {(state.isAnnouncementEnabled || isAdmin) && (
                 <NavItem 
                   active={activeTab === 'announcement'} 
@@ -2475,17 +3015,6 @@ export default function App() {
                           <p className="text-slate-600 text-[10px] leading-relaxed">
                             Secured by Enterprise Protocol.
                           </p>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setVercelDiagError(null);
-                              setShowVercelDiag(true);
-                            }}
-                            className="mt-2 text-[10px] font-bold text-teal-400 hover:text-teal-300 underline underline-offset-4 cursor-pointer transition-colors uppercase tracking-widest block mx-auto select-none"
-                          >
-                            Deploying on Vercel? Setup Guide
-                          </button>
                         </div>
                       ) : (
                         <div className="space-y-6 text-left relative">
@@ -2652,17 +3181,7 @@ export default function App() {
                 </motion.div>
               )}
 
-              {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'leaderboard' && (
-                <motion.div
-                  key="leaderboard"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                >
-                  <LeaderboardView state={activeState} preferredCurrency={preferredCurrency} rates={exchangeRates} />
-                </motion.div>
-              )}
+
 
               {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'announcement' && (
                 <motion.div
@@ -2738,6 +3257,7 @@ export default function App() {
                     onToggleTransferLimitsLock={onToggleTransferLimitsLock}
                     onUpdateAnnouncementText={onUpdateAnnouncementText}
                     onToggleAnnouncementEnabled={onToggleAnnouncementEnabled}
+                    onSafeMigrate={safeMigrateUsersToPlayers}
                   />
                 </motion.div>
               )}
@@ -4114,66 +4634,7 @@ function OldVIPView({ state, currentPlayer, preferredCurrency, rates }: VIPViewP
   );
 }
 
-function LeaderboardView({ state, preferredCurrency, rates }: { state: AppState; preferredCurrency?: string; rates?: Record<string, number> }) {
-  const sortedPlayers = [...state.players].sort((a, b) => b.balance - a.balance);
-  const currentCurrency = preferredCurrency || localStorage.getItem('preferred_currency') || 'USD';
-  const currentRates = rates || getCachedRates().rates;
 
-  const formatBalanceLocal = (bal: number) => {
-    return `${getCurrencySymbol(currentCurrency)}${formatCurrencyValue(bal, currentCurrency, currentRates)}`;
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-20 px-4">
-      <div className="flex flex-col items-center justify-center text-center space-y-4 mb-12">
-        <div className="p-4 bg-emerald-500/10 rounded-3xl border border-emerald-500/20">
-          <Trophy className="w-12 h-12 text-emerald-400" />
-        </div>
-        <div>
-          <h2 className="text-4xl font-display font-bold tracking-tight">Leaderboard</h2>
-          <p className="text-slate-500 font-mono text-xs uppercase tracking-[0.2em] mt-2">The Top Performance Arena</p>
-        </div>
-      </div>
-
-      <div className="glass-card rounded-[2.5rem] overflow-hidden border border-white/5">
-        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
-           <h4 className="font-display font-bold text-xl flex items-center gap-3">
-             <TrendingUp className="w-6 h-6 text-emerald-400" />
-             Top Players
-           </h4>
-           <span className="text-slate-500 font-mono text-[10px] uppercase tracking-widest">{state.players.length} Competitors</span>
-        </div>
-        <div className="divide-y divide-white/5">
-          {sortedPlayers.map((player, index) => (
-            <div key={player.id} className="p-8 flex items-center justify-between gap-6 hover:bg-white/[0.01] transition-all duration-300">
-               <div className="flex items-center gap-6">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-xl ${
-                    index === 0 ? 'bg-amber-500 text-amber-950 shadow-lg shadow-amber-500/20' : 
-                    index === 1 ? 'bg-slate-300 text-slate-900' :
-                    index === 2 ? 'bg-orange-600 text-orange-950' :
-                    'bg-white/5 text-slate-400 border border-white/5'
-                  }`}>
-                    {index + 1}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <p className="text-xl font-display font-bold text-white tracking-tight">{player.name}</p>
-                      {index < 3 && <Flame className="w-4 h-4 text-orange-500 animate-pulse" />}
-                    </div>
-                    <p className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.2em] mt-1">Status: Active</p>
-                  </div>
-               </div>
-               <div className="text-right">
-                 <p className="text-2xl font-display font-bold text-emerald-400">{formatBalanceLocal(player.balance)}</p>
-                 <p className="text-[10px] text-slate-600 font-mono uppercase tracking-widest mt-1">Total Assets</p>
-               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, onResetGraph, preferredCurrency, rates, onSelectCurrency }: { 
   state: AppState, 
@@ -5299,7 +5760,7 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled }: { 
+function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate }: { 
   state: AppState, 
   playSound: (key: any) => void,
   onUpdateWinRate: (rate: number) => void,
@@ -5329,8 +5790,15 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   onToggleWinRateLock: () => void,
   onToggleTransferLimitsLock: () => void,
   onUpdateAnnouncementText: (text: string) => void,
-  onToggleAnnouncementEnabled: () => void
+  onToggleAnnouncementEnabled: () => void,
+  onSafeMigrate: () => Promise<{ createdCount: number; existedCount: number }>
 }) {
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationMsg, setMigrationMsg] = useState<string | null>(null);
+  useEffect(() => {
+    console.log('Total users rendered in Admin Panel:', state.players.length);
+  }, [state.players]);
+
   const [withdrawalFilter, setWithdrawalFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositFilter, setDepositFilter] = useState<'pending' | 'completed' | 'rejected' | 'all'>('pending');
   const [depositSearch, setDepositSearch] = useState('');
@@ -6018,6 +6486,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                     players={state.players}
                     deposits={state.deposits || []}
                     playSound={playSound}
+                    transactions={state.transactions || []}
                   />
                 ) : activeSpreadsheet === 'deposits' ? (
                   <AdminDepositLedger 
@@ -7125,10 +7594,6 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                       {
                         label: '⚠️ Scheduled Update',
                         text: 'SYSTEM BULLETIN: Scheduled database synchronization on July 10 at 02:00 UTC. The portal remains active, but expect brief response latency.'
-                      },
-                      {
-                        label: '🎉 Leaderboard Bonus',
-                        text: 'CHAMPIONS REWARDED: The top 3 rank holders on the Leaderboard by Sunday 00:00 UTC will receive a guaranteed cash credit of up to ₹2,500!'
                       }
                     ].map((preset, i) => (
                       <button
@@ -7175,6 +7640,62 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* User-Player Sync & Migration Hub */}
+          <div className="bg-[#0f0f0f] border border-white/5 p-10 rounded-[3rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] mb-12 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-72 h-72 bg-emerald-500/5 rounded-full blur-[90px] pointer-events-none -mr-32 -mt-32" />
+            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 relative z-10">
+              <div className="flex items-center gap-5">
+                <div className="p-4 bg-emerald-500/10 rounded-[1.5rem] border border-emerald-500/20">
+                  <RefreshCw className="w-8 h-8 text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-3xl font-display font-bold text-white tracking-tight">Sync & Migration Hub</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Ensure 100% User-Player Profile Alignment</p>
+                </div>
+              </div>
+              <div>
+                <button
+                  onClick={async () => {
+                    playSound('CLICK');
+                    setIsMigrating(true);
+                    setMigrationMsg(null);
+                    try {
+                      const res = await onSafeMigrate();
+                      setMigrationMsg(`Success: Created ${res.createdCount} new player profile(s). Already existed: ${res.existedCount} profile(s).`);
+                    } catch (e: any) {
+                      setMigrationMsg(`Error: ${e.message || 'Migration failed'}`);
+                    } finally {
+                      setIsMigrating(false);
+                    }
+                  }}
+                  disabled={isMigrating}
+                  className="bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 active:scale-95 transition-all shadow-2xl shadow-emerald-500/30 disabled:opacity-50"
+                >
+                  {isMigrating ? 'Migrating...' : 'Run Safe Migration'}
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-6 relative z-10 space-y-4">
+              <p className="text-slate-300 text-sm leading-relaxed">
+                The User-Player synchronization system maintains a direct 1:1 mapping between Firebase Auth-linked <code className="text-emerald-400 font-mono">users</code> and game-ready <code className="text-emerald-400 font-mono">players</code>. All active users automatically self-heal and sync required fields (<code className="text-slate-400 font-mono">id, username/name, email, walletBalance/balance, referral data</code>) in real-time.
+              </p>
+              <p className="text-slate-500 text-xs font-mono">
+                Running the Safe Migration utility scans the entire database, identifies legacy profiles missing player records, and safely creates them without duplicating existing players or affecting wallet ledger logs.
+              </p>
+              {migrationMsg && (
+                <div className={`p-4 rounded-xl text-xs font-mono border ${
+                  migrationMsg.startsWith('Error') 
+                    ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+                    : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                }`}>
+                  {migrationMsg}
+                </div>
+              )}
             </div>
           </div>
 

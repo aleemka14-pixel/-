@@ -12,10 +12,11 @@ export function generateDeterministicTxId(userId: string, type: string, referenc
 interface LedgerParams {
   db: Firestore;
   userId: string;
-  type: 'deposit' | 'bet' | 'win' | 'withdrawal';
+  type: 'deposit' | 'bet' | 'win' | 'withdrawal' | 'game_win' | 'game_loss' | 'bonus' | 'admin_adjustment';
   amount: number;
   referenceId?: string;
   preventDuplicates?: boolean;
+  description?: string;
 }
 
 /**
@@ -33,7 +34,8 @@ export async function executeLedgerTransaction({
   type,
   amount,
   referenceId,
-  preventDuplicates = false
+  preventDuplicates = false,
+  description
 }: LedgerParams): Promise<{ success: boolean; balanceBefore: number; balanceAfter: number; transactionId: string }> {
   const playerRef = doc(db, 'players', userId);
   const userRef = doc(db, 'users', userId);
@@ -72,11 +74,17 @@ export async function executeLedgerTransaction({
 
     // 3. Compute balanceAfter
     let balanceAfter = balanceBefore;
-    const isAdding = (type === 'deposit' || type === 'win');
+    const isAdding = (type === 'deposit' || type === 'win' || type === 'game_win' || type === 'bonus');
+    const isSubtracting = (type === 'withdrawal' || type === 'bet' || type === 'game_loss');
+
     if (isAdding) {
-      balanceAfter = balanceBefore + amount;
+      balanceAfter = balanceBefore + Math.abs(amount);
+    } else if (isSubtracting) {
+      balanceAfter = balanceBefore - Math.abs(amount);
+    } else if (type === 'admin_adjustment') {
+      balanceAfter = balanceBefore + amount; // amount can be positive or negative for adjustments
     } else {
-      balanceAfter = balanceBefore - amount;
+      balanceAfter = balanceBefore + amount;
     }
 
     // 4. Ensure deduction does not cause negative balance
@@ -113,6 +121,34 @@ export async function executeLedgerTransaction({
       updatedAt: timestamp
     });
 
+    // Default description based on transaction type
+    let defaultDesc = '';
+    switch (type) {
+      case 'deposit':
+        defaultDesc = 'Funds deposited into wallet';
+        break;
+      case 'withdrawal':
+        defaultDesc = 'Funds withdrawn from wallet';
+        break;
+      case 'game_win':
+      case 'win':
+        defaultDesc = 'Winnings from game round';
+        break;
+      case 'game_loss':
+      case 'bet':
+        defaultDesc = 'Bet placed on game round';
+        break;
+      case 'bonus':
+        defaultDesc = 'Bonus credited to wallet';
+        break;
+      case 'admin_adjustment':
+        defaultDesc = 'Administrative balance adjustment';
+        break;
+      default:
+        defaultDesc = 'Wallet balance transaction';
+    }
+    const finalDescription = description || defaultDesc;
+
     // 7. Write the immutable transaction record
     const newTxn: Transaction = {
       id: txId,
@@ -120,13 +156,14 @@ export async function executeLedgerTransaction({
       playerId: userId,
       userId: userId,
       type,
-      amount,
+      amount: Math.abs(amount),
       balanceBefore,
       balanceAfter,
       referenceId: referenceId || '',
       timestamp,
       createdAt: timestamp,
-      status: 'completed'
+      status: 'completed',
+      description: finalDescription
     };
     transaction.set(txRef, newTxn);
 

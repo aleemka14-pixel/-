@@ -3,6 +3,8 @@ import { currentProvider } from './providers/current-provider.js';
 import { hotWalletProvider } from './providers/hot-wallet-provider.js';
 import { mpcWalletProvider } from './providers/mpc-wallet-provider.js';
 import { custodyWalletProvider } from './providers/custody-wallet-provider.js';
+import { nowPaymentsProvider } from './providers/nowpayments-provider.js';
+import { futureProvider } from './providers/future-provider.js';
 
 class WalletService {
   constructor() {
@@ -13,8 +15,12 @@ class WalletService {
       'mock': currentProvider,
       'metamask': currentProvider, // Legacy support
       'trustwallet': currentProvider, // Legacy support
-      'futureprovider': currentProvider, // Legacy support
+      'hotwalletprovider': hotWalletProvider,
       'hot': hotWalletProvider,
+      'nowpayments': nowPaymentsProvider,
+      'nowpaymentsprovider': nowPaymentsProvider,
+      'futureprovider': futureProvider,
+      'future': futureProvider,
       'mpc': mpcWalletProvider,
       'custody': custodyWalletProvider
     };

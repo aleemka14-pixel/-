@@ -30,9 +30,14 @@ function sortObject(obj) {
  * Verifies the NOWPayments IPN signature using HMAC-SHA512.
  */
 function verifyNowPaymentsSignature(headers, payload, ipnSecret) {
+  const isProduction = process.env.NODE_ENV === 'production';
   if (!ipnSecret) {
+    if (isProduction) {
+      console.error("[Errors] Signature verification failed: NOWPAYMENTS_IPN_SECRET is missing in production environment.");
+      return false;
+    }
     console.warn("[Security Warning] NOWPAYMENTS_IPN_SECRET is not configured on the server. Webhook signature checking is bypassed in local/dev environments.");
-    return process.env.NODE_ENV !== 'production';
+    return true;
   }
 
   const signature = headers['x-nowpayments-sig'] || headers['np-sig'];
@@ -182,12 +187,68 @@ export default async function handler(req, res) {
     // 5. Handle payment statuses: waiting, confirming, confirmed, finished, failed, expired, refunded
     const validStatuses = ['waiting', 'confirming', 'confirmed', 'finished', 'failed', 'expired', 'refunded'];
     if (!validStatuses.includes(payment_status)) {
-      console.warn(`[Errors] Unrecognized payment status received: ${payment_status}`);
+      console.warn(`[Security Warning] Unrecognized payment status received: ${payment_status}`);
     }
 
-    // 10. Protect against duplicate webhook deliveries using payment_id (check if already credited)
+    // 6a. Validate payment amount: ensure price_amount matches what was originally requested
+    const expectedAmount = Number(depositDoc.amount);
+    const webhookPriceAmount = Number(price_amount);
+    if (isNaN(webhookPriceAmount) || Math.abs(expectedAmount - webhookPriceAmount) > 0.01) {
+      console.error(`[Errors] Webhook amount validation failed. Expected: ${expectedAmount}, Received in IPN price_amount: ${webhookPriceAmount}`);
+      await recordProviderFailure('nowpayments', 'NOWPayments webhook IPN amount mismatch validation failure.');
+      return res.status(400).json({
+        success: false,
+        error: "Validation failed: Deposit amount mismatch."
+      });
+    }
+
+    // 6b. Validate currency/network: prevent network or currency tampering
+    const expectedNetwork = (depositDoc.network || depositDoc.method || '').toUpperCase();
+    const receivedCurrency = (payload.pay_currency || '').toUpperCase();
+    console.log(`[Verification] Validating currency/network: Expected Network: ${expectedNetwork} | Received Pay Currency: ${receivedCurrency}`);
+
+    let isNetworkValid = true;
+    if (expectedNetwork === 'BTC' || expectedNetwork === 'BITCOIN') {
+      if (receivedCurrency !== 'BTC') isNetworkValid = false;
+    } else if (expectedNetwork === 'SOL' || expectedNetwork === 'SOLANA') {
+      if (receivedCurrency !== 'SOL') isNetworkValid = false;
+    } else if (expectedNetwork === 'LTC' || expectedNetwork === 'LITECOIN') {
+      if (receivedCurrency !== 'LTC') isNetworkValid = false;
+    } else if (expectedNetwork === 'TRC20') {
+      if (receivedCurrency !== 'USDT' && receivedCurrency !== 'USDTTRC20' && receivedCurrency !== 'TRX') isNetworkValid = false;
+    } else if (expectedNetwork === 'ERC20') {
+      if (receivedCurrency !== 'USDT' && receivedCurrency !== 'USDTERC20' && receivedCurrency !== 'ETH') isNetworkValid = false;
+    } else if (expectedNetwork === 'BEP20') {
+      if (receivedCurrency !== 'USDT' && receivedCurrency !== 'USDTBEP20' && receivedCurrency !== 'BNB') isNetworkValid = false;
+    }
+
+    if (!isNetworkValid) {
+      console.error(`[Errors] Webhook currency/network validation failed. Expected Network: ${expectedNetwork}, Received Pay Currency: ${receivedCurrency}`);
+      await recordProviderFailure('nowpayments', 'NOWPayments webhook IPN network/currency mismatch validation failure.');
+      return res.status(400).json({
+        success: false,
+        error: "Validation failed: Network/currency mismatch."
+      });
+    }
+
+    console.log("[Verification] Webhook payload signature, amount, and network successfully validated.");
+
+    // 4. Prevent duplicate transactions: Check transaction ID before processing
+    const txnId = `TXN-NOW-${payment_id}`;
+    const txnRef = doc(db, 'transactions', txnId);
+    const txnSnap = await getDoc(txnRef);
+    if (txnSnap.exists()) {
+      console.log(`[Duplicate webhook ignored] Webhook ignored because transactionId ${payment_id} already exists in transactions ledger.`);
+      return res.status(200).json({
+        success: true,
+        message: "Duplicate webhook delivery ignored. Transaction already processed.",
+        payment_id,
+        status: payment_status
+      });
+    }
+
+    // Protect against duplicate credit checks on deposit status
     if (depositDoc.status === 'completed' || depositDoc.status === 'confirmed' || depositDoc.credited === true) {
-      // 9. Add comprehensive logging for: Duplicate webhook ignored
       console.log(`[Duplicate webhook ignored] Webhook ignored for payment_id: ${payment_id} because deposit ${depositId} has already been credited.`);
       return res.status(200).json({
         success: true,
@@ -197,8 +258,12 @@ export default async function handler(req, res) {
       });
     }
 
-    // 6. Only when payment_status is "finished"
-    if (payment_status === 'finished') {
+    // 3. Implement payment status handling rules:
+    // - Add user balance ONLY when payment status is confirmed/finished.
+    // - Never add balance for waiting, confirming, failed, or expired payments.
+    const isCreditingStatus = payment_status === 'confirmed' || payment_status === 'finished';
+
+    if (isCreditingStatus) {
       const playerRef = doc(db, 'players', playerId);
       const userRef = doc(db, 'users', playerId);
       const depositRef = doc(db, 'deposits', depositSnap.id);
@@ -266,17 +331,14 @@ export default async function handler(req, res) {
             credited: true,
             creditedAt: timestampNow,
             transactionHash: payload.txn_id || payload.transaction_hash || payment_id || '',
-            payment_status: 'finished',
+            payment_status: payment_status,
             updatedAt: timestampNow
           });
 
-          // 8. Create a complete transaction ledger entry
-          const txnId = `TXN-NOW-${payload.txn_id || payload.transaction_hash || payment_id || Date.now()}`;
-          const txnRef = doc(db, 'transactions', txnId);
-
+          // 5. Store complete payment history in Firestore
           const transactionDoc = {
             id: txnId,
-            transactionId: txnId,
+            transactionId: payment_id.toString(),
             playerId: playerId,
             userId: playerId,
             type: 'deposit',
@@ -285,26 +347,28 @@ export default async function handler(req, res) {
             balanceBefore: balanceBefore,
             balanceAfter: updatedBalance,
             referenceId: depositSnap.id,
-            network: depositDoc.network || payload.pay_currency || 'NOWPAYMENTS',
+            network: expectedNetwork,
             status: 'completed',
             transactionHash: payload.txn_id || payload.transaction_hash || payment_id || '',
             timestamp: timestampNow,
             createdAt: depositDoc.createdAt || depositDoc.timestamp || timestampNow,
+            updatedAt: timestampNow,
             completedAt: timestampNow,
             
             // Required ledger fields
-            paymentId: payment_id,
+            paymentId: payment_id.toString(),
             orderId: order_id || depositDoc.depositId || depositSnap.id || '',
             payAmount: Number(actually_paid || payload.pay_amount || dbAmount),
             currency: payload.pay_currency || payload.price_currency || depositDoc.currency || 'USDT',
             walletAddress: payload.pay_address || depositDoc.walletAddress || '',
-            paymentStatus: 'finished'
+            paymentStatus: payment_status,
+            paymentProvider: 'NOWPayments'
           };
 
           transaction.set(txnRef, transactionDoc);
         });
 
-        // 9. Add comprehensive logging for: Balance updated
+        // 7. Balance updated log (shows previous balance, added amount, and new balance)
         console.log(`[Balance updated] Player ${playerId} wallet balance successfully updated from ${balanceBefore} to ${updatedBalance} (+${depositDoc.amount}).`);
 
         await recordProviderSuccess('nowpayments');
@@ -312,7 +376,7 @@ export default async function handler(req, res) {
         await addPaymentLog(
           'success',
           'nowpayments',
-          `NOWPayments Webhook Completed: Deposit '${depositId}' successfully verified and confirmed. Credited ${depositDoc.amount} to player '${playerId}'.`,
+          `NOWPayments Webhook Completed: Deposit '${depositId}' successfully verified and confirmed. Credited ${depositDoc.amount} to player '${playerId}'. Status: ${payment_status}`,
           `PaymentId: ${payment_id} | Paid: ${actually_paid || 'N/A'}`
         );
 
@@ -320,12 +384,11 @@ export default async function handler(req, res) {
           success: true,
           message: "Transaction processed successfully, wallet balance credited.",
           payment_id,
-          status: 'finished'
+          status: payment_status
         });
 
       } catch (txError) {
         if (txError.message === 'ALREADY_CREDITED') {
-          // 9. Add comprehensive logging for: Duplicate webhook ignored
           console.log(`[Duplicate webhook ignored] Concurrent request duplicate ignored for payment_id: ${payment_id}`);
           return res.status(200).json({
             success: true,
@@ -338,9 +401,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // 7. Update the deposit document whenever the payment status changes (for non-finished statuses)
+    // 3b. Non-crediting statuses handling: waiting, confirming, failed, expired, refunded
     const depositRef = doc(db, 'deposits', depositSnap.id);
-    let mappedStatus = 'pending'; // default for waiting, confirming, confirmed
+    let mappedStatus = 'pending'; // default for waiting, confirming
 
     if (payment_status === 'failed' || payment_status === 'expired') {
       mappedStatus = 'rejected';
