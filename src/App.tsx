@@ -590,10 +590,14 @@ export default function App() {
     };
 
     // Config Listener
-    const handleListenerError = (err: any) => {
+    const handleListenerError = (context: string, err: any) => {
       const msg = String(err.message || err).toLowerCase();
-      if (msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded')) {
+      const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded');
+      if (isQuota) {
+        console.warn(`[Firebase Quota Exceeded] ${context}:`, err.message || err);
         window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err.message || String(err) } }));
+      } else {
+        console.error(`${context}:`, err);
       }
     };
 
@@ -653,13 +657,11 @@ export default function App() {
             isAnnouncementEnabled: false
           }, { merge: true });
         } catch (e) {
-          console.warn('Failed to initialize admin config:', e);
-          handleListenerError(e);
+          handleListenerError('Failed to initialize admin config', e);
         }
       }
     }, (err) => {
-      console.warn('Config access denied or missing. Using defaults.', err);
-      handleListenerError(err);
+      handleListenerError('Config access denied or missing. Using defaults.', err);
     }));
 
     // Players/Users Combined Listener - Everyone gets at least the top players for the leaderboard
@@ -860,13 +862,12 @@ export default function App() {
         setUsersError(null);
         mergeAndSetPlayers();
       }, (err) => {
-        console.warn('Failed to listen to users collection:', err);
         setUsersError(null); // Do not let users collection permission errors block Leaderboard rendering
         setUsersLoading(false);
         rawUsers = [];
         console.log('Users fetched: 0 (permission denied/error)');
         mergeAndSetPlayers();
-        handleListenerError(err);
+        handleListenerError('Failed to listen to users collection', err);
       }));
     } else {
       // Non-admins do not load users collection
@@ -889,10 +890,9 @@ export default function App() {
       setUsersError(null);
       mergeAndSetPlayers();
     }, (err) => {
-      console.warn('Failed to listen to players collection:', err);
       setUsersError('Failed to load players from collection.');
       setUsersLoading(false);
-      handleListenerError(err);
+      handleListenerError('Failed to listen to players collection', err);
     }));
 
     // Single Player profile listener for updates to own fields and override
@@ -913,8 +913,7 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.warn(`Failed to listen to profile players/${user.uid}:`, err);
-      handleListenerError(err);
+      handleListenerError(`Failed to listen to profile players/${user.uid}`, err);
     }));
 
     // Single User wallet listener as single source of truth for balances
@@ -1010,8 +1009,7 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.error("Error listening to users/ doc:", err);
-      handleListenerError(err);
+      handleListenerError("Error listening to users/ doc", err);
       setWalletLoading(false);
     }));
 
@@ -1027,18 +1025,16 @@ export default function App() {
       const transactions = snap.docs.map(d => d.data() as Transaction);
       setState(prev => ({ ...prev, transactions }));
     }, (err) => {
-      handleListenerError(err);
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to transactions denied for ${user.email} (${user.uid}). Falling back to personal view.`);
         const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
         const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
            setState(prev => ({ ...prev, transactions: s.docs.map(d => d.data() as Transaction) }));
          }, (fErr) => {
-            console.warn('Transactions Fallback Error:', fErr);
-            handleListenerError(fErr);
+            handleListenerError('Transactions Fallback Error', fErr);
          }));
       } else {
-        console.warn('Failed to listen to transactions:', err);
+        handleListenerError('Failed to listen to transactions', err);
       }
     }));
 
@@ -1046,18 +1042,16 @@ export default function App() {
       const withdrawals = snap.docs.map(d => d.data() as WithdrawalRequest);
       setState(prev => ({ ...prev, withdrawals }));
     }, (err) => {
-      handleListenerError(err);
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to withdrawals denied. Falling back.`);
         const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
         const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
           setState(prev => ({ ...prev, withdrawals: s.docs.map(d => d.data() as WithdrawalRequest) }));
         }, (fErr) => {
-          console.warn('Withdrawals Fallback Error:', fErr);
-          handleListenerError(fErr);
+          handleListenerError('Withdrawals Fallback Error', fErr);
         }));
       } else {
-        console.warn('Failed to listen to withdrawals:', err);
+        handleListenerError('Failed to listen to withdrawals', err);
       }
     }));
 
@@ -1065,18 +1059,16 @@ export default function App() {
       const deposits = snap.docs.map(d => d.data() as DepositRequest);
       setState(prev => ({ ...prev, deposits }));
     }, (err) => {
-      handleListenerError(err);
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to deposits denied. Falling back.`);
         const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
         const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
           setState(prev => ({ ...prev, deposits: s.docs.map(d => d.data() as DepositRequest) }));
         }, (fErr) => {
-          console.warn('Deposits Fallback Error:', fErr);
-          handleListenerError(fErr);
+          handleListenerError('Deposits Fallback Error', fErr);
         }));
       } else {
-        console.warn('Failed to listen to deposits:', err);
+        handleListenerError('Failed to listen to deposits', err);
       }
     }));
 
@@ -1125,8 +1117,7 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.error('Failed to listen to deposit networks:', err);
-      handleListenerError(err);
+      handleListenerError('Failed to listen to deposit networks', err);
     }));
 
     const unsubWithdrawalNetworks = reg(onSnapshot(query(collection(db, 'withdrawal_networks'), orderBy('priority', 'asc')), (snap) => {
@@ -1170,7 +1161,7 @@ export default function App() {
         });
       }
     }, (err) => {
-      console.error('Failed to listen to withdrawal networks:', err);
+      handleListenerError('Failed to listen to withdrawal networks', err);
     }));
 
     const unsubWithdrawalSettings = reg(onSnapshot(doc(db, 'config', 'withdrawal_settings'), (snap) => {
@@ -1186,7 +1177,7 @@ export default function App() {
         setState(prev => ({ ...prev, withdrawalSettings: settings }));
       }
     }, (err) => {
-      console.error('Failed to listen to withdrawal settings:', err);
+      handleListenerError('Failed to listen to withdrawal settings', err);
     }));
 
     return () => {
