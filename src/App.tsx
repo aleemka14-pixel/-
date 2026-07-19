@@ -389,6 +389,9 @@ export default function App() {
   const [showVercelDiag, setShowVercelDiag] = useState(false);
   const [vercelDiagError, setVercelDiagError] = useState<{ code?: string; message?: string } | null>(null);
 
+  const activeListenersRef = useRef<{ uid: string | null; unsubscribes: (() => void)[] }>({ uid: null, unsubscribes: [] });
+  const activeSessionRef = useRef<string | null>(null);
+
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>(() => getCachedRates().rates);
   const [exchangeRatesLastUpdated, setExchangeRatesLastUpdated] = useState<number>(() => getCachedRates().lastUpdated);
   const [preferredCurrency, setPreferredCurrency] = useState<string>(() => {
@@ -552,11 +555,40 @@ export default function App() {
       console.log('Snapshot listeners bypassed because Firestore quota is exceeded.');
       return;
     }
-    
+
+    const currentSessionKey = `${user.uid}_${isAdmin}_${quotaExceeded}`;
+    if (activeSessionRef.current === currentSessionKey) {
+      console.log('Listeners already active for session:', currentSessionKey);
+      return;
+    }
+
+    // Clean up any existing listeners first to prevent duplicates
+    if (activeListenersRef.current.unsubscribes.length > 0) {
+      console.log('Cleaning up old listeners before initializing new ones...');
+      activeListenersRef.current.unsubscribes.forEach(unsub => {
+        try {
+          unsub();
+        } catch (e) {
+          console.warn('Error cleaning up listener:', e);
+        }
+      });
+      activeListenersRef.current.unsubscribes = [];
+    }
+
+    activeSessionRef.current = currentSessionKey;
+
     console.log('Starting Listeners. User:', user.email, user.uid);
     console.log('CurrentUser:', auth.currentUser?.email, auth.currentUser?.uid);
 
-    // Config Listener
+    // Track active unsubscribes for this session
+    const activeUnsubscribes: (() => void)[] = [];
+    activeListenersRef.current.unsubscribes = activeUnsubscribes;
+
+    const reg = (unsub: () => void) => {
+      activeUnsubscribes.push(unsub);
+      return unsub;
+    };
+
     // Config Listener
     const handleListenerError = (err: any) => {
       const msg = String(err.message || err).toLowerCase();
@@ -565,7 +597,7 @@ export default function App() {
       }
     };
 
-    const unsubConfig = onSnapshot(doc(db, 'config', 'admin'), async (snap) => {
+    const unsubConfig = reg(onSnapshot(doc(db, 'config', 'admin'), async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setState(prev => ({
@@ -628,11 +660,12 @@ export default function App() {
     }, (err) => {
       console.warn('Config access denied or missing. Using defaults.', err);
       handleListenerError(err);
-    });
+    }));
 
     // Players/Users Combined Listener - Everyone gets at least the top players for the leaderboard
     let rawPlayers: Player[] = [];
     let rawUsers: any[] = [];
+    let rawCurrentPlayer: Player | null = null;
     const syncAttempted = new Set<string>();
 
     const mergeAndSetPlayers = () => {
@@ -724,6 +757,34 @@ export default function App() {
           });
       }
 
+      // Ensure the current user is ALWAYS present in the merged list (for profile integrity)
+      if (user && user.uid) {
+        const hasCurrentUser = mergedPlayers.some(p => p && p.id === user.uid);
+        if (!hasCurrentUser) {
+          const p = rawCurrentPlayer || rawPlayers.find(pl => pl && pl.id === user.uid);
+          const cachedBalanceStr = localStorage.getItem(`last_known_balance_${user.uid}`);
+          const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : 0;
+          const currentPlayerBalance = !Number.isNaN(cachedBalance) ? cachedBalance : 0;
+          
+          mergedPlayers.push({
+            id: user.uid,
+            name: p?.name || user.displayName || 'Player',
+            email: p?.email || user.email || '',
+            balance: p?.balance !== undefined ? p.balance : currentPlayerBalance,
+            walletBalance: p?.balance !== undefined ? p.balance : currentPlayerBalance,
+            override: p?.override || 'none',
+            referralCode: p?.referralCode || '',
+            referredBy: p?.referredBy || '',
+            referralCount: p?.referralCount ?? 0,
+            totalWagered: p?.totalWagered ?? 0,
+            preferredCurrency: p?.preferredCurrency || 'USDT',
+            pendingBet: p?.pendingBet || undefined,
+            wins: p?.wins ?? 0,
+            losses: p?.losses ?? 0,
+          } as Player);
+        }
+      }
+
       // Sort in-memory by balance descending for Leaderboard and Admin Panel
       mergedPlayers.sort((a, b) => {
         const balA = a && typeof a.balance === 'number' ? a.balance : 0;
@@ -792,7 +853,7 @@ export default function App() {
 
     let unsubUsersList = () => {};
     if (isAdmin) {
-      unsubUsersList = onSnapshot(collection(db, 'users'), (snap) => {
+      unsubUsersList = reg(onSnapshot(collection(db, 'users'), (snap) => {
         rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         console.log('Users fetched:', rawUsers.length);
         setUsersLoading(false);
@@ -806,7 +867,7 @@ export default function App() {
         console.log('Users fetched: 0 (permission denied/error)');
         mergeAndSetPlayers();
         handleListenerError(err);
-      });
+      }));
     } else {
       // Non-admins do not load users collection
       rawUsers = [];
@@ -816,7 +877,12 @@ export default function App() {
       mergeAndSetPlayers();
     }
 
-    const unsubPlayersList = onSnapshot(collection(db, 'players'), (snap) => {
+    // Optimize player list reads by limiting the count to 50 for normal users and ordering by balance
+    const playersQuery = isAdmin
+      ? query(collection(db, 'players'), limit(500))
+      : query(collection(db, 'players'), orderBy('balance', 'desc'), limit(50));
+
+    const unsubPlayersList = reg(onSnapshot(playersQuery, (snap) => {
       rawPlayers = snap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
       console.log('Players fetched:', rawPlayers.length);
       setUsersLoading(false);
@@ -827,12 +893,14 @@ export default function App() {
       setUsersError('Failed to load players from collection.');
       setUsersLoading(false);
       handleListenerError(err);
-    });
+    }));
 
     // Single Player profile listener for updates to own fields and override
-    const unsubPlayer = onSnapshot(doc(db, 'players', user.uid), (snap) => {
+    const unsubPlayer = reg(onSnapshot(doc(db, 'players', user.uid), (snap) => {
       if (snap.exists()) {
         const p = snap.data() as Player;
+        rawCurrentPlayer = p;
+        mergeAndSetPlayers();
         // Keep everything but override balance from the users doc
         setState(prev => {
           const otherPlayers = prev.players.filter(pl => pl.id !== p.id);
@@ -847,10 +915,10 @@ export default function App() {
     }, (err) => {
       console.warn(`Failed to listen to profile players/${user.uid}:`, err);
       handleListenerError(err);
-    });
+    }));
 
     // Single User wallet listener as single source of truth for balances
-    const unsubUserDoc = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+    const unsubUserDoc = reg(onSnapshot(doc(db, 'users', user.uid), (snap) => {
       if (snap.exists()) {
         const u = snap.data();
         
@@ -945,7 +1013,7 @@ export default function App() {
       console.error("Error listening to users/ doc:", err);
       handleListenerError(err);
       setWalletLoading(false);
-    });
+    }));
 
     // Query helper to switch between own and admin data
     const getQuery = (colName: string) => {
@@ -955,7 +1023,7 @@ export default function App() {
         : query(collection(db, colName), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'), limit(l));
     };
 
-    const unsubTxns = onSnapshot(getQuery('transactions'), (snap) => {
+    const unsubTxns = reg(onSnapshot(getQuery('transactions'), (snap) => {
       const transactions = snap.docs.map(d => d.data() as Transaction);
       setState(prev => ({ ...prev, transactions }));
     }, (err) => {
@@ -963,19 +1031,18 @@ export default function App() {
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to transactions denied for ${user.email} (${user.uid}). Falling back to personal view.`);
         const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        const unsubFallback = onSnapshot(fallbackQuery, (s) => {
+        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
            setState(prev => ({ ...prev, transactions: s.docs.map(d => d.data() as Transaction) }));
-        }, (fErr) => {
-           console.warn('Transactions Fallback Error:', fErr);
-           handleListenerError(fErr);
-        });
-        return unsubFallback;
+         }, (fErr) => {
+            console.warn('Transactions Fallback Error:', fErr);
+            handleListenerError(fErr);
+         }));
       } else {
         console.warn('Failed to listen to transactions:', err);
       }
-    });
+    }));
 
-    const unsubWithdrawals = onSnapshot(getQuery('withdrawals'), (snap) => {
+    const unsubWithdrawals = reg(onSnapshot(getQuery('withdrawals'), (snap) => {
       const withdrawals = snap.docs.map(d => d.data() as WithdrawalRequest);
       setState(prev => ({ ...prev, withdrawals }));
     }, (err) => {
@@ -983,18 +1050,18 @@ export default function App() {
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to withdrawals denied. Falling back.`);
         const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        onSnapshot(fallbackQuery, (s) => {
+        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
           setState(prev => ({ ...prev, withdrawals: s.docs.map(d => d.data() as WithdrawalRequest) }));
         }, (fErr) => {
           console.warn('Withdrawals Fallback Error:', fErr);
           handleListenerError(fErr);
-        });
+        }));
       } else {
         console.warn('Failed to listen to withdrawals:', err);
       }
-    });
+    }));
 
-    const unsubDeposits = onSnapshot(getQuery('deposits'), (snap) => {
+    const unsubDeposits = reg(onSnapshot(getQuery('deposits'), (snap) => {
       const deposits = snap.docs.map(d => d.data() as DepositRequest);
       setState(prev => ({ ...prev, deposits }));
     }, (err) => {
@@ -1002,18 +1069,18 @@ export default function App() {
       if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
         console.warn(`Admin access to deposits denied. Falling back.`);
         const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        onSnapshot(fallbackQuery, (s) => {
+        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
           setState(prev => ({ ...prev, deposits: s.docs.map(d => d.data() as DepositRequest) }));
         }, (fErr) => {
           console.warn('Deposits Fallback Error:', fErr);
           handleListenerError(fErr);
-        });
+        }));
       } else {
         console.warn('Failed to listen to deposits:', err);
       }
-    });
+    }));
 
-    const unsubNetworks = onSnapshot(query(collection(db, 'deposit_networks'), orderBy('priority', 'asc')), (snap) => {
+    const unsubNetworks = reg(onSnapshot(query(collection(db, 'deposit_networks'), orderBy('priority', 'asc')), (snap) => {
       if (snap.empty) {
         console.log("No deposit networks found in Firestore, seeding defaults...");
         import('./data/defaultNetworks.ts').then(({ DEFAULT_NETWORKS }) => {
@@ -1060,9 +1127,9 @@ export default function App() {
     }, (err) => {
       console.error('Failed to listen to deposit networks:', err);
       handleListenerError(err);
-    });
+    }));
 
-    const unsubWithdrawalNetworks = onSnapshot(query(collection(db, 'withdrawal_networks'), orderBy('priority', 'asc')), (snap) => {
+    const unsubWithdrawalNetworks = reg(onSnapshot(query(collection(db, 'withdrawal_networks'), orderBy('priority', 'asc')), (snap) => {
       if (snap.empty) {
         console.log("No withdrawal networks found in Firestore, seeding defaults...");
         import('./data/defaultWithdrawalNetworks.ts').then(({ DEFAULT_WITHDRAWAL_NETWORKS }) => {
@@ -1104,9 +1171,9 @@ export default function App() {
       }
     }, (err) => {
       console.error('Failed to listen to withdrawal networks:', err);
-    });
+    }));
 
-    const unsubWithdrawalSettings = onSnapshot(doc(db, 'config', 'withdrawal_settings'), (snap) => {
+    const unsubWithdrawalSettings = reg(onSnapshot(doc(db, 'config', 'withdrawal_settings'), (snap) => {
       if (!snap.exists()) {
         console.log("No withdrawal settings found in Firestore, seeding defaults...");
         import('./data/defaultWithdrawalNetworks.ts').then(({ DEFAULT_WITHDRAWAL_SETTINGS }) => {
@@ -1120,20 +1187,19 @@ export default function App() {
       }
     }, (err) => {
       console.error('Failed to listen to withdrawal settings:', err);
-    });
+    }));
 
     return () => {
-      unsubConfig();
-      unsubUsersList();
-      unsubPlayersList();
-      unsubPlayer();
-      unsubUserDoc();
-      unsubTxns();
-      unsubWithdrawals();
-      unsubDeposits();
-      unsubNetworks();
-      unsubWithdrawalNetworks();
-      unsubWithdrawalSettings();
+      console.log('Cleaning up listeners on useEffect unmount...');
+      activeUnsubscribes.forEach(unsub => {
+        try {
+          unsub();
+        } catch (e) {
+          console.warn('Error cleaning up listener:', e);
+        }
+      });
+      activeListenersRef.current.unsubscribes = [];
+      activeSessionRef.current = null;
     };
   }, [user, isAdmin, quotaExceeded]);
 
@@ -1825,10 +1891,18 @@ export default function App() {
     let referrerId: string | undefined = undefined;
 
     if (referralCode && (state.isReferralEnabled ?? true)) {
-      const q = query(collection(db, 'players'), where('referralCode', '==', referralCode.toUpperCase()));
-      // This is simplified, in real code you'd fetch it.
-      // I'll assume for now I can find it in the state if it's already synced.
-      const referrer = state.players.find(p => p.referralCode === referralCode.toUpperCase());
+      let referrer = state.players.find(p => p.referralCode === referralCode.toUpperCase());
+      if (!referrer) {
+        try {
+          const q = query(collection(db, 'players'), where('referralCode', '==', referralCode.toUpperCase()), limit(1));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            referrer = { id: snap.docs[0].id, ...snap.docs[0].data() } as Player;
+          }
+        } catch (err) {
+          console.warn('Error querying referrer:', err);
+        }
+      }
       if (referrer) {
         bonusAmount = state.referralAmount ?? 10;
         referrerId = referrer.id;
