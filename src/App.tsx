@@ -635,43 +635,68 @@ export default function App() {
     let rawUsers: any[] = [];
 
     const mergeAndSetPlayers = () => {
-      const mergedPlayers = rawUsers.map(u => {
-        const p = rawPlayers.find(pl => pl.id === u.id);
-        const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
-          ? Number(u.walletBalance)
-          : (u.balance !== undefined && !Number.isNaN(Number(u.balance))
-            ? Number(u.balance)
-            : (p?.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0));
-        
-        return {
-          id: u.id,
-          name: u.username || u.name || u.displayName || 'Player',
-          email: u.email || '',
-          balance: walletBalance,
-          override: p?.override || u.override || 'none',
-          referralCode: p?.referralCode || u.referralCode || '',
-          referredBy: p?.referredBy || u.referredBy || '',
-          referralCount: p?.referralCount ?? u.referralCount ?? 0,
-          totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
-          preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
-          pendingBet: p?.pendingBet || u.pendingBet || undefined
-        } as Player;
-      });
+      let mergedPlayers: Player[] = [];
+      
+      if (rawUsers && rawUsers.length > 0) {
+        mergedPlayers = rawUsers.map(u => {
+          const p = rawPlayers.find(pl => pl.id === u.id);
+          const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+            ? Number(u.walletBalance)
+            : (u.balance !== undefined && !Number.isNaN(Number(u.balance))
+              ? Number(u.balance)
+              : (p?.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0));
+          
+          return {
+            id: u.id,
+            name: u.username || u.name || u.displayName || 'Player',
+            email: u.email || '',
+            balance: walletBalance,
+            override: p?.override || u.override || 'none',
+            referralCode: p?.referralCode || u.referralCode || '',
+            referredBy: p?.referredBy || u.referredBy || '',
+            referralCount: p?.referralCount ?? u.referralCount ?? 0,
+            totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
+            preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
+            pendingBet: p?.pendingBet || u.pendingBet || undefined
+          } as Player;
+        });
 
-      // Include players that might not have a user doc yet (backward compatibility/safety)
-      rawPlayers.forEach(p => {
-        const exists = mergedPlayers.some(mp => mp.id === p.id);
-        if (!exists) {
+        // Include players that might not have a user doc yet (backward compatibility/safety)
+        rawPlayers.forEach(p => {
+          const exists = mergedPlayers.some(mp => mp.id === p.id);
+          if (!exists) {
+            const playerBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            mergedPlayers.push({
+              ...p,
+              balance: playerBalance
+            });
+          }
+        });
+      } else {
+        // If rawUsers is empty, construct from rawPlayers directly
+        mergedPlayers = rawPlayers.map(p => {
           const playerBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
-          mergedPlayers.push({
-            ...p,
-            balance: playerBalance
-          });
-        }
-      });
+          return {
+            id: p.id,
+            name: p.name || 'Player',
+            email: p.email || '',
+            balance: playerBalance,
+            override: p.override || 'none',
+            referralCode: p.referralCode || '',
+            referredBy: p.referredBy || '',
+            referralCount: p.referralCount ?? 0,
+            totalWagered: p.totalWagered ?? 0,
+            preferredCurrency: p.preferredCurrency || 'USDT',
+            pendingBet: p.pendingBet || undefined
+          } as Player;
+        });
+      }
 
       // Sort in-memory by balance descending for Leaderboard and Admin Panel
       mergedPlayers.sort((a, b) => b.balance - a.balance);
+
+      console.log('Users displayed:', rawUsers.length);
+      console.log('Players displayed:', mergedPlayers.length);
 
       setState(prev => {
         // Maintain the active user's current live balance if they are already in the list to avoid flickers
@@ -686,22 +711,35 @@ export default function App() {
       });
     };
 
-    const unsubUsersList = onSnapshot(collection(db, 'users'), (snap) => {
-      rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      console.log('Total users fetched:', rawUsers.length);
+    let unsubUsersList = () => {};
+    if (isAdmin) {
+      unsubUsersList = onSnapshot(collection(db, 'users'), (snap) => {
+        rawUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        console.log('Users fetched:', rawUsers.length);
+        setUsersLoading(false);
+        setUsersError(null);
+        mergeAndSetPlayers();
+      }, (err) => {
+        console.warn('Failed to listen to users collection:', err);
+        setUsersError(null); // Do not let users collection permission errors block Leaderboard rendering
+        setUsersLoading(false);
+        rawUsers = [];
+        console.log('Users fetched: 0 (permission denied/error)');
+        mergeAndSetPlayers();
+        handleListenerError(err);
+      });
+    } else {
+      // Non-admins do not load users collection
+      rawUsers = [];
+      console.log('Users fetched: 0 (bypassed for non-admin)');
       setUsersLoading(false);
       setUsersError(null);
       mergeAndSetPlayers();
-    }, (err) => {
-      console.warn('Failed to listen to users collection:', err);
-      setUsersError('Failed to load users from collection.');
-      setUsersLoading(false);
-      handleListenerError(err);
-    });
+    }
 
     const unsubPlayersList = onSnapshot(collection(db, 'players'), (snap) => {
       rawPlayers = snap.docs.map(d => d.data() as Player);
-      console.log('Total players fetched:', rawPlayers.length);
+      console.log('Players fetched:', rawPlayers.length);
       setUsersLoading(false);
       setUsersError(null);
       mergeAndSetPlayers();
