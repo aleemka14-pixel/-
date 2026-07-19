@@ -1,12 +1,8 @@
 /**
- * WalletProvider (formerly ProviderInterface)
+ * ProviderInterface
  * Abstract class representing the interface all wallet providers must implement.
  */
-export class WalletProvider {
-  constructor() {
-    this.name = 'Base Wallet Provider';
-  }
-
+export class ProviderInterface {
   /**
    * Retrieves the current hot wallet balance for the specified network/token
    * @param {string} network - The network (e.g., 'USDT TRC20', 'USDT BEP20', 'USDT ERC20')
@@ -36,7 +32,3 @@ export class WalletProvider {
     throw new Error("Method 'getTransactionStatus()' must be implemented by the provider.");
   }
 }
-
-// Keep ProviderInterface as alias for legacy support
-export const ProviderInterface = WalletProvider;
-

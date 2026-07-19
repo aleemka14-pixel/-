@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { db } from '../lib/firebase.ts';
 import { doc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
-import { WithdrawalRequest, WithdrawalNetwork, WithdrawalSettings, Player, DepositRequest, Transaction } from '../types.ts';
+import { WithdrawalRequest, WithdrawalNetwork, WithdrawalSettings, Player, DepositRequest } from '../types.ts';
 import { logActivity } from '../lib/audit.ts';
 import { AdminDepositLedger } from './AdminDepositLedger.tsx';
 import { AdminPaymentManagement } from './AdminPaymentManagement.tsx';
@@ -48,7 +48,6 @@ interface AdminWithdrawalManagerProps {
   players: Player[];
   deposits: DepositRequest[];
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
-  transactions?: Transaction[];
 }
 
 export function AdminWithdrawalManager({
@@ -57,8 +56,7 @@ export function AdminWithdrawalManager({
   settings,
   players,
   deposits,
-  playSound,
-  transactions = []
+  playSound
 }: AdminWithdrawalManagerProps) {
   const [activeAdminTab, setActiveAdminTab] = useState<'requests' | 'deposits' | 'settings' | 'content' | 'images' | 'infrastructure' | 'dashboard' | 'security' | 'payment_management'>('dashboard');
 
@@ -930,7 +928,6 @@ export function AdminWithdrawalManager({
               });
               await setDoc(doc(db, 'users', requestObj.playerId), {
                 walletBalance: newBalance,
-                balance: newBalance,
                 updatedAt: Date.now()
               }, { merge: true });
             }
@@ -1027,7 +1024,6 @@ export function AdminWithdrawalManager({
           });
           await setDoc(doc(db, 'users', requestObj.playerId), {
             walletBalance: newBalance,
-            balance: newBalance,
             updatedAt: Date.now()
           }, { merge: true });
         }
@@ -1522,7 +1518,6 @@ export function AdminWithdrawalManager({
             players={players}
             playSound={playSound}
             adminRole={adminRole}
-            transactions={transactions}
           />
         )}
 

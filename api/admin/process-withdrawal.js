@@ -1,31 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, runTransaction, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, runTransaction } from 'firebase/firestore';
 import { walletService } from '../../backend/services/wallet-service.js';
 import { ledgerService } from '../../backend/services/ledger-service.js';
-
-/**
- * Helper to record a notification record for the user in Firestore.
- */
-async function notifyUser(db, userId, title, message) {
-  try {
-    const notificationId = 'NTF-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-    const notificationRef = doc(db, 'notifications', notificationId);
-    await setDoc(notificationRef, {
-      id: notificationId,
-      userId,
-      title,
-      message,
-      type: 'withdrawal',
-      status: 'unread',
-      createdAt: Date.now()
-    });
-    console.log(`[Notification] Created notification for user ${userId}: ${title}`);
-  } catch (err) {
-    console.error(`[Notification Error] Failed to write user notification:`, err.message);
-  }
-}
 
 // Initialize Firebase App
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -105,8 +83,7 @@ export default async function handler(req, res) {
         transaction.update(withdrawalRef, {
           status: 'rejected',
           adminNotes: notes || 'Rejected by administrator.',
-          processedAt: Date.now(),
-          updatedAt: Date.now()
+          processedAt: Date.now()
         });
 
         // Add Transactional Audit Log
@@ -125,8 +102,6 @@ export default async function handler(req, res) {
         });
       });
 
-      await notifyUser(db, withdrawal.playerId, 'Withdrawal Request Rejected', `Your withdrawal request of ${withdrawal.amount} USDT has been rejected by administration. Balance refunded.`);
-
       return res.status(200).json({
         success: true,
         message: "Withdrawal rejected and player balance has been successfully refunded."
@@ -141,8 +116,7 @@ export default async function handler(req, res) {
           transactionHash: transactionHash || 'Manual Override',
           adminNotes: notes || 'Manually completed by administrator.',
           processedAt: Date.now(),
-          completedDate: Date.now(),
-          updatedAt: Date.now()
+          completedDate: Date.now()
         });
 
         // Add Transactional Audit Log
@@ -161,8 +135,6 @@ export default async function handler(req, res) {
         });
       });
 
-      await notifyUser(db, withdrawal.playerId, 'Withdrawal Completed', `Your withdrawal request of ${withdrawal.amount} USDT has been completed by administration.`);
-
       return res.status(200).json({
         success: true,
         message: "Withdrawal marked as completed manually."
@@ -176,8 +148,7 @@ export default async function handler(req, res) {
         transaction.update(withdrawalRef, {
           status: 'processing',
           adminNotes: notes || 'Processing hot wallet transfer...',
-          processedAt: Date.now(),
-          updatedAt: Date.now()
+          processedAt: Date.now()
         });
 
         // Add Processing Audit Log
@@ -212,8 +183,7 @@ export default async function handler(req, res) {
               transactionHash: txReceipt.txHash,
               adminNotes: notes || 'Successfully processed via automatic hot wallet.',
               completedDate: Date.now(),
-              processedAt: Date.now(),
-              updatedAt: Date.now()
+              processedAt: Date.now()
             });
 
             // Also update any matching transaction log
@@ -242,8 +212,6 @@ export default async function handler(req, res) {
             });
           });
 
-          await notifyUser(db, withdrawal.playerId, 'Withdrawal Completed', `Your withdrawal of ${withdrawal.amount} USDT has been successfully completed. TxHash: ${txReceipt.txHash}`);
-
           return res.status(200).json({
             success: true,
             message: "Automatic hot wallet withdrawal completed successfully.",
@@ -269,12 +237,9 @@ export default async function handler(req, res) {
           transaction.update(withdrawalRef, {
             status: 'failed',
             adminNotes: `Automated transfer failed: ${broadcastError.message || broadcastError}. Balance refunded.`,
-            processedAt: Date.now(),
-            updatedAt: Date.now()
+            processedAt: Date.now()
           });
         });
-
-        await notifyUser(db, withdrawal.playerId, 'Withdrawal Failed & Refunded', `Your withdrawal of ${withdrawal.amount} USDT failed: ${broadcastError.message || 'Network error'}. Your balance has been fully refunded.`);
 
         return res.status(400).json({
           success: false,

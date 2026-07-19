@@ -32,8 +32,6 @@ export class ReliabilityManager {
     this.isSchedulerRunning = false;
     this.schedulerTimer = null;
     this.healthTimer = null;
-    this.isDatabaseQuotaExceeded = false;
-    this.lastQuotaExceededCheck = null;
 
     // Track active background job execution metrics
     this.jobMetrics = {
@@ -48,36 +46,6 @@ export class ReliabilityManager {
   }
 
   /**
-   * Checks if an error is due to Firestore quota exceeding.
-   */
-  isQuotaError(err) {
-    if (!err) return false;
-    const msg = err.message || String(err);
-    return msg.includes('Quota limit exceeded') || 
-           msg.includes('Quota exceeded') || 
-           msg.includes('quota') || 
-           msg.includes('Free daily read units');
-  }
-
-  /**
-   * Standardized hander for Firestore quota exceeded error.
-   */
-  handleQuotaError(err) {
-    if (!this.isDatabaseQuotaExceeded) {
-      this.isDatabaseQuotaExceeded = true;
-      this.lastQuotaExceededCheck = Date.now();
-      
-      console.error(
-        `\n\x1b[31m[CRITICAL] Firestore Database Quota Exceeded.\x1b[0m\n` +
-        `The application has hit the free daily usage limits for Google Cloud Firestore.\n` +
-        `To monitor your database limits, upgrade your plan, or view current usage details, please visit:\n` +
-        `https://console.firebase.google.com/project/gen-lang-client-0100195413/firestore/databases/ai-studio-8036f1f6-5204-4076-9a49-fc8a3d7ebda4/data?openUpgradeDialog=true\n` +
-        `Background database routines are temporarily paused to prevent server overhead. They will automatically resume when the quota resets or clears.\n`
-      );
-    }
-  }
-
-  /**
    * Starts the centralized scheduler and continuous health monitoring.
    */
   start() {
@@ -89,50 +57,19 @@ export class ReliabilityManager {
     console.log('[ReliabilityManager] Activating Production Reliability Layer...');
     this.isSchedulerRunning = true;
 
-    // Use highly conservative defaults for local dev to avoid exhausting free Firestore daily quotas
-    const isDev = process.env.NODE_ENV !== "production";
-    const healthInterval = Number(process.env.SCHEDULER_HEALTH_INTERVAL) || (isDev ? 900000 : 300000); // 15 mins in dev, 5 mins in prod
-    const backgroundInterval = Number(process.env.SCHEDULER_BACKGROUND_INTERVAL) || (isDev ? 1800000 : 600000); // 30 mins in dev, 10 mins in prod
+    // 1. Run first initial health check and scheduler run immediately
+    this.runHealthCheck().catch(e => console.error('[ReliabilityManager] Initial health check failed:', e));
+    this.runBackgroundJobs().catch(e => console.error('[ReliabilityManager] Initial background jobs failed:', e));
 
-    console.log(`[ReliabilityManager] Intervals configured: Health Check every ${healthInterval / 1000}s, Background Jobs every ${backgroundInterval / 1000}s.`);
-
-    // 1. Run first initial health check and scheduler run immediately (wrapped with safe error handling)
-    this.runHealthCheck().catch(e => {
-      if (this.isQuotaError(e)) {
-        this.handleQuotaError(e);
-      } else {
-        console.error('[ReliabilityManager] Initial health check failed:', e);
-      }
-    });
-    this.runBackgroundJobs().catch(e => {
-      if (this.isQuotaError(e)) {
-        this.handleQuotaError(e);
-      } else {
-        console.error('[ReliabilityManager] Initial background jobs failed:', e);
-      }
-    });
-
-    // 2. Set up Health Check Interval
+    // 2. Set up Health Check Interval (Every 30 seconds)
     this.healthTimer = setInterval(() => {
-      this.runHealthCheck().catch(e => {
-        if (this.isQuotaError(e)) {
-          this.handleQuotaError(e);
-        } else {
-          console.error('[ReliabilityManager] Health loop error:', e);
-        }
-      });
-    }, healthInterval);
+      this.runHealthCheck().catch(e => console.error('[ReliabilityManager] Health loop error:', e));
+    }, 30000);
 
-    // 3. Set up Background Jobs Interval
+    // 3. Set up Background Jobs Interval (Every 60 seconds)
     this.schedulerTimer = setInterval(() => {
-      this.runBackgroundJobs().catch(e => {
-        if (this.isQuotaError(e)) {
-          this.handleQuotaError(e);
-        } else {
-          console.error('[ReliabilityManager] Background jobs loop error:', e);
-        }
-      });
-    }, backgroundInterval);
+      this.runBackgroundJobs().catch(e => console.error('[ReliabilityManager] Background jobs loop error:', e));
+    }, 60000);
   }
 
   /**
@@ -163,11 +100,6 @@ export class ReliabilityManager {
       try {
         return await fn();
       } catch (error) {
-        if (this.isQuotaError(error)) {
-          this.handleQuotaError(error);
-          throw error; // Fail-fast on quota error
-        }
-
         if (attempt >= maxAttempts) {
           throw error;
         }
@@ -195,54 +127,6 @@ export class ReliabilityManager {
    */
   async runHealthCheck() {
     const startTimestamp = Date.now();
-
-    // If quota was previously exceeded, perform lightweight auto-recovery check
-    if (this.isDatabaseQuotaExceeded) {
-      const cooldown = 15 * 60 * 1000; // 15 mins
-      if (this.lastQuotaExceededCheck && (Date.now() - this.lastQuotaExceededCheck < cooldown)) {
-        console.log('[ReliabilityManager] Health diagnosis database reads bypassed: Quota limit remains exceeded.');
-        return {
-          timestamp: startTimestamp,
-          status: 'degraded',
-          services: {
-            firebase: { status: 'degraded', latencyMs: 0, error: 'Firestore Database Quota Exceeded.' },
-            walletProvider: { status: 'offline', activeProvider: 'N/A', balances: {}, latencyMs: 0 },
-            paymentGateway: { status: 'offline', activeProviders: [] },
-            webhookReceiver: { status: 'offline', error: null },
-            systemResources: { uptimeSec: process.uptime(), memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) }
-          },
-          jobs: this.jobMetrics,
-          alerts: []
-        };
-      }
-
-      try {
-        const testDocRef = doc(this.db, 'config', 'reliability_health_test');
-        await getDoc(testDocRef);
-        this.isDatabaseQuotaExceeded = false;
-        this.lastQuotaExceededCheck = null;
-        console.log('\x1b[32m[ReliabilityManager] Firestore Quota Exceeded status has cleared! Resuming standard health check operations.\x1b[0m');
-      } catch (err) {
-        if (this.isQuotaError(err)) {
-          this.lastQuotaExceededCheck = Date.now();
-          console.log('[ReliabilityManager] Firestore Quota is still exceeded. Skipping standard health check.');
-          return {
-            timestamp: startTimestamp,
-            status: 'degraded',
-            services: {
-              firebase: { status: 'degraded', latencyMs: 0, error: 'Firestore Database Quota Exceeded.' },
-              walletProvider: { status: 'offline', activeProvider: 'N/A', balances: {}, latencyMs: 0 },
-              paymentGateway: { status: 'offline', activeProviders: [] },
-              webhookReceiver: { status: 'offline', error: null },
-              systemResources: { uptimeSec: process.uptime(), memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) }
-            },
-            jobs: this.jobMetrics,
-            alerts: []
-          };
-        }
-      }
-    }
-
     console.log('[ReliabilityManager] Triggering system-wide health diagnosis...');
 
     const healthDiagnostics = {
@@ -272,15 +156,10 @@ export class ReliabilityManager {
         throw new Error('Verification document read discrepancy.');
       }
     } catch (e) {
-      if (this.isQuotaError(e)) {
-        this.handleQuotaError(e);
-      }
       healthDiagnostics.status = 'degraded';
       healthDiagnostics.services.firebase.status = 'degraded';
       healthDiagnostics.services.firebase.error = e.message;
-      if (!this.isDatabaseQuotaExceeded) {
-        await this.triggerAlert('Firebase Database', 'Database Read/Write Failures', `The Firestore backend failed connection healthchecks: ${e.message}`, 'error');
-      }
+      await this.triggerAlert('Firebase Database', 'Database Read/Write Failures', `The Firestore backend failed connection healthchecks: ${e.message}`, 'error');
     }
 
     // 2. Diagnosing Wallet Provider Connection and Liquidity Balances
@@ -363,17 +242,11 @@ export class ReliabilityManager {
     }
 
     // Write health diagnostics to database for Operations Dashboard consumption in real-time
-    if (!this.isDatabaseQuotaExceeded) {
-      try {
-        const healthRef = doc(this.db, 'config', 'system_health');
-        await setDoc(healthRef, healthDiagnostics);
-      } catch (e) {
-        if (this.isQuotaError(e)) {
-          this.handleQuotaError(e);
-        } else {
-          console.error('[ReliabilityManager] Failed to persist system health diagnostics:', e.message);
-        }
-      }
+    try {
+      const healthRef = doc(this.db, 'config', 'system_health');
+      await setDoc(healthRef, healthDiagnostics);
+    } catch (e) {
+      console.error('[ReliabilityManager] Failed to persist system health diagnostics:', e.message);
     }
 
     console.log(`[ReliabilityManager] Diagnosis completed in ${Date.now() - startTimestamp}ms. General Status: ${healthDiagnostics.status.toUpperCase()}`);
@@ -387,11 +260,6 @@ export class ReliabilityManager {
   async triggerAlert(type, title, message, severity = 'warning') {
     const alertId = `ALT-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const timestamp = Date.now();
-
-    if (this.isDatabaseQuotaExceeded) {
-      console.warn(`[ReliabilityManager] [QUOTA EXCEEDED] Alert bypassed: [${severity.toUpperCase()}] [${type}] ${title} - ${message}`);
-      return;
-    }
 
     try {
       // 1. Search if an identical active alert has been created recently (cooldown window of 15 minutes)
@@ -430,11 +298,7 @@ export class ReliabilityManager {
         await this.logger.warning('system', `ALARM TRIGGERED: [${type}] ${title} - ${message}`);
       }
     } catch (e) {
-      if (this.isQuotaError(e)) {
-        this.handleQuotaError(e);
-      } else {
-        console.error('[ReliabilityManager] Alert trigger writing failure:', e.message);
-      }
+      console.error('[ReliabilityManager] Alert trigger writing failure:', e.message);
     }
   }
 
@@ -443,18 +307,6 @@ export class ReliabilityManager {
    * Sequentially runs each of the scheduled background reliability tasks.
    */
   async runBackgroundJobs() {
-    if (this.isDatabaseQuotaExceeded) {
-      const cooldown = 15 * 60 * 1000;
-      if (this.lastQuotaExceededCheck && (Date.now() - this.lastQuotaExceededCheck < cooldown)) {
-        console.log('[ReliabilityManager] Background jobs bypassed: Quota limit remains exceeded.');
-        return;
-      }
-      // If the health check cleared it, we proceed, otherwise return
-      if (this.isDatabaseQuotaExceeded) {
-        return;
-      }
-    }
-
     console.log('[ReliabilityManager] Scheduler running background tasks...');
 
     const runJob = async (jobName, jobFn) => {
@@ -472,17 +324,8 @@ export class ReliabilityManager {
         metrics.error = e.message;
         metrics.lastRun = Date.now();
         metrics.runCount++;
-        
-        if (this.isQuotaError(e)) {
-          this.handleQuotaError(e);
-        } else {
-          try {
-            await this.logger.error('system', `Background Job "${jobName}" Failed: ${e.message}`);
-            await this.triggerAlert('Scheduler Jobs', `Job Failed: ${jobName}`, `The scheduled cron job was terminated due to a fatal handler exception: ${e.message}`, 'error');
-          } catch (logErr) {
-            console.error(`[ReliabilityManager] Failed to log background job failure: ${logErr.message}`);
-          }
-        }
+        await this.logger.error('system', `Background Job "${jobName}" Failed: ${e.message}`);
+        await this.triggerAlert('Scheduler Jobs', `Job Failed: ${jobName}`, `The scheduled cron job was terminated due to a fatal handler exception: ${e.message}`, 'error');
       } finally {
         metrics.durationMs = Date.now() - start;
       }
@@ -498,20 +341,14 @@ export class ReliabilityManager {
     await runJob('archiveOldLogs', () => this.archiveOldLogs());
 
     // Update real-time persisted status
-    if (!this.isDatabaseQuotaExceeded) {
-      try {
-        const healthRef = doc(this.db, 'config', 'system_health');
-        const snap = await getDoc(healthRef);
-        if (snap.exists()) {
-          await updateDoc(healthRef, { jobs: this.jobMetrics });
-        }
-      } catch (e) {
-        if (this.isQuotaError(e)) {
-          this.handleQuotaError(e);
-        } else {
-          console.error('[ReliabilityManager] Failed to update job metrics in DB:', e.message);
-        }
+    try {
+      const healthRef = doc(this.db, 'config', 'system_health');
+      const snap = await getDoc(healthRef);
+      if (snap.exists()) {
+        await updateDoc(healthRef, { jobs: this.jobMetrics });
       }
+    } catch (e) {
+      console.error('[ReliabilityManager] Failed to update job metrics in DB:', e.message);
     }
   }
 

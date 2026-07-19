@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, setLogLevel } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import { getPaymentProviderAdapter } from '../providers/index.js';
 import { PaymentLogger } from '../utils/payment-logger.js';
 
@@ -82,14 +82,6 @@ export class PaymentService {
     } else {
       app = getApp();
     }
-    
-    // Set Firestore log level to error to avoid harmless stream recycling warnings
-    try {
-      setLogLevel('error');
-    } catch (e) {
-      // Ignored if already set
-    }
-    
     this.db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
     
     // Instantiate core operational logger

@@ -1,30 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, runTransaction, updateDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, runTransaction, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { walletService } from '../wallet/wallet-service.js';
-
-/**
- * Helper to record a notification record for the user in Firestore.
- */
-async function notifyUser(db, userId, title, message) {
-  try {
-    const notificationId = 'NTF-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-    const notificationRef = doc(db, 'notifications', notificationId);
-    await setDoc(notificationRef, {
-      id: notificationId,
-      userId,
-      title,
-      message,
-      type: 'withdrawal',
-      status: 'unread',
-      createdAt: Date.now()
-    });
-    console.log(`[Notification] Created notification for user ${userId}: ${title}`);
-  } catch (err) {
-    console.error(`[Notification Error] Failed to write user notification:`, err.message);
-  }
-}
 
 // Initialize Firebase App server-side
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -262,10 +240,8 @@ export default async function handler(req, res) {
         details: `USDT Withdrawal to ${resolvedWalletAddress}`,
         walletAddress: resolvedWalletAddress,
         withdrawalAddress: resolvedWalletAddress,
-        provider: walletService.config.activeProvider || 'mock',
         status: 'pending',
         createdAt: timestampNow,
-        updatedAt: timestampNow,
         timestamp: timestampNow,
         processedAt: null,
         playerBalanceAtRequest: currentBalance,
@@ -330,8 +306,7 @@ export default async function handler(req, res) {
       const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
       await updateDoc(withdrawalRef, { 
         status: 'processing',
-        adminNotes: 'Automated transfer initiated.',
-        updatedAt: Date.now()
+        adminNotes: 'Automated transfer initiated.' 
       });
 
       try {
@@ -351,7 +326,6 @@ export default async function handler(req, res) {
               transactionHash: txReceipt.txHash,
               completedAt: Date.now(),
               processedAt: Date.now(),
-              updatedAt: Date.now(),
               adminNotes: 'Automatically completed via modular hot wallet service.'
             });
 
@@ -377,8 +351,6 @@ export default async function handler(req, res) {
               timestamp: Date.now()
             });
           });
-
-          await notifyUser(db, resolvedUserId, 'Withdrawal Completed', `Your automatic withdrawal of ${amount} USDT has been completed on network ${network}. TxHash: ${txReceipt.txHash}`);
 
           withdrawalDocData.status = 'completed';
           withdrawalDocData.transactionHash = txReceipt.txHash;
@@ -417,8 +389,7 @@ export default async function handler(req, res) {
           txn.update(withdrawalRef, {
             status: 'failed',
             adminNotes: `Auto transfer failed: ${transferError.message || 'Node network error'}. Balance refunded.`,
-            processedAt: Date.now(),
-            updatedAt: Date.now()
+            processedAt: Date.now()
           });
 
           const txnRef = doc(db, 'transactions', txnId);
@@ -442,14 +413,9 @@ export default async function handler(req, res) {
           });
         });
 
-        await notifyUser(db, resolvedUserId, 'Withdrawal Failed & Refunded', `Your automatic withdrawal of ${amount} USDT failed: ${transferError.message || 'Network error'}. Your balance has been fully refunded.`);
-
         withdrawalDocData.status = 'failed';
         withdrawalDocData.adminNotes = `Auto transfer failed: ${transferError.message || 'Node network error'}. Balance refunded.`;
       }
-    } else {
-      // Automatic withdrawal disabled, notify pending approval
-      await notifyUser(db, resolvedUserId, 'Withdrawal Pending Approval', `Your withdrawal request of ${amount} USDT is pending admin review.`);
     }
 
     return res.status(200).json({

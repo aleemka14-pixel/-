@@ -27,8 +27,8 @@ service cloud.firestore {
 
     // --- Users & Profiles Security ---
     match /users/{userId} {
-      // Secure private user info - All signed-in users can read profiles/balances
-      allow read: if isSignedIn() || isServer();
+      // Secure private user info - Only the owner or an admin can read/write
+      allow read: if isOwner(userId) || isAdmin() || isServer();
       allow create: if isOwner(userId) || isServer();
       allow update: if isOwner(userId) || isAdmin() || isServer();
       allow delete: if isAdmin();

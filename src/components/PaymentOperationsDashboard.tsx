@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { doc, updateDoc, setDoc, getFirestore, collection, onSnapshot, deleteDoc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase.ts';
-import { DepositRequest, WithdrawalRequest, Player, Transaction } from '../types.ts';
+import { DepositRequest, WithdrawalRequest, Player } from '../types.ts';
 import { logActivity } from '../lib/audit.ts';
 import { getCurrencySymbol } from '../lib/currency.ts';
 
@@ -18,7 +18,6 @@ interface PaymentOperationsDashboardProps {
   players: Player[];
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
   adminRole?: 'Super Admin' | 'Admin' | 'Support';
-  transactions?: Transaction[];
 }
 
 interface UnifiedTransaction {
@@ -47,19 +46,13 @@ export function PaymentOperationsDashboard({
   deposits = [],
   players = [],
   playSound,
-  adminRole = 'Super Admin',
-  transactions = []
+  adminRole = 'Super Admin'
 }: PaymentOperationsDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'monitor' | 'ledger' | 'risk' | 'notifications' | 'reliability'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'monitor' | 'risk' | 'notifications' | 'reliability'>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'deposit' | 'withdrawal'>('all');
   const [providerFilter, setProviderFilter] = useState<'all' | 'crypto' | 'upi'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
-
-  // Dedicated states for system ledger
-  const [ledgerTypeFilter, setLedgerTypeFilter] = useState<'all' | 'deposit' | 'withdrawal' | 'game_win' | 'game_loss' | 'bonus' | 'admin_adjustment'>('all');
-  const [ledgerStatusFilter, setLedgerStatusFilter] = useState<'all' | 'completed' | 'pending' | 'failed'>('all');
-  const [ledgerSearch, setLedgerSearch] = useState('');
   
   // Real-time System Reliability states
   const [systemHealth, setSystemHealth] = useState<any>(null);
@@ -720,7 +713,6 @@ export function PaymentOperationsDashboard({
       });
       await setDoc(doc(db, 'users', tx.playerId), {
         walletBalance: newBalance,
-        balance: newBalance,
         updatedAt: Date.now()
       }, { merge: true });
 
@@ -856,7 +848,6 @@ export function PaymentOperationsDashboard({
         {[
           { id: 'overview', label: 'Dashboard & Charts', icon: Activity },
           { id: 'monitor', label: 'Live Transaction Monitor', icon: Settings2, count: filteredTxList.length },
-          { id: 'ledger', label: 'System Ledger', icon: FileText, count: transactions.length },
           { id: 'risk', label: 'Risk & Fraud Center', icon: Shield, count: flaggedTransactions.length },
           { id: 'notifications', label: 'Active Alerts', icon: Bell, count: alerts.length },
           { id: 'reliability', label: 'System Health & Jobs', icon: ShieldAlert, count: systemAlerts.filter(a => !a.resolved).length }
@@ -1898,227 +1889,6 @@ export function PaymentOperationsDashboard({
             </div>
           </motion.div>
         )}
-
-        {/* TAB 6: CENTRAL SYSTEM LEDGER */}
-        {activeTab === 'ledger' && (() => {
-          // Inline filtering inside tab block
-          const filteredLedgerTxns = transactions.filter(t => {
-            if (ledgerSearch.trim()) {
-              const term = ledgerSearch.toLowerCase();
-              const player = players.find(p => p.id === t.playerId || p.id === t.userId);
-              const name = (player?.name || 'Unknown').toLowerCase();
-              const email = (player?.email || '').toLowerCase();
-              const desc = (t.description || '').toLowerCase();
-              const id = t.id.toLowerCase();
-              const refId = (t.referenceId || '').toLowerCase();
-
-              const match = 
-                id.includes(term) ||
-                refId.includes(term) ||
-                name.includes(term) ||
-                email.includes(term) ||
-                desc.includes(term);
-
-              if (!match) return false;
-            }
-
-            if (ledgerTypeFilter !== 'all') {
-              if (t.type !== ledgerTypeFilter) return false;
-            }
-
-            if (ledgerStatusFilter !== 'all') {
-              if (t.status !== ledgerStatusFilter) return false;
-            }
-
-            return true;
-          });
-
-          return (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="space-y-4"
-            >
-              {/* Ledger Summary Stats Bento Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left">
-                  <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest font-black block mb-1">Ledger Records</span>
-                  <span className="text-3xl font-display font-bold text-white tracking-tight">{transactions.length}</span>
-                  <span className="text-[10px] text-slate-400 block mt-1 font-mono">TOTAL TRANSACTIONS IN INDEX</span>
-                </div>
-                <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left">
-                  <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest font-black block mb-1">Filtered Results</span>
-                  <span className="text-3xl font-display font-bold text-emerald-400 tracking-tight">{filteredLedgerTxns.length}</span>
-                  <span className="text-[10px] text-slate-400 block mt-1 font-mono">MATCHING CURRENT FILTERS</span>
-                </div>
-                <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left">
-                  <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest font-black block mb-1">Total Volume</span>
-                  <span className="text-3xl font-display font-bold text-blue-400 tracking-tight">
-                    ₹{(filteredLedgerTxns.reduce((sum, t) => sum + (t.amount || 0), 0) * 83.50).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </span>
-                  <span className="text-[10px] text-slate-400 block mt-1 font-mono">CONVERTED TO INR AT ₹83.50</span>
-                </div>
-                <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left">
-                  <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest font-black block mb-1">Pending Requests</span>
-                  <span className="text-3xl font-display font-bold text-amber-500 tracking-tight">
-                    {filteredLedgerTxns.filter(t => t.status === 'pending').length}
-                  </span>
-                  <span className="text-[10px] text-slate-400 block mt-1 font-mono">RECORDS REQUIRING ATTENTION</span>
-                </div>
-              </div>
-
-              {/* Filtering Control Bar */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 bg-slate-900/40 p-4 border border-white/5 rounded-3xl">
-                {/* Search */}
-                <div className="lg:col-span-5 relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    type="text"
-                    value={ledgerSearch}
-                    onChange={(e) => setLedgerSearch(e.target.value)}
-                    placeholder="Search ID, Player Name, Email or Description..."
-                    className="w-full bg-slate-950 border border-white/5 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500/30 font-mono"
-                  />
-                </div>
-
-                {/* Ledger Type selection */}
-                <div className="lg:col-span-3">
-                  <select
-                    value={ledgerTypeFilter}
-                    onChange={(e) => { playSound('CLICK'); setLedgerTypeFilter(e.target.value as any); }}
-                    className="w-full bg-slate-950 border border-white/5 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500/30 cursor-pointer font-bold uppercase tracking-wider"
-                  >
-                    <option value="all">Types: All</option>
-                    <option value="deposit">Deposits</option>
-                    <option value="withdrawal">Withdrawals</option>
-                    <option value="game_win">Game Wins</option>
-                    <option value="game_loss">Game Losses</option>
-                    <option value="bonus">Referral / Bonus</option>
-                    <option value="admin_adjustment">Admin Adjustments</option>
-                  </select>
-                </div>
-
-                {/* Status selection */}
-                <div className="lg:col-span-2">
-                  <select
-                    value={ledgerStatusFilter}
-                    onChange={(e) => { playSound('CLICK'); setLedgerStatusFilter(e.target.value as any); }}
-                    className="w-full bg-slate-950 border border-white/5 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500/30 cursor-pointer font-bold uppercase tracking-wider"
-                  >
-                    <option value="all">Statuses: All</option>
-                    <option value="completed">Completed</option>
-                    <option value="pending">Pending</option>
-                    <option value="failed">Failed</option>
-                  </select>
-                </div>
-
-                {/* Count and clear */}
-                <div className="lg:col-span-2 flex items-center justify-center bg-[#111] border border-white/5 rounded-xl text-[10px] font-mono text-slate-400 font-bold uppercase">
-                  Count: {filteredLedgerTxns.length}
-                </div>
-              </div>
-
-              {/* Transactions Ledger Table */}
-              <div className="bg-[#111] border border-white/5 rounded-3xl p-6 text-left">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs font-sans">
-                    <thead>
-                      <tr className="border-b border-white/5 text-slate-500 font-mono uppercase text-[9px] tracking-wider">
-                        <th className="py-3 px-4">Timestamp</th>
-                        <th className="py-3 px-4">Transaction ID</th>
-                        <th className="py-3 px-4">User</th>
-                        <th className="py-3 px-4">Type</th>
-                        <th className="py-3 px-4 text-right">Amount (USDT)</th>
-                        <th className="py-3 px-4 text-right">Balance Before</th>
-                        <th className="py-3 px-4 text-right">Balance After</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4">Description</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5 font-mono text-[11px]">
-                      {filteredLedgerTxns.length === 0 ? (
-                        <tr>
-                          <td colSpan={9} className="py-16 text-center text-slate-500 font-sans">
-                            No matching transaction records found in the system ledger.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredLedgerTxns.map((t) => {
-                          const player = players.find(p => p.id === t.playerId || p.id === t.userId);
-                          const isPositive = t.type === 'deposit' || t.type === 'game_win' || t.type === 'bonus' || (t.type === 'admin_adjustment' && (t.balanceAfter ?? 0) >= (t.balanceBefore ?? 0));
-                          
-                          let typeLabel: string = t.type;
-                          let typeColor = 'bg-slate-800 text-slate-400 border border-white/5';
-                          if (t.type === 'deposit') {
-                            typeLabel = 'DEPOSIT';
-                            typeColor = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-                          } else if (t.type === 'withdrawal') {
-                            typeLabel = 'WITHDRAWAL';
-                            typeColor = 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
-                          } else if (t.type === 'game_win' || t.type === 'win') {
-                            typeLabel = 'GAME WIN';
-                            typeColor = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-                          } else if (t.type === 'game_loss' || t.type === 'bet') {
-                            typeLabel = 'GAME LOSS';
-                            typeColor = 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
-                          } else if (t.type === 'bonus') {
-                            typeLabel = 'BONUS CREDITED';
-                            typeColor = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
-                          } else if (t.type === 'admin_adjustment') {
-                            typeLabel = 'ADMIN ADJUST';
-                            typeColor = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-                          }
-
-                          return (
-                            <tr key={t.id} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
-                                {new Date(t.timestamp).toLocaleDateString()} {new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </td>
-                              <td className="py-3 px-4 text-white font-bold max-w-[120px] truncate" title={t.id}>
-                                {t.id}
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className="text-white font-bold block">{player?.name || 'Unknown'}</span>
-                                <span className="text-[9px] text-slate-500 block">{player?.email || t.playerId || 'No email'}</span>
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${typeColor}`}>
-                                  {typeLabel}
-                                </span>
-                              </td>
-                              <td className={`py-3 px-4 text-right font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {isPositive ? '+' : '-'}{t.amount?.toFixed(2)} USDT
-                              </td>
-                              <td className="py-3 px-4 text-right text-slate-400">
-                                {t.balanceBefore !== undefined ? `${t.balanceBefore.toFixed(2)} USDT` : '--'}
-                              </td>
-                              <td className="py-3 px-4 text-right text-slate-300 font-semibold">
-                                {t.balanceAfter !== undefined ? `${t.balanceAfter.toFixed(2)} USDT` : '--'}
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
-                                  t.status === 'completed' || t.status === 'confirmed' ? 'bg-emerald-500/10 text-emerald-400' :
-                                  t.status === 'pending' || t.status === 'processing' ? 'bg-amber-500/10 text-amber-400 animate-pulse' :
-                                  'bg-rose-500/10 text-rose-400'
-                                }`}>
-                                  {t.status}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-slate-400 max-w-[180px] truncate" title={t.description || ''}>
-                                {t.description || t.referenceId || '--'}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </motion.div>
-          );
-        })()}
 
       </AnimatePresence>
 
