@@ -633,82 +633,161 @@ export default function App() {
     // Players/Users Combined Listener - Everyone gets at least the top players for the leaderboard
     let rawPlayers: Player[] = [];
     let rawUsers: any[] = [];
+    const syncAttempted = new Set<string>();
 
     const mergeAndSetPlayers = () => {
       let mergedPlayers: Player[] = [];
       
       if (rawUsers && rawUsers.length > 0) {
-        mergedPlayers = rawUsers.map(u => {
-          const p = rawPlayers.find(pl => pl.id === u.id);
-          const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
-            ? Number(u.walletBalance)
-            : (u.balance !== undefined && !Number.isNaN(Number(u.balance))
-              ? Number(u.balance)
-              : (p?.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0));
-          
-          return {
-            id: u.id,
-            name: u.username || u.name || u.displayName || 'Player',
-            email: u.email || '',
-            balance: walletBalance,
-            override: p?.override || u.override || 'none',
-            referralCode: p?.referralCode || u.referralCode || '',
-            referredBy: p?.referredBy || u.referredBy || '',
-            referralCount: p?.referralCount ?? u.referralCount ?? 0,
-            totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
-            preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
-            pendingBet: p?.pendingBet || u.pendingBet || undefined
-          } as Player;
-        });
+        mergedPlayers = rawUsers
+          .filter(u => u !== undefined && u !== null && u.id)
+          .map(u => {
+            const p = rawPlayers.find(pl => pl && pl.id === u.id);
+            
+            const u_walletBalance = u.walletBalance;
+            const u_balance = u.balance;
+            const p_balance = p?.balance;
+            
+            let walletBalance = 0;
+            if (u_walletBalance !== undefined && u_walletBalance !== null && !Number.isNaN(Number(u_walletBalance))) {
+              walletBalance = Number(u_walletBalance);
+            } else if (u_balance !== undefined && u_balance !== null && !Number.isNaN(Number(u_balance))) {
+              walletBalance = Number(u_balance);
+            } else if (p_balance !== undefined && p_balance !== null && !Number.isNaN(Number(p_balance))) {
+              walletBalance = Number(p_balance);
+            }
+            
+            return {
+              id: u.id,
+              name: u.username || u.name || u.displayName || p?.name || 'Player',
+              email: u.email || p?.email || '',
+              balance: walletBalance,
+              walletBalance: walletBalance,
+              override: p?.override || u.override || 'none',
+              referralCode: p?.referralCode || u.referralCode || '',
+              referredBy: p?.referredBy || u.referredBy || '',
+              referralCount: p?.referralCount ?? u.referralCount ?? 0,
+              totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
+              preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
+              pendingBet: p?.pendingBet || undefined,
+              wins: p?.wins ?? u.wins ?? 0,
+              losses: p?.losses ?? u.losses ?? 0,
+            } as Player;
+          });
 
         // Include players that might not have a user doc yet (backward compatibility/safety)
-        rawPlayers.forEach(p => {
-          const exists = mergedPlayers.some(mp => mp.id === p.id);
+        (rawPlayers || []).forEach(p => {
+          if (!p || !p.id) return;
+          const exists = mergedPlayers.some(mp => mp && mp.id === p.id);
           if (!exists) {
-            const playerBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
             mergedPlayers.push({
-              ...p,
-              balance: playerBalance
-            });
+              id: p.id,
+              name: p.name || 'Player',
+              email: p.email || '',
+              balance: playerBalance,
+              walletBalance: playerBalance,
+              override: p.override || 'none',
+              referralCode: p.referralCode || '',
+              referredBy: p.referredBy || '',
+              referralCount: p.referralCount ?? 0,
+              totalWagered: p.totalWagered ?? 0,
+              preferredCurrency: p.preferredCurrency || 'USDT',
+              pendingBet: p.pendingBet || undefined,
+              wins: p.wins ?? 0,
+              losses: p.losses ?? 0,
+            } as Player);
           }
         });
       } else {
         // If rawUsers is empty, construct from rawPlayers directly
-        mergedPlayers = rawPlayers.map(p => {
-          const playerBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
-          return {
-            id: p.id,
-            name: p.name || 'Player',
-            email: p.email || '',
-            balance: playerBalance,
-            override: p.override || 'none',
-            referralCode: p.referralCode || '',
-            referredBy: p.referredBy || '',
-            referralCount: p.referralCount ?? 0,
-            totalWagered: p.totalWagered ?? 0,
-            preferredCurrency: p.preferredCurrency || 'USDT',
-            pendingBet: p.pendingBet || undefined
-          } as Player;
-        });
+        mergedPlayers = (rawPlayers || [])
+          .filter(p => p !== undefined && p !== null)
+          .map(p => {
+            const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            return {
+              id: p.id || '',
+              name: p.name || 'Player',
+              email: p.email || '',
+              balance: playerBalance,
+              walletBalance: playerBalance,
+              override: p.override || 'none',
+              referralCode: p.referralCode || '',
+              referredBy: p.referredBy || '',
+              referralCount: p.referralCount ?? 0,
+              totalWagered: p.totalWagered ?? 0,
+              preferredCurrency: p.preferredCurrency || 'USDT',
+              pendingBet: p.pendingBet || undefined,
+              wins: p.wins ?? 0,
+              losses: p.losses ?? 0,
+            } as Player;
+          });
       }
 
       // Sort in-memory by balance descending for Leaderboard and Admin Panel
-      mergedPlayers.sort((a, b) => b.balance - a.balance);
+      mergedPlayers.sort((a, b) => {
+        const balA = a && typeof a.balance === 'number' ? a.balance : 0;
+        const balB = b && typeof b.balance === 'number' ? b.balance : 0;
+        return balB - balA;
+      });
 
-      console.log('Users displayed:', rawUsers.length);
-      console.log('Players displayed:', mergedPlayers.length);
+      console.log('Users displayed:', rawUsers ? rawUsers.length : 0);
+      console.log('Players displayed:', mergedPlayers ? mergedPlayers.length : 0);
 
       setState(prev => {
+        const playersList = prev.players || [];
         // Maintain the active user's current live balance if they are already in the list to avoid flickers
-        const userDocBalance = prev.players.find(pl => pl.id === user.uid)?.balance;
+        const userDocBalance = playersList.find(pl => pl && pl.id === user.uid)?.balance;
         const updated = mergedPlayers.map(p => {
-          if (p.id === user.uid && userDocBalance !== undefined) {
+          if (p && p.id === user.uid && userDocBalance !== undefined) {
             return { ...p, balance: userDocBalance };
           }
           return p;
         });
         return { ...prev, players: updated };
       });
+
+      // If we are an admin, auto-sync missing player documents for existing users
+      if (isAdmin && rawUsers && rawUsers.length > 0 && rawPlayers && rawPlayers.length > 0) {
+        const missingUsers = rawUsers.filter(u => {
+          if (!u || !u.id) return false;
+          return !rawPlayers.some(p => p && p.id === u.id);
+        });
+
+        if (missingUsers.length > 0) {
+          missingUsers.forEach(async (u) => {
+            if (syncAttempted.has(u.id)) return;
+            syncAttempted.add(u.id);
+
+            try {
+              const personalReferralCode = ((u.username || u.name || u.displayName || 'Player').substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+              const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+                ? Number(u.walletBalance)
+                : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+
+              const newPlayer: Player = {
+                id: u.id,
+                name: u.username || u.name || u.displayName || 'Player',
+                email: u.email || '',
+                balance: walletBalance,
+                override: u.override || 'none',
+                referralCode: u.referralCode || personalReferralCode,
+                referredBy: u.referredBy || '',
+                referralCount: u.referralCount || 0,
+                totalWagered: u.totalWagered || 0,
+                preferredCurrency: u.preferredCurrency || 'USDT',
+                wins: u.wins ?? 0,
+                losses: u.losses ?? 0,
+              };
+
+              await setDoc(doc(db, 'players', u.id), newPlayer);
+              console.log(`Auto-Sync: Created missing player document for user: ${u.id} (${u.username || 'Player'})`);
+            } catch (err) {
+              console.error(`Auto-Sync: Failed to create player document for user: ${u.id}`, err);
+            }
+          });
+        }
+      }
     };
 
     let unsubUsersList = () => {};
@@ -738,7 +817,7 @@ export default function App() {
     }
 
     const unsubPlayersList = onSnapshot(collection(db, 'players'), (snap) => {
-      rawPlayers = snap.docs.map(d => d.data() as Player);
+      rawPlayers = snap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
       console.log('Players fetched:', rawPlayers.length);
       setUsersLoading(false);
       setUsersError(null);
@@ -791,6 +870,29 @@ export default function App() {
 
         // Cache the live balance to avoid 0-balance resets on refresh or login
         localStorage.setItem(`last_known_balance_${user.uid}`, String(walletBalance));
+
+        // Self-heal: check if matching player document exists, if not, create it!
+        getDoc(doc(db, 'players', user.uid)).then(async (playerSnap) => {
+          if (!playerSnap.exists()) {
+            const personalReferralCode = ((u.username || user.displayName || 'Player').substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+            const newPlayer: Player = {
+              id: user.uid,
+              name: u.username || user.displayName || 'Player',
+              email: u.email || user.email || '',
+              balance: walletBalance,
+              override: u.override || 'none',
+              referralCode: u.referralCode || personalReferralCode,
+              referredBy: u.referredBy || '',
+              referralCount: u.referralCount || 0,
+              totalWagered: u.totalWagered || 0,
+              preferredCurrency: u.preferredCurrency || 'USDT',
+              wins: u.wins ?? 0,
+              losses: u.losses ?? 0,
+            };
+            await setDoc(doc(db, 'players', user.uid), newPlayer);
+            console.log('Self-healed: Created missing players document for current user');
+          }
+        }).catch(err => console.warn('Failed to check/create missing player document for user:', err));
         
         setState(prev => {
           const updatedPlayers = prev.players.map(p => {

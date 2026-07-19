@@ -93,6 +93,9 @@ export interface Player {
   referralCount: number;
   totalWagered?: number;
   preferredCurrency?: string;
+  walletBalance?: number;
+  wins?: number;
+  losses?: number;
 }
 
 export interface FAQItem {
