@@ -96,6 +96,10 @@ export interface Player {
   walletBalance?: number;
   wins?: number;
   losses?: number;
+  totalWinnings?: number;
+  biggestBet?: number;
+  totalBetsCount?: number;
+  lastActive?: number;
 }
 
 export interface FAQItem {

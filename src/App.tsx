@@ -65,6 +65,8 @@ import { AdminWithdrawalManager } from './components/AdminWithdrawalManager.tsx'
 import { AdminDepositLedger } from './components/AdminDepositLedger.tsx';
 import { VercelDiagnosticModal } from './components/VercelDiagnosticModal.tsx';
 import { CurrencySelector } from './components/CurrencySelector.tsx';
+import { LeaderboardView } from './components/LeaderboardView.tsx';
+import { AdminActiveUsersView } from './components/AdminActiveUsersView.tsx';
 import {
   SUPPORTED_CURRENCIES,
   DEFAULT_RATES,
@@ -610,6 +612,77 @@ export default function App() {
     console.log('Admin Check:', { email, uid, isSpecialUid, isSpecialEmail, result });
     return result;
   }, [user, adminEmails]);
+
+  // Verify & Auto-create missing player/user records and update lastActive timestamp
+  useEffect(() => {
+    if (user && !demoMode && !quotaExceeded) {
+      const verifyAndCreatePlayer = async () => {
+        try {
+          const playerRef = doc(db, 'players', user.uid);
+          const userRef = doc(db, 'users', user.uid);
+          const now = Date.now();
+          
+          const playerSnap = await getDoc(playerRef);
+          
+          if (!playerSnap.exists()) {
+            console.log(`Auto-creating missing player profile for UID: ${user.uid}`);
+            
+            const name = user.displayName || user.email?.split('@')[0] || 'Player';
+            const personalReferralCode = (name.substring(0, 3).replace(/[^a-zA-Z]/g, 'A') + Math.floor(100 + Math.random() * 900)).toUpperCase();
+            
+            const newPlayer: Player = {
+              id: user.uid,
+              name,
+              email: user.email || '',
+              balance: 0,
+              override: 'none',
+              referralCode: personalReferralCode,
+              referredBy: '',
+              referralCount: 0,
+              totalWagered: 0,
+              totalWinnings: 0,
+              biggestBet: 0,
+              totalBetsCount: 0,
+              lastActive: now,
+              wins: 0,
+              losses: 0
+            };
+
+            const batch = writeBatch(db);
+            batch.set(playerRef, newPlayer);
+            batch.set(userRef, {
+              id: user.uid,
+              username: name,
+              email: user.email || '',
+              balance: 0,
+              walletBalance: 0,
+              referralCode: personalReferralCode,
+              referredBy: '',
+              referralCount: 0,
+              totalWinnings: 0,
+              biggestBet: 0,
+              totalBetsCount: 0,
+              lastActive: now,
+              wins: 0,
+              losses: 0,
+              createdAt: now,
+              updatedAt: now
+            });
+            await batch.commit();
+            console.log(`Auto-created player and user docs for UID: ${user.uid}`);
+          } else {
+            // Update lastActive timestamp on app open / login
+            await updateDoc(playerRef, { lastActive: now });
+            await updateDoc(userRef, { lastActive: now, updatedAt: now });
+            console.log(`Updated lastActive timestamp for user: ${user.uid}`);
+          }
+        } catch (e) {
+          console.error("Error verifying or auto-creating player:", e);
+        }
+      };
+      verifyAndCreatePlayer();
+    }
+  }, [user, demoMode, quotaExceeded]);
 
   // Listeners for Firestore data
   useEffect(() => {
@@ -1357,7 +1430,7 @@ export default function App() {
     lastStateRef.current = state;
   }, [state]);
 
-  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'announcement'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'announcement' | 'leaderboard'>('play');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmailInput, setAdminEmailInput] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -1742,18 +1815,31 @@ export default function App() {
         batch.set(doc(db, 'transactions', winTxnId), winTxn);
         batch.update(playerRef, { 
           balance: increment(winAmount),
-          pendingBet: null 
+          pendingBet: null,
+          totalWinnings: increment(winAmount),
+          wins: increment(1),
+          lastActive: Date.now()
         });
         batch.update(doc(db, 'users', playerId), {
           walletBalance: increment(winAmount),
           balance: increment(winAmount),
+          totalWinnings: increment(winAmount),
+          wins: increment(1),
+          lastActive: Date.now(),
           updatedAt: Date.now()
         });
         playSound('WIN', winAmount);
         triggerConfetti();
       } else {
         batch.update(playerRef, { 
-          pendingBet: null 
+          pendingBet: null,
+          losses: increment(1),
+          lastActive: Date.now()
+        });
+        batch.update(doc(db, 'users', playerId), {
+          losses: increment(1),
+          lastActive: Date.now(),
+          updatedAt: Date.now()
         });
         playSound('LOSE');
       }
@@ -1801,17 +1887,30 @@ export default function App() {
           batch.set(doc(db, 'transactions', winTxnId), winTxn);
           batch.update(playerRef, { 
             balance: increment(winAmount),
-            pendingBet: null 
+            pendingBet: null,
+            totalWinnings: increment(winAmount),
+            wins: increment(1),
+            lastActive: Date.now()
           });
           batch.update(doc(db, 'users', player.id), {
             walletBalance: increment(winAmount),
             balance: increment(winAmount),
+            totalWinnings: increment(winAmount),
+            wins: increment(1),
+            lastActive: Date.now(),
             updatedAt: Date.now()
           });
           winSoundPlayed = true;
         } else {
           batch.update(playerRef, { 
-            pendingBet: null 
+            pendingBet: null,
+            losses: increment(1),
+            lastActive: Date.now()
+          });
+          batch.update(doc(db, 'users', player.id), {
+            losses: increment(1),
+            lastActive: Date.now(),
+            updatedAt: Date.now()
           });
           loseSoundPlayed = true;
         }
@@ -1896,6 +1995,10 @@ export default function App() {
             preferredCurrency: u.preferredCurrency || 'USDT',
             wins: u.wins ?? 0,
             losses: u.losses ?? 0,
+            totalWinnings: u.totalWinnings ?? 0,
+            biggestBet: u.biggestBet ?? 0,
+            totalBetsCount: u.totalBetsCount ?? 0,
+            lastActive: u.lastActive ?? Date.now()
           };
           
           batch.set(doc(db, 'players', u.id), newPlayer);
@@ -2121,7 +2224,14 @@ export default function App() {
       override: 'none',
       referralCode: personalReferralCode,
       referredBy: referrerId || '',
-      referralCount: 0
+      referralCount: 0,
+      totalWagered: 0,
+      totalWinnings: 0,
+      biggestBet: 0,
+      totalBetsCount: 0,
+      lastActive: Date.now(),
+      wins: 0,
+      losses: 0
     };
 
     if (demoMode) {
@@ -2155,6 +2265,13 @@ export default function App() {
         referralCode: personalReferralCode,
         referredBy: referrerId || '',
         referralCount: 0,
+        totalWagered: 0,
+        totalWinnings: 0,
+        biggestBet: 0,
+        totalBetsCount: 0,
+        lastActive: Date.now(),
+        wins: 0,
+        losses: 0,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -2433,13 +2550,20 @@ export default function App() {
       batch.update(doc(db, 'players', user.uid), {
         balance: increment(-amt),
         pendingBet: { amount: newAmount, timestamp },
-        totalWagered: increment(amt)
+        totalWagered: increment(amt),
+        totalBetsCount: increment(1),
+        biggestBet: amt > (currentPlayer.biggestBet || 0) ? amt : (currentPlayer.biggestBet || amt),
+        lastActive: timestamp
       });
 
       batch.update(doc(db, 'users', user.uid), {
         walletBalance: increment(-amt),
         balance: increment(-amt),
-        updatedAt: Date.now()
+        totalWagered: increment(amt),
+        totalBetsCount: increment(1),
+        biggestBet: amt > (currentPlayer.biggestBet || 0) ? amt : (currentPlayer.biggestBet || amt),
+        lastActive: timestamp,
+        updatedAt: timestamp
       });
 
       await batch.commit();
@@ -2749,6 +2873,12 @@ export default function App() {
                 onClick={() => { setActiveTab('wallet'); setIsSidebarOpen(false); playSound('CLICK'); }}
                 icon={<Wallet className="w-5 h-5" />}
                 label="My Wallet"
+              />
+              <NavItem 
+                active={activeTab === 'leaderboard'} 
+                onClick={() => { setActiveTab('leaderboard'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                icon={<Trophy className="w-5 h-5 text-amber-400" />}
+                label="Leaderboard"
               />
 
               {(state.isAnnouncementEnabled || isAdmin) && (
@@ -3218,6 +3348,18 @@ export default function App() {
                 </motion.div>
               )}
 
+              {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'leaderboard' && (
+                <motion.div
+                  key="leaderboard"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                >
+                  <LeaderboardView preferredCurrency={preferredCurrency} />
+                </motion.div>
+              )}
+
               {activeTab === 'admin' && (
                 <motion.div
                   key="admin"
@@ -3258,6 +3400,7 @@ export default function App() {
                     onUpdateAnnouncementText={onUpdateAnnouncementText}
                     onToggleAnnouncementEnabled={onToggleAnnouncementEnabled}
                     onSafeMigrate={safeMigrateUsersToPlayers}
+                    preferredCurrency={preferredCurrency}
                   />
                 </motion.div>
               )}
@@ -5760,7 +5903,7 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate }: { 
+function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
   state: AppState, 
   playSound: (key: any) => void,
   onUpdateWinRate: (rate: number) => void,
@@ -5791,7 +5934,8 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   onToggleTransferLimitsLock: () => void,
   onUpdateAnnouncementText: (text: string) => void,
   onToggleAnnouncementEnabled: () => void,
-  onSafeMigrate: () => Promise<{ createdCount: number; existedCount: number }>
+  onSafeMigrate: () => Promise<{ createdCount: number; existedCount: number }>,
+  preferredCurrency?: string
 }) {
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationMsg, setMigrationMsg] = useState<string | null>(null);
@@ -5807,7 +5951,7 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   const [depositSortOrder, setDepositSortOrder] = useState<'asc' | 'desc'>('desc');
   const [activeFinanceTab, setActiveFinanceTab] = useState<'deposits' | 'withdrawals'>('deposits');
   const [activeScreenshotUrl, setActiveScreenshotUrl] = useState<string | null>(null);
-  const [activeSpreadsheet, setActiveSpreadsheet] = useState<'deposits' | 'withdrawals' | null>(null);
+  const [activeSpreadsheet, setActiveSpreadsheet] = useState<'deposits' | 'withdrawals' | 'blockchain_networks' | 'withdrawal_networks' | 'active_users' | null>(null);
 
   const [bulkSettleType, setBulkSettleType] = useState<'win' | 'lose' | null>(null);
   const [settlementCurrency, setSettlementCurrency] = useState<string>('USDT');
@@ -6355,20 +6499,35 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
           </div>
         </div>
 
-        {/* Active Players Card */}
-        <div className="bg-[#0f0f0f] border border-white/5 p-5 sm:p-6 rounded-2xl relative overflow-hidden shadow-2xl flex flex-col justify-between h-44 animate-in fade-in">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl" />
+        {/* Active Players / Active Users Analytics Card */}
+        <div 
+          onClick={() => {
+            setActiveSpreadsheet('active_users');
+            playSound('CLICK');
+          }}
+          className="bg-[#0f0f0f] border border-white/5 p-5 sm:p-6 rounded-2xl hover:border-emerald-500/30 transition-all cursor-pointer group relative overflow-hidden shadow-2xl flex flex-col justify-between h-44 animate-in fade-in"
+        >
+          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl group-hover:bg-emerald-500/10 transition-colors" />
           <div className="flex justify-between items-start">
-            <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
-              <UserPlus className="w-5 h-5 text-emerald-400" />
+            <div className="p-3 bg-emerald-500/10 rounded-xl group-hover:bg-emerald-500/20 transition-colors border border-emerald-500/20">
+              <Users className="w-5 h-5 text-emerald-400" />
             </div>
-            <span className="bg-emerald-500/10 text-emerald-400 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-wider border border-emerald-500/20">
-              ONLINE
-            </span>
+            {state.players.filter(p => p.lastActive && (Date.now() - p.lastActive <= 5 * 60 * 1000)).length > 0 ? (
+              <span className="bg-emerald-500 text-black text-[9px] font-black px-3 py-1 rounded-full animate-pulse uppercase tracking-wider border border-emerald-500/20 shadow-lg shadow-emerald-500/20">
+                {state.players.filter(p => p.lastActive && (Date.now() - p.lastActive <= 5 * 60 * 1000)).length} ONLINE
+              </span>
+            ) : (
+              <span className="bg-white/5 text-[9px] font-black px-3 py-1 rounded-full text-slate-500 uppercase tracking-wider">
+                OFFLINE
+              </span>
+            )}
           </div>
           <div>
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">REGISTERED SYSTEM PLAYERS</p>
-            <p className="text-2xl font-display font-black text-white">{state.players.length}</p>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">ACTIVE USERS ANALYTICS</p>
+            <div className="flex items-baseline justify-between w-full">
+              <p className="text-2xl font-display font-black text-white">{state.players.length} Total</p>
+              <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">Real-time Stats ↗</span>
+            </div>
           </div>
         </div>
       </div>
@@ -6391,7 +6550,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                     ? 'from-transparent via-purple-500/60 to-transparent'
                     : activeSpreadsheet === 'withdrawal_networks'
                       ? 'from-transparent via-teal-500/60 to-transparent'
-                      : 'from-transparent via-blue-500/60 to-transparent'
+                      : activeSpreadsheet === 'active_users'
+                        ? 'from-transparent via-emerald-500/60 to-transparent'
+                        : 'from-transparent via-blue-500/60 to-transparent'
               }`} />
 
               {/* Close Button */}
@@ -6416,7 +6577,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                           ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                           : activeSpreadsheet === 'withdrawal_networks'
                             ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
-                            : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                            : activeSpreadsheet === 'active_users'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                     }`}>
                       {activeSpreadsheet === 'deposits' 
                         ? <ArrowDownLeft className="w-6 h-6" /> 
@@ -6424,7 +6587,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                           ? <Settings className="w-6 h-6" />
                           : activeSpreadsheet === 'withdrawal_networks'
                             ? <Settings className="w-6 h-6" />
-                            : <ArrowUpRight className="w-6 h-6" />}
+                            : activeSpreadsheet === 'active_users'
+                              ? <Users className="w-6 h-6" />
+                              : <ArrowUpRight className="w-6 h-6" />}
                     </div>
                     <h3 className="font-display font-black text-2xl sm:text-3xl text-white">
                       {activeSpreadsheet === 'deposits' 
@@ -6433,7 +6598,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                           ? 'Blockchain Deposit Gateways & FAQ Content Manager'
                           : activeSpreadsheet === 'withdrawal_networks'
                             ? 'Blockchain Withdrawal Gateways & Settings Manager'
-                            : 'Withdrawals Operations Spreadsheet'}
+                            : activeSpreadsheet === 'active_users'
+                              ? 'Active Users Analytics & Activity Ledger'
+                              : 'Withdrawals Operations Spreadsheet'}
                     </h3>
                   </div>
                   <p className="text-xs text-slate-500 uppercase tracking-wider font-mono">
@@ -6443,7 +6610,9 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                         ? 'Manage accepted chains, deposit wallet addresses, custom QR codes, and FAQs'
                         : activeSpreadsheet === 'withdrawal_networks'
                           ? 'Configure withdrawal blockchains, minimum limits, fee structures, and rules'
-                          : 'Process requested payout transfers to user accounts'}
+                          : activeSpreadsheet === 'active_users'
+                            ? 'Monitor real-time player sessions, engagement activity, and database profiles'
+                            : 'Process requested payout transfers to user accounts'}
                   </p>
                 </div>
 
@@ -6473,7 +6642,13 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
 
               {/* Spreadsheet content */}
               <div className="overflow-x-auto p-2 sm:p-4">
-                {activeSpreadsheet === 'blockchain_networks' ? (
+                {activeSpreadsheet === 'active_users' ? (
+                  <AdminActiveUsersView 
+                    players={state.players}
+                    preferredCurrency={preferredCurrency}
+                    playSound={playSound}
+                  />
+                ) : activeSpreadsheet === 'blockchain_networks' ? (
                   <AdminDepositManager 
                     networks={state.depositNetworks || []}
                     playSound={playSound}
@@ -7721,11 +7896,22 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
                           {player.name.charAt(0)}
                         </div>
                         <div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-3">
                             <h5 className="font-display font-bold text-lg">{player.name}</h5>
                             {state.currentPlayerId === player.id && (
                               <span className="bg-emerald-500/10 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest border border-emerald-500/20">Active Player</span>
                             )}
+                            {(() => {
+                              const isOnline = player.lastActive && (Date.now() - player.lastActive <= 5 * 60 * 1000);
+                              return (
+                                <div className="flex items-center gap-1.5 bg-black/30 px-2 py-0.5 rounded-full border border-white/5">
+                                  <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`} />
+                                  <span className={`text-[8px] font-black uppercase tracking-wider ${isOnline ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                    {isOnline ? 'Online' : 'Offline'}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
                           <p className="text-xs text-slate-500 font-mono mt-0.5">
                             Balance: ₹{((player.balance ?? 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)} | Code: {player.referralCode} | Refs: {player.referralCount}
