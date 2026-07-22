@@ -935,9 +935,10 @@ export default function App() {
       setState(prev => {
         const playersList = prev.players || [];
         // Maintain the active user's current live balance if they are already in the list to avoid flickers
-        const userDocBalance = playersList.find(pl => pl && pl.id === user.uid)?.balance;
+        const currentUid = user?.uid;
+        const userDocBalance = currentUid ? playersList.find(pl => pl && pl.id === currentUid)?.balance : undefined;
         const updated = mergedPlayers.map(p => {
-          if (p && p.id === user.uid && userDocBalance !== undefined) {
+          if (currentUid && p && p.id === currentUid && userDocBalance !== undefined) {
             return { ...p, balance: userDocBalance };
           }
           return p;
@@ -2598,7 +2599,7 @@ export default function App() {
 
     const betTxn: Transaction = {
       id: 'demo-' + Math.random().toString(36).substr(2, 9),
-      playerId: user.uid,
+      playerId: user?.uid || 'demo-player',
       type: 'bet',
       amount: amt,
       timestamp,
@@ -2624,7 +2625,7 @@ export default function App() {
           setDemoBalance(prev => (prev !== null ? prev : 1000) + winAmount);
           const winTx: Transaction = {
             id: 'demo-' + Math.random().toString(36).substr(2, 9),
-            playerId: user.uid,
+            playerId: user?.uid || 'demo-player',
             type: 'win',
             amount: winAmount,
             timestamp: Date.now(),
@@ -2641,14 +2642,13 @@ export default function App() {
   };
 
   const handleDepositDemo = async (amount: number, method: string, details: string, screenshotUrl?: string, existingDepositId?: string, transactionHash?: string) => {
-    if (!user) return;
     playSound('BET'); 
     const timestamp = Date.now();
     const txnId = 'demo-' + Math.random().toString(36).substr(2, 9);
     
     const txn: Transaction = {
       id: txnId,
-      playerId: user.uid,
+      playerId: user?.uid || 'demo-player',
       type: 'deposit',
       amount,
       timestamp,
@@ -2671,13 +2671,13 @@ export default function App() {
     exchangeRate?: number,
     preferredAmount?: number
   ) => {
-    if (!user || !activePlayer || amount < 10 || amount > activePlayer.balance) return;
+    if (!activePlayer || amount < 10 || amount > activePlayer.balance) return;
     const timestamp = Date.now();
     const txnId = 'demo-' + Math.random().toString(36).substr(2, 9);
 
     const txn: Transaction = {
       id: txnId,
-      playerId: user.uid,
+      playerId: user?.uid || 'demo-player',
       type: 'withdrawal',
       amount,
       timestamp,
@@ -2690,7 +2690,7 @@ export default function App() {
 
     const demoRequest: WithdrawalRequest = {
       id: 'demo-req-' + Math.random().toString(36).substr(2, 9),
-      playerId: user.uid,
+      playerId: user?.uid || 'demo-player',
       playerName: activePlayer.name || 'Demo Player',
       amount,
       method,
