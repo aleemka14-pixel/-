@@ -501,10 +501,7 @@ export class ReliabilityManager {
     if (!this.isDatabaseQuotaExceeded) {
       try {
         const healthRef = doc(this.db, 'config', 'system_health');
-        const snap = await getDoc(healthRef);
-        if (snap.exists()) {
-          await updateDoc(healthRef, { jobs: this.jobMetrics });
-        }
+        await setDoc(healthRef, { jobs: this.jobMetrics }, { merge: true });
       } catch (e) {
         if (this.isQuotaError(e)) {
           this.handleQuotaError(e);
@@ -900,7 +897,7 @@ export class ReliabilityManager {
       // update DB status
       try {
         const healthRef = doc(this.db, 'config', 'system_health');
-        await updateDoc(healthRef, { jobs: this.jobMetrics });
+        await setDoc(healthRef, { jobs: this.jobMetrics }, { merge: true });
       } catch (e) {
         console.error('[ReliabilityManager] Failed to update job metrics in DB:', e.message);
       }

@@ -686,13 +686,12 @@ export default function App() {
 
   // Listeners for Firestore data
   useEffect(() => {
-    if (!user) return;
     if (quotaExceeded) {
       console.log('Snapshot listeners bypassed because Firestore quota is exceeded.');
       return;
     }
 
-    const currentSessionKey = `${user.uid}_${isAdmin}_${quotaExceeded}`;
+    const currentSessionKey = `${user?.uid || 'guest'}_${isAdmin}_${quotaExceeded}`;
     if (activeSessionRef.current === currentSessionKey) {
       console.log('Listeners already active for session:', currentSessionKey);
       return;
@@ -713,7 +712,7 @@ export default function App() {
 
     activeSessionRef.current = currentSessionKey;
 
-    console.log('Starting Listeners. User:', user.email, user.uid);
+    console.log('Starting Listeners. User:', user?.email || 'Guest', user?.uid || 'none');
     console.log('CurrentUser:', auth.currentUser?.email, auth.currentUser?.uid);
 
     // Track active unsubscribes for this session
@@ -971,16 +970,17 @@ export default function App() {
       mergeAndSetPlayers();
     }
 
-    // Optimize player list reads by limiting the count to 50 for normal users and ordering by balance
-    const playersQuery = isAdmin
-      ? query(collection(db, 'players'), limit(500))
-      : query(collection(db, 'players'), orderBy('balance', 'desc'), limit(50));
+    // Query players collection safely without orderBy to avoid missing field/index exclusion in Firestore
+    const playersQuery = query(collection(db, 'players'), limit(isAdmin ? 500 : 100));
 
     const unsubPlayersList = reg(onSnapshot(playersQuery, (snap) => {
       rawPlayers = snap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
       console.log('Players fetched:', rawPlayers.length);
       mergeAndSetPlayers();
     }, (err) => {
+      console.error('Failed to listen to players collection:', err);
+      rawPlayers = [];
+      mergeAndSetPlayers();
       handleListenerError('Failed to listen to players collection', err);
     }));
 
@@ -995,13 +995,6 @@ export default function App() {
       const pEmail = p.email || '';
       const finalEmail = uEmail || pEmail || '';
 
-      const uWalletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
-        ? Number(u.walletBalance)
-        : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
-      const pBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
-      
-      const finalBalance = uWalletBalance !== pBalance ? uWalletBalance : uWalletBalance;
-
       const uRefCode = u.referralCode || '';
       const pRefCode = p.referralCode || '';
       const finalRefCode = pRefCode || uRefCode || ((finalName.substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase());
@@ -1014,38 +1007,28 @@ export default function App() {
       const pRefCount = p.referralCount !== undefined ? Number(p.referralCount) : 0;
       const finalRefCount = Math.max(uRefCount, pRefCount);
 
-      const finalOverride = p.override || u.override || 'none';
-
       const userNeedsUpdate = 
         u.username !== finalName || 
         u.email !== finalEmail || 
-        u.walletBalance !== finalBalance || 
-        u.balance !== finalBalance ||
         u.referralCode !== finalRefCode || 
         u.referredBy !== finalReferredBy || 
-        u.referralCount !== finalRefCount ||
-        u.override !== finalOverride;
+        u.referralCount !== finalRefCount;
 
       const playerNeedsUpdate = 
         p.name !== finalName || 
         p.email !== finalEmail || 
-        p.balance !== finalBalance || 
         p.referralCode !== finalRefCode || 
         p.referredBy !== finalReferredBy || 
-        p.referralCount !== finalRefCount ||
-        p.override !== finalOverride;
+        p.referralCount !== finalRefCount;
 
       if (userNeedsUpdate) {
         try {
           await updateDoc(doc(db, 'users', user.uid), {
             username: finalName,
             email: finalEmail,
-            walletBalance: finalBalance,
-            balance: finalBalance,
             referralCode: finalRefCode,
             referredBy: finalReferredBy,
             referralCount: finalRefCount,
-            override: finalOverride,
             updatedAt: Date.now()
           });
           console.log(`[Sync] Successfully updated user doc for: ${user.uid}`);
@@ -1059,11 +1042,9 @@ export default function App() {
           await updateDoc(doc(db, 'players', user.uid), {
             name: finalName,
             email: finalEmail,
-            balance: finalBalance,
             referralCode: finalRefCode,
             referredBy: finalReferredBy,
-            referralCount: finalRefCount,
-            override: finalOverride
+            referralCount: finalRefCount
           });
           console.log(`[Sync] Successfully updated player doc for: ${user.uid}`);
         } catch (e) {
@@ -1116,192 +1097,189 @@ export default function App() {
       }
     };
 
-    // Single Player profile listener for updates to own fields and override
-    const unsubPlayer = reg(onSnapshot(doc(db, 'players', user.uid), (snap) => {
-      if (snap.exists()) {
-        const p = snap.data() as Player;
-        rawCurrentPlayer = p;
-        mergeAndSetPlayers();
-        // Keep everything but override balance from the users doc
-        setState(prev => {
-          const otherPlayers = prev.players.filter(pl => pl.id !== p.id);
-          const existingP = prev.players.find(pl => pl.id === p.id);
-          const mergedPlayer = {
-            ...p,
-            balance: existingP ? existingP.balance : p.balance // Use the user doc's balance as master
-          };
-          return { ...prev, players: [...otherPlayers, mergedPlayer] };
-        });
+    if (user && user.uid) {
+      const currentUserId = user.uid;
+      const currentUserEmail = user.email || '';
+      const currentDisplayName = user.displayName || 'Player';
 
-        // Sync with user doc if it exists
-        getDoc(doc(db, 'users', user.uid)).then((userSnap) => {
-          if (userSnap.exists()) {
-            syncCurrentUserDocuments(userSnap.data(), p);
-          }
-        }).catch(err => console.warn('[Sync] Error checking user doc for sync:', err));
-      }
-    }, (err) => {
-      handleListenerError(`Failed to listen to profile players/${user.uid}`, err);
-    }));
-
-    // Single User wallet listener as single source of truth for balances
-    const unsubUserDoc = reg(onSnapshot(doc(db, 'users', user.uid), (snap) => {
-      if (snap.exists()) {
-        const u = snap.data();
-        
-        // Use a safe fallback for the balance, prioritizing walletBalance then balance
-        const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
-          ? Number(u.walletBalance)
-          : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
-        
-        // Self-heal: ensure 'balance' and 'walletBalance' are consistent in Firestore
-        if (u.walletBalance === undefined || u.balance === undefined || u.walletBalance !== u.balance) {
-          updateDoc(doc(db, 'users', user.uid), {
-            balance: walletBalance,
-            walletBalance: walletBalance,
-            updatedAt: Date.now()
-          }).catch(err => console.warn('Failed to self-heal user balances:', err));
-        }
-
-        // Cache the live balance to avoid 0-balance resets on refresh or login
-        localStorage.setItem(`last_known_balance_${user.uid}`, String(walletBalance));
-
-        // Self-heal/migration: check if matching player document exists, if not, create it!
-        getDoc(doc(db, 'players', user.uid)).then(async (playerSnap) => {
-          if (!playerSnap.exists()) {
-            const personalReferralCode = ((u.username || user.displayName || 'Player').substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
-            const newPlayer: Player = {
-              id: user.uid,
-              name: u.username || user.displayName || 'Player',
-              email: u.email || user.email || '',
-              balance: walletBalance,
-              override: u.override || 'none',
-              referralCode: u.referralCode || personalReferralCode,
-              referredBy: u.referredBy || '',
-              referralCount: u.referralCount || 0,
-              totalWagered: u.totalWagered || 0,
-              preferredCurrency: u.preferredCurrency || 'USDT',
-              wins: u.wins ?? 0,
-              losses: u.losses ?? 0,
+      // Single Player profile listener for updates to own fields and override
+      reg(onSnapshot(doc(db, 'players', currentUserId), (snap) => {
+        if (snap.exists()) {
+          const p = snap.data() as Player;
+          rawCurrentPlayer = p;
+          mergeAndSetPlayers();
+          // Keep everything but override balance from the users doc
+          setState(prev => {
+            const otherPlayers = prev.players.filter(pl => pl.id !== p.id);
+            const existingP = prev.players.find(pl => pl.id === p.id);
+            const mergedPlayer = {
+              ...p,
+              balance: existingP ? existingP.balance : p.balance // Use the user doc's balance as master
             };
-            await setDoc(doc(db, 'players', user.uid), newPlayer);
-            console.log('Self-healed: Created missing players document for current user');
-          } else {
-            // Already exists, synchronize required fields
-            syncCurrentUserDocuments(u, playerSnap.data());
-          }
-        }).catch(err => console.warn('Failed to check/create missing player document for user:', err));
-        
-        setState(prev => {
-          const updatedPlayers = prev.players.map(p => {
-            if (p.id === user.uid) {
-              return { ...p, balance: walletBalance };
-            }
-            return p;
+            return { ...prev, players: [...otherPlayers, mergedPlayer] };
           });
+
+          // Sync with user doc if it exists
+          getDoc(doc(db, 'users', currentUserId)).then((userSnap) => {
+            if (userSnap.exists()) {
+              syncCurrentUserDocuments(userSnap.data(), p);
+            }
+          }).catch(err => console.warn('[Sync] Error checking user doc for sync:', err));
+        }
+      }, (err) => {
+        handleListenerError(`Failed to listen to profile players/${currentUserId}`, err);
+      }));
+
+      // Single User wallet listener as single source of truth for balances
+      reg(onSnapshot(doc(db, 'users', currentUserId), (snap) => {
+        if (snap.exists()) {
+          const u = snap.data();
           
-          const exists = prev.players.some(p => p.id === user.uid);
-          if (!exists) {
-            return {
-              ...prev,
-              players: [...prev.players, {
-                id: user.uid,
-                name: u.username || user.displayName || 'Player',
-                email: u.email || user.email || '',
+          // Use a safe fallback for the balance, prioritizing walletBalance then balance
+          const walletBalance = u.walletBalance !== undefined && !Number.isNaN(Number(u.walletBalance))
+            ? Number(u.walletBalance)
+            : (u.balance !== undefined && !Number.isNaN(Number(u.balance)) ? Number(u.balance) : 0);
+
+          // Cache the live balance to avoid 0-balance resets on refresh or login
+          localStorage.setItem(`last_known_balance_${currentUserId}`, String(walletBalance));
+
+          // Self-heal/migration: check if matching player document exists, if not, create it!
+          getDoc(doc(db, 'players', currentUserId)).then(async (playerSnap) => {
+            if (!playerSnap.exists()) {
+              const personalReferralCode = ((u.username || currentDisplayName).substring(0, 3) + Math.floor(100 + Math.random() * 900)).toUpperCase();
+              const newPlayer: Player = {
+                id: currentUserId,
+                name: u.username || currentDisplayName,
+                email: u.email || currentUserEmail,
                 balance: walletBalance,
                 override: u.override || 'none',
-                referralCode: u.referralCode || '',
-                referralCount: u.referralCount || 0
-              }]
-            };
-          }
-          return { ...prev, players: updatedPlayers };
-        });
-        setWalletLoading(false);
-      } else {
-        // Automatically migrate if player exists but user doc does not yet
-        getDoc(doc(db, 'players', user.uid)).then(async (playerSnap) => {
-          if (playerSnap.exists()) {
-            const playerObj = playerSnap.data() as Player;
-            await setDoc(doc(db, 'users', user.uid), {
-              username: playerObj.name || user.displayName || 'Player',
-              email: playerObj.email || user.email || '',
-              balance: playerObj.balance || 0,
-              walletBalance: playerObj.balance || 0,
-              createdAt: Date.now(),
-              updatedAt: Date.now()
+                referralCode: u.referralCode || personalReferralCode,
+                referredBy: u.referredBy || '',
+                referralCount: u.referralCount || 0,
+                totalWagered: u.totalWagered || 0,
+                preferredCurrency: u.preferredCurrency || 'USDT',
+                wins: u.wins ?? 0,
+                losses: u.losses ?? 0,
+              };
+              await setDoc(doc(db, 'players', currentUserId), newPlayer);
+              console.log('Self-healed: Created missing players document for current user');
+            } else {
+              // Already exists, synchronize required fields
+              syncCurrentUserDocuments(u, playerSnap.data());
+            }
+          }).catch(err => console.warn('Failed to check/create missing player document for user:', err));
+          
+          setState(prev => {
+            const updatedPlayers = prev.players.map(p => {
+              if (p.id === currentUserId) {
+                return { ...p, balance: walletBalance };
+              }
+              return p;
             });
-          } else {
-            setWalletLoading(false);
-          }
-        }).catch(err => {
-          console.warn("Error migrating user profile to users collection:", err);
+            
+            const exists = prev.players.some(p => p.id === currentUserId);
+            if (!exists) {
+              return {
+                ...prev,
+                players: [...prev.players, {
+                  id: currentUserId,
+                  name: u.username || currentDisplayName,
+                  email: u.email || currentUserEmail,
+                  balance: walletBalance,
+                  override: u.override || 'none',
+                  referralCode: u.referralCode || '',
+                  referralCount: u.referralCount || 0
+                }]
+              };
+            }
+            return { ...prev, players: updatedPlayers };
+          });
           setWalletLoading(false);
-        });
-      }
-    }, (err) => {
-      handleListenerError("Error listening to users/ doc", err);
-      setWalletLoading(false);
-    }));
+        } else {
+          // Automatically migrate if player exists but user doc does not yet
+          getDoc(doc(db, 'players', currentUserId)).then(async (playerSnap) => {
+            if (playerSnap.exists()) {
+              const playerObj = playerSnap.data() as Player;
+              await setDoc(doc(db, 'users', currentUserId), {
+                username: playerObj.name || currentDisplayName,
+                email: playerObj.email || currentUserEmail,
+                balance: playerObj.balance || 0,
+                walletBalance: playerObj.balance || 0,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+              });
+            } else {
+              setWalletLoading(false);
+            }
+          }).catch(err => {
+            console.warn("Error migrating user profile to users collection:", err);
+            setWalletLoading(false);
+          });
+        }
+      }, (err) => {
+        handleListenerError("Error listening to users/ doc", err);
+        setWalletLoading(false);
+      }));
 
-    // Query helper to switch between own and admin data
-    const getQuery = (colName: string) => {
-      const l = colName === 'transactions' ? 500 : 50; // Cap transactions at 500 for performance
-      return isAdmin 
-        ? query(collection(db, colName), orderBy('timestamp', 'desc'), limit(l))
-        : query(collection(db, colName), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'), limit(l));
-    };
+      // Query helper to switch between own and admin data
+      const getQuery = (colName: string) => {
+        const l = colName === 'transactions' ? 500 : 50; // Cap transactions at 500 for performance
+        return isAdmin 
+          ? query(collection(db, colName), orderBy('timestamp', 'desc'), limit(l))
+          : query(collection(db, colName), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'), limit(l));
+      };
 
-    const unsubTxns = reg(onSnapshot(getQuery('transactions'), (snap) => {
-      const transactions = snap.docs.map(d => d.data() as Transaction);
-      setState(prev => ({ ...prev, transactions }));
-    }, (err) => {
-      if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
-        console.warn(`Admin access to transactions denied for ${user.email} (${user.uid}). Falling back to personal view.`);
-        const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
-           setState(prev => ({ ...prev, transactions: s.docs.map(d => d.data() as Transaction) }));
-         }, (fErr) => {
-            handleListenerError('Transactions Fallback Error', fErr);
-         }));
-      } else {
-        handleListenerError('Failed to listen to transactions', err);
-      }
-    }));
+      reg(onSnapshot(getQuery('transactions'), (snap) => {
+        const transactions = snap.docs.map(d => d.data() as Transaction);
+        setState(prev => ({ ...prev, transactions }));
+      }, (err) => {
+        if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
+          console.warn(`Admin access to transactions denied for ${currentUserEmail} (${currentUserId}). Falling back to personal view.`);
+          const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'));
+          reg(onSnapshot(fallbackQuery, (s) => {
+             setState(prev => ({ ...prev, transactions: s.docs.map(d => d.data() as Transaction) }));
+           }, (fErr) => {
+              handleListenerError('Transactions Fallback Error', fErr);
+           }));
+        } else {
+          handleListenerError('Failed to listen to transactions', err);
+        }
+      }));
 
-    const unsubWithdrawals = reg(onSnapshot(getQuery('withdrawals'), (snap) => {
-      const withdrawals = snap.docs.map(d => d.data() as WithdrawalRequest);
-      setState(prev => ({ ...prev, withdrawals }));
-    }, (err) => {
-      if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
-        console.warn(`Admin access to withdrawals denied. Falling back.`);
-        const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
-          setState(prev => ({ ...prev, withdrawals: s.docs.map(d => d.data() as WithdrawalRequest) }));
-        }, (fErr) => {
-          handleListenerError('Withdrawals Fallback Error', fErr);
-        }));
-      } else {
-        handleListenerError('Failed to listen to withdrawals', err);
-      }
-    }));
+      reg(onSnapshot(getQuery('withdrawals'), (snap) => {
+        const withdrawals = snap.docs.map(d => d.data() as WithdrawalRequest);
+        setState(prev => ({ ...prev, withdrawals }));
+      }, (err) => {
+        if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
+          console.warn(`Admin access to withdrawals denied. Falling back.`);
+          const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'));
+          reg(onSnapshot(fallbackQuery, (s) => {
+            setState(prev => ({ ...prev, withdrawals: s.docs.map(d => d.data() as WithdrawalRequest) }));
+          }, (fErr) => {
+            handleListenerError('Withdrawals Fallback Error', fErr);
+          }));
+        } else {
+          handleListenerError('Failed to listen to withdrawals', err);
+        }
+      }));
 
-    const unsubDeposits = reg(onSnapshot(getQuery('deposits'), (snap) => {
-      const deposits = snap.docs.map(d => d.data() as DepositRequest);
-      setState(prev => ({ ...prev, deposits }));
-    }, (err) => {
-      if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
-        console.warn(`Admin access to deposits denied. Falling back.`);
-        const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', user.uid), orderBy('timestamp', 'desc'));
-        const unsubFallback = reg(onSnapshot(fallbackQuery, (s) => {
-          setState(prev => ({ ...prev, deposits: s.docs.map(d => d.data() as DepositRequest) }));
-        }, (fErr) => {
-          handleListenerError('Deposits Fallback Error', fErr);
-        }));
-      } else {
-        handleListenerError('Failed to listen to deposits', err);
-      }
-    }));
+      reg(onSnapshot(getQuery('deposits'), (snap) => {
+        const deposits = snap.docs.map(d => d.data() as DepositRequest);
+        setState(prev => ({ ...prev, deposits }));
+      }, (err) => {
+        if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
+          console.warn(`Admin access to deposits denied. Falling back.`);
+          const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'));
+          reg(onSnapshot(fallbackQuery, (s) => {
+            setState(prev => ({ ...prev, deposits: s.docs.map(d => d.data() as DepositRequest) }));
+          }, (fErr) => {
+            handleListenerError('Deposits Fallback Error', fErr);
+          }));
+        } else {
+          handleListenerError('Failed to listen to deposits', err);
+        }
+      }));
+    }
 
     const unsubNetworks = reg(onSnapshot(query(collection(db, 'deposit_networks'), orderBy('priority', 'asc')), (snap) => {
       if (snap.empty) {
@@ -2527,6 +2505,12 @@ export default function App() {
     if (demoMode) {
       return onPlaceBetDemo(amt);
     }
+    if (amt <= 0 || Number.isNaN(amt)) {
+      throw new Error("Invalid bet amount.");
+    }
+    if ((currentPlayer.balance || 0) < amt) {
+      throw new Error("Insufficient balance to place bet.");
+    }
     if (state.isBettingClosed) {
       throw new Error("Betting closed — Please wait for the next round.");
     }
@@ -2569,13 +2553,14 @@ export default function App() {
       await batch.commit();
 
       if (!state.manualMode) {
+        const targetUid = user.uid;
         setTimeout(async () => {
           let playerOverride = 'none';
-          const playerSnap = await getDoc(doc(db, 'players', user.uid));
+          const playerSnap = await getDoc(doc(db, 'players', targetUid));
           if (playerSnap.exists()) {
             playerOverride = playerSnap.data().override || 'none';
           } else {
-            const userSnap = await getDoc(doc(db, 'users', user.uid));
+            const userSnap = await getDoc(doc(db, 'users', targetUid));
             if (userSnap.exists()) {
               playerOverride = userSnap.data().override || 'none';
             }
@@ -2589,7 +2574,7 @@ export default function App() {
           if (playerOverride === 'win') win = true;
           if (playerOverride === 'lose') win = false;
           
-          resultBet(user.uid, win ? 'win' : 'lose');
+          resultBet(targetUid, win ? 'win' : 'lose');
         }, 1500);
       }
     } catch (e) {
@@ -3361,48 +3346,55 @@ export default function App() {
               )}
 
               {activeTab === 'admin' && (
-                <motion.div
-                  key="admin"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                >
-                  <AdminView 
-                    state={state} 
-                    playSound={playSound}
-                    onUpdateWinRate={onUpdateWinRate}
-                    onUpdateMaxBet={onUpdateMaxBet}
-                    onUpdateMinLimits={onUpdateMinLimits}
-                    onUpdatePlayersWonCount={onUpdatePlayersWonCount}
-                    onToggleBetLimit={onToggleBetLimit}
-                    onToggleManualMode={onToggleManualMode}
-                    onUpdatePlayerOverride={onUpdatePlayerOverride}
-                    onSwitchPlayer={(id) => setState(prev => ({ ...prev, currentPlayerId: id }))}
-                    onResultBet={resultBet}
-                    onResultAllBets={resultAllBets}
-                    onToggleBettingStatus={onToggleBettingStatus}
-                    onUpdateWithdrawalStatus={updateWithdrawalStatus}
-                    onUpdateDepositStatus={updateDepositStatus}
-                    onToggleMaintenanceMode={onToggleMaintenanceMode}
-                    onToggleTeaBreakMode={onToggleTeaBreakMode}
-                    onTogglePlayersWonShown={onTogglePlayersWonShown}
-                    onUpdateLotteryTimer={onUpdateLotteryTimer}
-                    onUpdatePaymentSettings={onUpdatePaymentSettings}
-                    onTogglePaymentLock={onTogglePaymentLock}
-                    onReset={onResetSystem}
-                    onResetHouseStats={onResetHouseStats}
-                    onUpdateReferralAmount={onUpdateReferralAmount}
-                    onToggleReferralEnabled={onToggleReferralEnabled}
-                    onToggleWithdrawLimit24h={onToggleWithdrawLimit24h}
-                    onToggleWinRateLock={onToggleWinRateLock}
-                    onToggleTransferLimitsLock={onToggleTransferLimitsLock}
-                    onUpdateAnnouncementText={onUpdateAnnouncementText}
-                    onToggleAnnouncementEnabled={onToggleAnnouncementEnabled}
-                    onSafeMigrate={safeMigrateUsersToPlayers}
-                    preferredCurrency={preferredCurrency}
-                  />
-                </motion.div>
+                isAdmin ? (
+                  <motion.div
+                    key="admin"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                  >
+                    <AdminView 
+                      state={state} 
+                      playSound={playSound}
+                      onUpdateWinRate={onUpdateWinRate}
+                      onUpdateMaxBet={onUpdateMaxBet}
+                      onUpdateMinLimits={onUpdateMinLimits}
+                      onUpdatePlayersWonCount={onUpdatePlayersWonCount}
+                      onToggleBetLimit={onToggleBetLimit}
+                      onToggleManualMode={onToggleManualMode}
+                      onUpdatePlayerOverride={onUpdatePlayerOverride}
+                      onSwitchPlayer={(id) => setState(prev => ({ ...prev, currentPlayerId: id }))}
+                      onResultBet={resultBet}
+                      onResultAllBets={resultAllBets}
+                      onToggleBettingStatus={onToggleBettingStatus}
+                      onUpdateWithdrawalStatus={updateWithdrawalStatus}
+                      onUpdateDepositStatus={updateDepositStatus}
+                      onToggleMaintenanceMode={onToggleMaintenanceMode}
+                      onToggleTeaBreakMode={onToggleTeaBreakMode}
+                      onTogglePlayersWonShown={onTogglePlayersWonShown}
+                      onUpdateLotteryTimer={onUpdateLotteryTimer}
+                      onUpdatePaymentSettings={onUpdatePaymentSettings}
+                      onTogglePaymentLock={onTogglePaymentLock}
+                      onReset={onResetSystem}
+                      onResetHouseStats={onResetHouseStats}
+                      onUpdateReferralAmount={onUpdateReferralAmount}
+                      onToggleReferralEnabled={onToggleReferralEnabled}
+                      onToggleWithdrawLimit24h={onToggleWithdrawLimit24h}
+                      onToggleWinRateLock={onToggleWinRateLock}
+                      onToggleTransferLimitsLock={onToggleTransferLimitsLock}
+                      onUpdateAnnouncementText={onUpdateAnnouncementText}
+                      onToggleAnnouncementEnabled={onToggleAnnouncementEnabled}
+                      onSafeMigrate={safeMigrateUsersToPlayers}
+                      preferredCurrency={preferredCurrency}
+                    />
+                  </motion.div>
+                ) : (
+                  <div className="p-8 text-center text-slate-400">
+                    <p className="text-lg font-semibold text-rose-400">Access Denied</p>
+                    <p className="text-sm mt-1">You do not have administrative privileges to view this section.</p>
+                  </div>
+                )
               )}
             </AnimatePresence>
           </div>
