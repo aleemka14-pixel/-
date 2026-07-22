@@ -974,12 +974,19 @@ export default function App() {
     // Query players collection safely without orderBy to avoid missing field/index exclusion in Firestore
     const playersQuery = query(collection(db, 'players'), limit(isAdmin ? 500 : 100));
 
+    console.log('[PRODUCTION DIAGNOSTICS 2] Query path:', 'collection(db, "players")');
+
     const unsubPlayersList = reg(onSnapshot(playersQuery, (snap) => {
       rawPlayers = snap.docs.map(d => ({ id: d.id, ...d.data() } as Player));
+      console.log('[PRODUCTION DIAGNOSTICS 3] Documents returned by players snapshot:', snap.docs.length);
       console.log('Players fetched:', rawPlayers.length);
       mergeAndSetPlayers();
     }, (err) => {
-      console.error('Failed to listen to players collection:', err);
+      console.error('[PRODUCTION DIAGNOSTICS 4] Firestore permission / listener error on players collection:', {
+        code: err.code,
+        message: err.message,
+        name: err.name,
+      });
       rawPlayers = [];
       mergeAndSetPlayers();
       handleListenerError('Failed to listen to players collection', err);

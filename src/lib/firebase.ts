@@ -14,8 +14,20 @@ const firebaseConfig = {
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
   appId: env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
-  firestoreDatabaseId: env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId,
+  firestoreDatabaseId: (env.VITE_FIREBASE_FIRESTORE_DATABASE_ID && env.VITE_FIREBASE_FIRESTORE_DATABASE_ID !== '(default)' && env.VITE_FIREBASE_FIRESTORE_DATABASE_ID.trim() !== '') 
+    ? env.VITE_FIREBASE_FIRESTORE_DATABASE_ID 
+    : firebaseConfigJson.firestoreDatabaseId,
 };
+
+console.log('[PRODUCTION DIAGNOSTICS 1] Firebase Project ID:', firebaseConfig.projectId);
+console.log('[PRODUCTION DIAGNOSTICS 5] Config check:', {
+  projectId: firebaseConfig.projectId,
+  firestoreDatabaseId: firebaseConfig.firestoreDatabaseId,
+  authDomain: firebaseConfig.authDomain,
+  hasApiKey: Boolean(firebaseConfig.apiKey),
+  rawEnvDbId: env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+  rawConfigJsonDbId: firebaseConfigJson.firestoreDatabaseId,
+});
 
 const app = initializeApp(firebaseConfig);
 

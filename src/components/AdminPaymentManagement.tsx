@@ -83,6 +83,16 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
         setRetryQueue((data as any).retryQueue || []);
       }
       setLoading(false);
+    }, (err: any) => {
+      const errMsg = err?.message || String(err);
+      console.warn('[PaymentService] Failed to retrieve settings, using memory fallback:', errMsg);
+      if (errMsg.toLowerCase().includes('quota') || err?.code === 'resource-exhausted') {
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: errMsg } }));
+        }
+      }
+      setLoading(false);
     });
 
     return () => unsub();
@@ -100,6 +110,15 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
     const unsub = onSnapshot(logsQuery, (snap) => {
       const dbLogs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setLogs(dbLogs);
+    }, (err: any) => {
+      const errMsg = err?.message || String(err);
+      console.warn('[PaymentService] Failed to retrieve payment logs, using memory fallback:', errMsg);
+      if (errMsg.toLowerCase().includes('quota') || err?.code === 'resource-exhausted') {
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: errMsg } }));
+        }
+      }
     });
 
     return () => unsub();

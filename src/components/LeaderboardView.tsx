@@ -42,10 +42,16 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
     const fetchLeaderboard = async () => {
       setLoading(true);
       setError(null);
+      const collectionPath = 'players';
+      console.log('[LEADERBOARD DIAGNOSTICS] Collection Path:', collectionPath);
+      console.log('[LEADERBOARD DIAGNOSTICS] Query Constraints:', 'None (fetching full collection and sorting in memory)');
+
       try {
-        const playersRef = collection(db, 'players');
+        const playersRef = collection(db, collectionPath);
         const snap = await getDocs(playersRef);
         
+        console.log('[LEADERBOARD DIAGNOSTICS] Number of documents returned:', snap.docs.length);
+
         if (!active) return;
 
         // Process players in memory to handle default values safely
@@ -82,8 +88,13 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
         // Cap at top 100 for display
         setPlayers(allPlayers.slice(0, 100));
       } catch (err: any) {
-        console.error('Error fetching leaderboard:', err);
-        setError('Failed to load leaderboard data. Please try again.');
+        console.error('[LEADERBOARD DIAGNOSTICS] Firestore error code:', err?.code || 'NO_CODE', '| Message:', err?.message, '| Full Error:', err);
+        if (String(err?.message || err).toLowerCase().includes('quota') || err?.code === 'resource-exhausted') {
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
+          setError('Database quota reached. Currently running in offline/demo mode.');
+        } else {
+          setError('Failed to load leaderboard data. Please try again.');
+        }
       } finally {
         if (active) setLoading(false);
       }
