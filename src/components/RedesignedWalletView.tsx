@@ -459,27 +459,29 @@ export function RedesignedWalletView({
   if (showWithdrawView) {
     const history = state.withdrawals.filter(w => w.playerId === currentPlayer.id);
     return (
-      <RedesignedWithdrawView
-        withdrawalNetworks={state.withdrawalNetworks || []}
-        withdrawalSettings={state.withdrawalSettings}
-        currentPlayer={currentPlayer}
-        withdrawalsHistory={history}
-        onBack={() => setShowWithdrawView(false)}
-        onWithdraw={async (amountUsd, networkId, walletAddress, feeUsd) => {
-          const network = (state.withdrawalNetworks || []).find(n => n.id === networkId);
-          const blockchainName = network ? network.name : networkId.toUpperCase();
-          const finalAmount = amountUsd - feeUsd;
-          const methodString = `Crypto ${blockchainName}`;
-          const detailsString = `Address: ${walletAddress}`;
-          
-          onWithdraw(amountUsd, methodString, detailsString, blockchainName, walletAddress, feeUsd, finalAmount);
-          setShowWithdrawView(false);
-          addToast('Withdrawal Payout initialized! Processing securely.', 'success');
-        }}
-        preferredCurrency={currentCurrency}
-        rates={currentRates}
-        playSound={playSound}
-      />
+      <div className="w-full max-w-full min-w-0 overflow-x-hidden">
+        <RedesignedWithdrawView
+          withdrawalNetworks={state.withdrawalNetworks || []}
+          withdrawalSettings={state.withdrawalSettings}
+          currentPlayer={currentPlayer}
+          withdrawalsHistory={history}
+          onBack={() => setShowWithdrawView(false)}
+          onWithdraw={async (amountUsd, networkId, walletAddress, feeUsd) => {
+            const network = (state.withdrawalNetworks || []).find(n => n.id === networkId);
+            const blockchainName = network ? network.name : networkId.toUpperCase();
+            const finalAmount = amountUsd - feeUsd;
+            const methodString = `Crypto ${blockchainName}`;
+            const detailsString = `Address: ${walletAddress}`;
+            
+            onWithdraw(amountUsd, methodString, detailsString, blockchainName, walletAddress, feeUsd, finalAmount);
+            setShowWithdrawView(false);
+            addToast('Withdrawal Payout initialized! Processing securely.', 'success');
+          }}
+          preferredCurrency={currentCurrency}
+          rates={currentRates}
+          playSound={playSound}
+        />
+      </div>
     );
   }
 

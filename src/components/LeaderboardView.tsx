@@ -88,11 +88,15 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
         // Cap at top 100 for display
         setPlayers(allPlayers.slice(0, 100));
       } catch (err: any) {
-        console.error('[LEADERBOARD DIAGNOSTICS] Firestore error code:', err?.code || 'NO_CODE', '| Message:', err?.message, '| Full Error:', err);
-        if (String(err?.message || err).toLowerCase().includes('quota') || err?.code === 'resource-exhausted') {
-          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
+        const msg = String(err?.message || err).toLowerCase();
+        if (msg.includes('quota') || msg.includes('resource-exhausted') || err?.code === 'resource-exhausted') {
+          if (typeof window !== 'undefined') {
+            (window as any).__firestoreQuotaExceeded = true;
+            window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
+          }
           setError('Database quota reached. Currently running in offline/demo mode.');
         } else {
+          console.error('[LEADERBOARD DIAGNOSTICS] Firestore error code:', err?.code || 'NO_CODE', '| Message:', err?.message, '| Full Error:', err);
           setError('Failed to load leaderboard data. Please try again.');
         }
       } finally {

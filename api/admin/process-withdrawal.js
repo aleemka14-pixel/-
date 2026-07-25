@@ -1,31 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, runTransaction, setDoc } from 'firebase/firestore';
-import { walletService } from '../../backend/services/wallet-service.js';
-import { ledgerService } from '../../backend/services/ledger-service.js';
-
-/**
- * Helper to record a notification record for the user in Firestore.
- */
-async function notifyUser(db, userId, title, message) {
-  try {
-    const notificationId = 'NTF-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-    const notificationRef = doc(db, 'notifications', notificationId);
-    await setDoc(notificationRef, {
-      id: notificationId,
-      userId,
-      title,
-      message,
-      type: 'withdrawal',
-      status: 'unread',
-      createdAt: Date.now()
-    });
-    console.log(`[Notification] Created notification for user ${userId}: ${title}`);
-  } catch (err) {
-    console.error(`[Notification Error] Failed to write user notification:`, err.message);
-  }
-}
+import { getFirestore } from 'firebase/firestore';
+import { withdrawalService } from '../../backend/services/withdrawal-service.js';
 
 // Initialize Firebase App
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -41,255 +18,42 @@ const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 /**
  * Serverless API Endpoint: POST /api/admin/process-withdrawal
- * 
- * Securely processes a pending crypto withdrawal.
- * Handles:
- * - Admin Approve (Triggers Wallet Service automatic USDT transfer -> 'processing' -> 'completed' + records txHash)
- * - Admin Reject (Refunds user balance -> 'rejected')
- * - Admin Mark as Completed (Manual override -> 'completed')
+ * Securely processes pending/processing/failed/cancelled withdrawals.
+ * Actions supported: 'approve', 'reject', 'complete', 'retry', 'cancel'
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ success: false, error: `Method ${req.method} Not Allowed` });
+    return res.status(405).json({
+      success: false,
+      error: `Method ${req.method} Not Allowed`,
+      errorCode: "METHOD_NOT_ALLOWED"
+    });
   }
 
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+
   try {
-    const { withdrawalId, action, notes, transactionHash, adminRole = 'Super Admin', adminId = 'Admin' } = req.body;
+    const { withdrawalId, action, notes, transactionHash, adminId, adminRole } = req.body;
 
-    if (!withdrawalId) {
-      return res.status(400).json({ success: false, error: "Missing withdrawalId." });
-    }
+    const result = await withdrawalService.processWithdrawal(db, {
+      withdrawalId,
+      action,
+      notes,
+      transactionHash,
+      adminId,
+      adminRole,
+      ip
+    });
 
-    // Role-based Access Control Check
-    if (adminRole === 'Support') {
-      return res.status(403).json({
-        success: false,
-        error: "Forbidden: Support role does not have permission to modify financial states."
-      });
-    }
-
-    const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
-    const withdrawalSnap = await getDoc(withdrawalRef);
-
-    if (!withdrawalSnap.exists()) {
-      return res.status(404).json({ success: false, error: "Withdrawal request not found." });
-    }
-
-    const withdrawal = withdrawalSnap.data();
-
-    // Prevent re-processing already completed or terminal states
-    if (['completed', 'rejected', 'failed'].includes(withdrawal.status)) {
-      return res.status(400).json({
-        success: false,
-        error: `This withdrawal request is already in a terminal state: '${withdrawal.status}'.`
-      });
-    }
-
-    // A. Handle REJECT action (Refund player balance and mark as rejected)
-    if (action === 'reject') {
-      await runTransaction(db, async (transaction) => {
-        const freshWithdrawalSnap = await transaction.get(withdrawalRef);
-        const freshW = freshWithdrawalSnap.data();
-        if (freshW.status === 'rejected') return;
-
-        // Perform Ledger refund
-        await ledgerService.execute(transaction, db, {
-          userId: freshW.playerId,
-          type: 'win', // Refunding is logged as win (credit back)
-          amount: freshW.amount,
-          referenceId: `REFUND-REJ-${withdrawalId}`,
-          preventDuplicates: true
-        });
-
-        transaction.update(withdrawalRef, {
-          status: 'rejected',
-          adminNotes: notes || 'Rejected by administrator.',
-          processedAt: Date.now(),
-          updatedAt: Date.now()
-        });
-
-        // Add Transactional Audit Log
-        const logId = `AUD-REJ-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-        const auditLogRef = doc(db, 'auditLogs', logId);
-        transaction.set(auditLogRef, {
-          logId,
-          userId: freshW.playerId,
-          adminId,
-          action: 'withdrawal_rejection',
-          module: 'admin_withdrawal',
-          oldValue: freshW.status,
-          newValue: 'rejected',
-          ipAddress: req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1',
-          timestamp: Date.now()
-        });
-      });
-
-      await notifyUser(db, withdrawal.playerId, 'Withdrawal Request Rejected', `Your withdrawal request of ${withdrawal.amount} USDT has been rejected by administration. Balance refunded.`);
-
-      return res.status(200).json({
-        success: true,
-        message: "Withdrawal rejected and player balance has been successfully refunded."
-      });
-    }
-
-    // B. Handle MANUAL COMPLETE action
-    if (action === 'complete') {
-      await runTransaction(db, async (transaction) => {
-        transaction.update(withdrawalRef, {
-          status: 'completed',
-          transactionHash: transactionHash || 'Manual Override',
-          adminNotes: notes || 'Manually completed by administrator.',
-          processedAt: Date.now(),
-          completedDate: Date.now(),
-          updatedAt: Date.now()
-        });
-
-        // Add Transactional Audit Log
-        const logId = `AUD-COM-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-        const auditLogRef = doc(db, 'auditLogs', logId);
-        transaction.set(auditLogRef, {
-          logId,
-          userId: withdrawal.playerId,
-          adminId,
-          action: 'withdrawal_manual_completion',
-          module: 'admin_withdrawal',
-          oldValue: withdrawal.status,
-          newValue: 'completed',
-          ipAddress: req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1',
-          timestamp: Date.now()
-        });
-      });
-
-      await notifyUser(db, withdrawal.playerId, 'Withdrawal Completed', `Your withdrawal request of ${withdrawal.amount} USDT has been completed by administration.`);
-
-      return res.status(200).json({
-        success: true,
-        message: "Withdrawal marked as completed manually."
-      });
-    }
-
-    // C. Handle APPROVE action (Automated Hot Wallet transfer: pending -> processing -> completed)
-    if (action === 'approve') {
-      // 1. Instantly transition status to 'processing' in database
-      await runTransaction(db, async (transaction) => {
-        transaction.update(withdrawalRef, {
-          status: 'processing',
-          adminNotes: notes || 'Processing hot wallet transfer...',
-          processedAt: Date.now(),
-          updatedAt: Date.now()
-        });
-
-        // Add Processing Audit Log
-        const logId = `AUD-APP-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-        const auditLogRef = doc(db, 'auditLogs', logId);
-        transaction.set(auditLogRef, {
-          logId,
-          userId: withdrawal.playerId,
-          adminId,
-          action: 'withdrawal_approval',
-          module: 'admin_withdrawal',
-          oldValue: withdrawal.status,
-          newValue: 'processing',
-          ipAddress: req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1',
-          timestamp: Date.now()
-        });
-      });
-
-      try {
-        // 2. Perform the actual hot wallet broadcast transfer
-        const txReceipt = await walletService.sendUSDT({
-          network: withdrawal.network,
-          toAddress: withdrawal.walletAddress,
-          amount: withdrawal.amount
-        });
-
-        if (txReceipt && txReceipt.success) {
-          // 3. Complete withdrawal in database with generated txHash
-          await runTransaction(db, async (transaction) => {
-            transaction.update(withdrawalRef, {
-              status: 'completed',
-              transactionHash: txReceipt.txHash,
-              adminNotes: notes || 'Successfully processed via automatic hot wallet.',
-              completedDate: Date.now(),
-              processedAt: Date.now(),
-              updatedAt: Date.now()
-            });
-
-            // Also update any matching transaction log
-            const txnRef = doc(db, 'transactions', withdrawalId);
-            const txnSnap = await transaction.get(txnRef);
-            if (txnSnap.exists()) {
-              transaction.update(txnRef, {
-                status: 'completed',
-                transactionHash: txReceipt.txHash
-              });
-            }
-
-            // Add Transactional Audit Log
-            const logId = `AUD-AUT-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-            const auditLogRef = doc(db, 'auditLogs', logId);
-            transaction.set(auditLogRef, {
-              logId,
-              userId: withdrawal.playerId,
-              adminId,
-              action: 'withdrawal_automatic_completion',
-              module: 'admin_withdrawal',
-              oldValue: 'processing',
-              newValue: 'completed',
-              ipAddress: req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1',
-              timestamp: Date.now()
-            });
-          });
-
-          await notifyUser(db, withdrawal.playerId, 'Withdrawal Completed', `Your withdrawal of ${withdrawal.amount} USDT has been successfully completed. TxHash: ${txReceipt.txHash}`);
-
-          return res.status(200).json({
-            success: true,
-            message: "Automatic hot wallet withdrawal completed successfully.",
-            txHash: txReceipt.txHash
-          });
-        } else {
-          throw new Error("Broadcasting transaction did not return a valid success receipt.");
-        }
-
-      } catch (broadcastError) {
-        console.error(`[Hot Wallet Failure] Broadcast failed for withdrawal ${withdrawalId}:`, broadcastError);
-
-        // 4. Update status to failed and refund the player balance
-        await runTransaction(db, async (transaction) => {
-          await ledgerService.execute(transaction, db, {
-            userId: withdrawal.playerId,
-            type: 'win',
-            amount: withdrawal.amount,
-            referenceId: `REFUND-FAIL-${withdrawalId}`,
-            preventDuplicates: true
-          });
-
-          transaction.update(withdrawalRef, {
-            status: 'failed',
-            adminNotes: `Automated transfer failed: ${broadcastError.message || broadcastError}. Balance refunded.`,
-            processedAt: Date.now(),
-            updatedAt: Date.now()
-          });
-        });
-
-        await notifyUser(db, withdrawal.playerId, 'Withdrawal Failed & Refunded', `Your withdrawal of ${withdrawal.amount} USDT failed: ${broadcastError.message || 'Network error'}. Your balance has been fully refunded.`);
-
-        return res.status(400).json({
-          success: false,
-          error: `Automated transfer failed: ${broadcastError.message || 'Unknown network error'}. User balance refunded.`
-        });
-      }
-    }
-
-    return res.status(400).json({ success: false, error: `Unsupported action: '${action}'.` });
+    return res.status(result.statusCode).json(result.body);
 
   } catch (error) {
     console.error("CRITICAL: Error during admin process-withdrawal handler:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || "Internal Server Error during withdrawal administrative processing."
+      error: error.message || "Internal Server Error during withdrawal administrative processing.",
+      errorCode: "SERVER_ERROR"
     });
   }
 }

@@ -75,7 +75,17 @@ export function PaymentOperationsDashboard({
       if (docSnap.exists()) {
         setSystemHealth(docSnap.data());
       }
-    }, (err) => console.error("Error subscribing to system health:", err));
+    }, (err) => {
+      const errMsg = String(err?.message || err).toLowerCase();
+      if (errMsg.includes('quota') || errMsg.includes('resource-exhausted')) {
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
+        }
+      } else {
+        console.warn("Error subscribing to system health:", err);
+      }
+    });
 
     // 2. Subscribe to active system alarms/alerts
     const alertsRef = collection(db, 'system_alerts');
@@ -91,7 +101,17 @@ export function PaymentOperationsDashboard({
         }
         return b.timestamp - a.timestamp; // newest first
       }));
-    }, (err) => console.error("Error subscribing to system alerts:", err));
+    }, (err) => {
+      const errMsg = String(err?.message || err).toLowerCase();
+      if (errMsg.includes('quota') || errMsg.includes('resource-exhausted')) {
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
+        }
+      } else {
+        console.warn("Error subscribing to system alerts:", err);
+      }
+    });
 
     return () => {
       unsubHealth();

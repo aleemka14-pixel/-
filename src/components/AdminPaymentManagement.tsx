@@ -3,13 +3,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, ToggleLeft, ToggleRight, Key, Globe, FileText, Settings, 
   Database, RefreshCw, AlertTriangle, CheckCircle, Wifi, WifiOff,
-  Coins, Trash2, Edit3, Save, Copy, Check, QrCode, PlayCircle, HelpCircle, ArrowRight
+  Coins, Trash2, Edit3, Save, Copy, Check, QrCode, PlayCircle, HelpCircle, ArrowRight, Layers
 } from 'lucide-react';
 import { 
   getFirestore, doc, onSnapshot, setDoc, updateDoc, 
   collection, query, where, orderBy, limit, getDocs, deleteDoc
 } from 'firebase/firestore';
 import { PaymentManagementConfig, PaymentLogEvent, RetryQueueItem, PaymentProviderConfig } from '../lib/payment/types';
+import { AdminPaymentGatewaySettings } from './AdminPaymentGatewaySettings';
 
 interface AdminPaymentManagementProps {
   db: any;
@@ -25,8 +26,8 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
   const [loading, setLoading] = useState<boolean>(true);
   const [logs, setLogs] = useState<any[]>([]);
   const [activeSubTab, setActiveSubTab] = useState<
-    'providers' | 'credentials' | 'limits' | 'networks' | 'monitoring' | 'retry'
-  >('providers');
+    'gateways' | 'providers' | 'credentials' | 'limits' | 'monitoring' | 'retry'
+  >('gateways');
 
   // Input editing states
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
@@ -85,12 +86,13 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
       setLoading(false);
     }, (err: any) => {
       const errMsg = err?.message || String(err);
-      console.warn('[PaymentService] Failed to retrieve settings, using memory fallback:', errMsg);
       if (errMsg.toLowerCase().includes('quota') || err?.code === 'resource-exhausted') {
         if (typeof window !== 'undefined') {
           (window as any).__firestoreQuotaExceeded = true;
           window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: errMsg } }));
         }
+      } else {
+        console.warn('[PaymentService] Failed to retrieve settings, using memory fallback:', errMsg);
       }
       setLoading(false);
     });
@@ -112,12 +114,13 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
       setLogs(dbLogs);
     }, (err: any) => {
       const errMsg = err?.message || String(err);
-      console.warn('[PaymentService] Failed to retrieve payment logs, using memory fallback:', errMsg);
       if (errMsg.toLowerCase().includes('quota') || err?.code === 'resource-exhausted') {
         if (typeof window !== 'undefined') {
           (window as any).__firestoreQuotaExceeded = true;
           window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: errMsg } }));
         }
+      } else {
+        console.warn('[PaymentService] Failed to retrieve payment logs, using memory fallback:', errMsg);
       }
     });
 
@@ -429,6 +432,7 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
       {/* Internal Subtabs */}
       <div className="border-b border-white/5 flex gap-1 overflow-x-auto pb-1 font-sans">
         {[
+          { id: 'gateways', label: 'Payment Gateway Settings', icon: Layers },
           { id: 'providers', label: 'Payment Providers', icon: Coins },
           { id: 'credentials', label: 'API Credentials', icon: Key },
           { id: 'limits', label: 'Deposit & Withdrawal Rules', icon: Settings },
@@ -457,6 +461,11 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
       {/* SUBTAB DETAILS */}
       <div className="animate-in fade-in duration-200">
         
+        {/* SUBTAB 0: GATEWAYS */}
+        {activeSubTab === 'gateways' && (
+          <AdminPaymentGatewaySettings db={db} playSound={playSound} adminRole={adminRole} />
+        )}
+
         {/* SUBTAB 1: PROVIDERS */}
         {activeSubTab === 'providers' && (
           <div className="space-y-6">

@@ -33,6 +33,7 @@ import {
   SwitchCamera
 } from 'lucide-react';
 import { db } from '../lib/firebase.ts';
+import { formatMaskedDestination, maskCryptoAddress, maskUpiId, maskBankAccountNumber } from '../lib/withdrawal-utils.ts';
 import { doc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
 import { WithdrawalRequest, WithdrawalNetwork, WithdrawalSettings, Player, DepositRequest, Transaction } from '../types.ts';
 import { logActivity } from '../lib/audit.ts';
@@ -91,8 +92,16 @@ export function AdminWithdrawalManager({
         logsList.push({ id: doc.id, ...doc.data() });
       });
       setAuditLogs(logsList);
-    } catch (e) {
-      console.error("Failed to fetch audit logs:", e);
+    } catch (e: any) {
+      const errMsg = String(e?.message || e).toLowerCase();
+      if (errMsg.includes('quota') || errMsg.includes('resource-exhausted')) {
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: e?.message || String(e) } }));
+        }
+      } else {
+        console.warn("Failed to fetch audit logs:", e);
+      }
     } finally {
       setLoadingAuditLogs(false);
     }
@@ -803,9 +812,20 @@ export function AdminWithdrawalManager({
       result = result.filter(w => w.status === statusFilter);
     }
 
-    // Network Filter
+    // Network & Method Filter
     if (networkFilter !== 'all') {
-      result = result.filter(w => w.blockchain === networkFilter);
+      if (networkFilter === 'crypto') {
+        result = result.filter(w => {
+          const m = (w.method || w.blockchain || '').toUpperCase();
+          return !m.includes('UPI') && !m.includes('BANK');
+        });
+      } else if (networkFilter === 'upi') {
+        result = result.filter(w => (w.method || w.blockchain || '').toUpperCase().includes('UPI'));
+      } else if (networkFilter === 'bank') {
+        result = result.filter(w => (w.method || w.blockchain || '').toUpperCase().includes('BANK'));
+      } else {
+        result = result.filter(w => w.blockchain === networkFilter || w.network === networkFilter);
+      }
     }
 
     // Sort
@@ -879,8 +899,14 @@ export function AdminWithdrawalManager({
       setProcessingId(id);
       playSound('CLICK');
       try {
-        if (newStatus === 'approved' || newStatus === 'completed' || newStatus === 'rejected') {
-          const action = newStatus === 'approved' ? 'approve' : (newStatus === 'rejected' ? 'reject' : 'complete');
+        if (['approved', 'processing', 'completed', 'rejected', 'cancelled', 'failed', 'retry'].includes(newStatus)) {
+          let action = 'complete';
+          if (newStatus === 'approved' || newStatus === 'processing') action = 'approve';
+          else if (newStatus === 'rejected') action = 'reject';
+          else if (newStatus === 'cancelled') action = 'cancel';
+          else if (newStatus === 'completed') action = 'complete';
+          else if ((newStatus as string) === 'retry') action = 'retry';
+
           const response = await fetch('/api/admin/process-withdrawal', {
             method: 'POST',
             headers: {
@@ -906,6 +932,7 @@ export function AdminWithdrawalManager({
           setTempHash('');
           playSound('WIN');
           fetchHotWalletStatus(); // Refresh hot wallet balances
+          fetchAuditLogs(); // Refresh security logs
           return;
         }
 
@@ -1771,13 +1798,16 @@ export function AdminWithdrawalManager({
                   <option value="failed">Failed</option>
                 </select>
 
-                {/* Blockchain Filter */}
+                {/* Method / Blockchain Filter */}
                 <select
                   value={networkFilter}
                   onChange={(e) => setNetworkFilter(e.target.value)}
                   className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-slate-300 outline-none focus:border-emerald-500/50 font-bold"
                 >
-                  <option value="all">All Blockchains</option>
+                  <option value="all">All Methods & Blockchains</option>
+                  <option value="crypto">All Crypto Wallets</option>
+                  <option value="upi">UPI Transfers</option>
+                  <option value="bank">Bank Wire Transfers</option>
                   {networks.map(n => (
                     <option key={n.id} value={n.id}>{n.name}</option>
                   ))}
@@ -1952,18 +1982,40 @@ export function AdminWithdrawalManager({
                                 )}
                               </div>
                             </td>
- 
-                            {/* Blockchain */}
+
+                            {/* Blockchain / Method */}
                             <td className="py-4 px-4">
-                              <span className="text-emerald-400 font-bold uppercase text-[10px] bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-500/10">
-                                {w.blockchain ? w.blockchain.toUpperCase() : 'Crypto'}
-                              </span>
+                              {(() => {
+                                const metUpper = (w.method || w.blockchain || '').toUpperCase();
+                                if (metUpper.includes('UPI')) {
+                                  return (
+                                    <span className="text-indigo-400 font-bold uppercase text-[10px] bg-indigo-950/30 px-2 py-0.5 rounded border border-indigo-500/20">
+                                      UPI Transfer
+                                    </span>
+                                  );
+                                }
+                                if (metUpper.includes('BANK')) {
+                                  return (
+                                    <span className="text-emerald-400 font-bold uppercase text-[10px] bg-emerald-950/30 px-2 py-0.5 rounded border border-emerald-500/20">
+                                      Bank Transfer
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="text-amber-400 font-bold uppercase text-[10px] bg-amber-950/30 px-2 py-0.5 rounded border border-amber-500/20">
+                                    Crypto ({w.blockchain ? w.blockchain.toUpperCase() : 'USDT'})
+                                  </span>
+                                );
+                              })()}
                             </td>
- 
-                            {/* Wallet Address */}
+
+                            {/* Wallet / Destination Address */}
                             <td className="py-4 px-4">
-                              <p className="select-all truncate max-w-[140px] text-[11px] text-slate-300" title={w.walletAddress || w.details}>
-                                {w.walletAddress || w.details}
+                              <p 
+                                className="select-all truncate max-w-[160px] text-[11px] font-mono text-slate-200 hover:text-white cursor-pointer" 
+                                title={`Full Destination: ${w.walletAddress || w.details || 'N/A'}`}
+                              >
+                                {formatMaskedDestination(w.details || w.walletAddress || '', w.method, w.blockchain)}
                               </p>
                             </td>
  

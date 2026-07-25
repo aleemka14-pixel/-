@@ -22,6 +22,7 @@ import {
   XCircle, 
   Clock,
   AlertCircle,
+  Check,
   Search,
   Menu,
   X,
@@ -53,7 +54,10 @@ import {
   Megaphone,
   Sliders,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Wrench,
+  Smartphone,
+  Coins
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
@@ -67,6 +71,7 @@ import { VercelDiagnosticModal } from './components/VercelDiagnosticModal.tsx';
 import { CurrencySelector } from './components/CurrencySelector.tsx';
 import { LeaderboardView } from './components/LeaderboardView.tsx';
 import { AdminActiveUsersView } from './components/AdminActiveUsersView.tsx';
+import { MatrixBackground } from './components/MatrixBackground.tsx';
 import {
   SUPPORTED_CURRENCIES,
   DEFAULT_RATES,
@@ -676,8 +681,16 @@ export default function App() {
             await updateDoc(userRef, { lastActive: now, updatedAt: now });
             console.log(`Updated lastActive timestamp for user: ${user.uid}`);
           }
-        } catch (e) {
-          console.error("Error verifying or auto-creating player:", e);
+        } catch (e: any) {
+          const msg = String(e?.message || e).toLowerCase();
+          if (msg.includes('quota') || msg.includes('resource-exhausted') || e?.code === 'resource-exhausted') {
+            if (typeof window !== 'undefined') {
+              (window as any).__firestoreQuotaExceeded = true;
+              window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: e?.message || String(e) } }));
+            }
+          } else {
+            console.error("Error verifying or auto-creating player:", e);
+          }
         }
       };
       verifyAndCreatePlayer();
@@ -726,11 +739,13 @@ export default function App() {
 
     // Config Listener
     const handleListenerError = (context: string, err: any) => {
-      const msg = String(err.message || err).toLowerCase();
+      const msg = String(err?.message || err).toLowerCase();
       const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded');
       if (isQuota) {
-        console.warn(`[Firebase Quota Exceeded] ${context}:`, err.message || err);
-        window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err.message || String(err) } }));
+        if (typeof window !== 'undefined') {
+          (window as any).__firestoreQuotaExceeded = true;
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
+        }
       } else {
         console.error(`${context}:`, err);
       }
@@ -982,11 +997,14 @@ export default function App() {
       console.log('Players fetched:', rawPlayers.length);
       mergeAndSetPlayers();
     }, (err) => {
-      console.error('[PRODUCTION DIAGNOSTICS 4] Firestore permission / listener error on players collection:', {
-        code: err.code,
-        message: err.message,
-        name: err.name,
-      });
+      const msg = String(err?.message || err).toLowerCase();
+      if (!msg.includes('quota') && !msg.includes('resource-exhausted') && err?.code !== 'resource-exhausted') {
+        console.error('[PRODUCTION DIAGNOSTICS 4] Firestore permission / listener error on players collection:', {
+          code: err.code,
+          message: err.message,
+          name: err.name,
+        });
+      }
       rawPlayers = [];
       mergeAndSetPlayers();
       handleListenerError('Failed to listen to players collection', err);
@@ -1781,6 +1799,22 @@ export default function App() {
       
       const batch = writeBatch(db);
 
+      // Find and mark pending bet transactions as completed
+      try {
+        const pendingTxQuery = query(
+          collection(db, 'transactions'),
+          where('playerId', '==', playerId),
+          where('type', '==', 'bet'),
+          where('status', '==', 'pending')
+        );
+        const pendingTxSnap = await getDocs(pendingTxQuery);
+        pendingTxSnap.docs.forEach(d => {
+          batch.update(d.ref, { status: 'completed' });
+        });
+      } catch (err) {
+        console.warn('Could not query pending bet transactions:', err);
+      }
+
       if (isWin) {
         const winTxnId = Math.random().toString(36).substr(2, 9);
         const exRate = currentRates[settlementCurrency] || 1.0;
@@ -1852,6 +1886,21 @@ export default function App() {
         const amount = player.pendingBet.amount;
         const isWin = outcome === 'win';
         const winAmount = amount * 2;
+
+        try {
+          const pendingTxQuery = query(
+            collection(db, 'transactions'),
+            where('playerId', '==', player.id),
+            where('type', '==', 'bet'),
+            where('status', '==', 'pending')
+          );
+          const pendingTxSnap = await getDocs(pendingTxQuery);
+          pendingTxSnap.docs.forEach(d => {
+            batch.update(d.ref, { status: 'completed' });
+          });
+        } catch (err) {
+          console.warn('Could not query pending transactions in resultAllBets:', err);
+        }
 
         if (isWin) {
           const winTxnId = Math.random().toString(36).substr(2, 9);
@@ -2818,26 +2867,40 @@ export default function App() {
         </div>
       )}
       {/* Navbar / Mobile Header */}
-      <header className="lg:hidden flex items-center justify-between p-4 border-b border-white/10 sticky top-0 bg-[#0a0a0a]/80 backdrop-blur-md z-50">
-        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
-          <Menu className="w-6 h-6" />
+      <header className="lg:hidden flex items-center justify-between px-4 py-3 sticky top-0 bg-black/40 backdrop-blur-md border-b border-white/10 z-50 shadow-[0_4px_25px_rgba(0,0,0,0.5)]">
+        <button 
+          onClick={() => setIsSidebarOpen(true)} 
+          className="w-11 h-11 border border-[#00d5ff]/50 bg-black/70 rounded-xl flex items-center justify-center text-white shadow-[0_0_15px_rgba(0,213,255,0.35)] hover:scale-105 active:scale-95 transition-all cursor-pointer"
+        >
+          <Menu className="w-5 h-5 text-white" />
         </button>
+
         <div className="flex flex-col items-center">
-          <img src="/matrix_logo.png" alt="Matrix Logo" className="h-8 w-auto object-contain mb-1" />
-          <AnimatedBalance balance={activePlayer?.balance ?? 0} size="sm" preferredCurrency={preferredCurrency} rates={exchangeRates} />
+          <span className="font-matrix text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#ffe600] via-[#ff5500] to-[#ff0033] drop-shadow-[0_0_12px_rgba(255,80,0,0.8)] leading-none mb-1">
+            Matrix
+          </span>
+          {/* Balance Pill */}
+          <div 
+            onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
+            className="rounded-full border border-[#00d5ff]/50 bg-black/80 px-4 py-1 flex items-center gap-2 shadow-[0_0_15px_rgba(0,213,255,0.3)] cursor-pointer hover:border-cyan-400 transition-all"
+          >
+            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-red-500 to-red-700 border border-amber-300 flex items-center justify-center text-amber-300 font-black text-xs shadow-[0_0_8px_rgba(255,0,0,0.9)] shrink-0">
+              ₹
+            </div>
+            <AnimatedBalance balance={activePlayer?.balance ?? 0} size="sm" preferredCurrency={preferredCurrency} rates={exchangeRates} onSelectCurrency={handleSelectCurrency} />
+          </div>
         </div>
+
         <button 
           onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
-          className="p-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl transition-all relative"
+          className="w-11 h-11 border border-red-500/60 bg-black/70 rounded-xl flex items-center justify-center text-[#ffc700] shadow-[0_0_15px_rgba(255,0,68,0.35)] hover:scale-105 active:scale-95 transition-all cursor-pointer relative"
         >
-          <Wallet className="w-5 h-5 text-emerald-400" />
-          {activePlayer?.balance > 0 && (
-            <div className="absolute top-1 right-1 w-2 h-2 bg-emerald-500 rounded-full border border-[#0a0a0a]" />
-          )}
+          <Wallet className="w-5 h-5 text-[#ffc700]" />
+          <div className="w-3 h-3 bg-red-600 rounded-full border border-black absolute top-1 right-1 shadow-[0_0_8px_rgba(255,0,0,0.9)]" />
         </button>
       </header>
 
-      <div className="flex">
+      <div className="flex min-w-0 w-full max-w-full overflow-x-hidden">
         {/* Sidebar */}
         <aside className={`
           fixed inset-y-0 left-0 z-50 w-72 bg-[#0d0d0d] border-r border-white/5 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0
@@ -2965,66 +3028,39 @@ export default function App() {
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 min-h-screen">
+        <main className="flex-1 min-h-screen min-w-0 w-full max-w-full overflow-x-hidden">
           {/* Top Bar for Desktop */}
-          <div className="hidden lg:grid grid-cols-3 items-center p-6 max-w-5xl mx-auto">
-            <div className="flex justify-start">
-              {/* Left empty or for other elements */}
-            </div>
-            
-            <div className="flex justify-center">
-              <motion.div 
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="flex flex-col items-center gap-3"
+          <div className="hidden lg:flex items-center justify-between p-6 max-w-xl mx-auto">
+            <button 
+              onClick={() => setIsSidebarOpen(true)} 
+              className="w-12 h-12 border border-gradient-to-r from-red-500/60 via-orange-500/50 to-amber-500/60 bg-black/70 rounded-2xl flex items-center justify-center text-white shadow-[0_0_15px_rgba(255,0,68,0.4)] hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            >
+              <Menu className="w-6 h-6 text-white" />
+            </button>
+
+            <div className="flex flex-col items-center">
+              <span className="font-matrix text-4xl text-[#ffc700] text-glow-gold font-bold tracking-wide leading-none mb-1.5">
+                Matrix
+              </span>
+              {/* Balance Pill */}
+              <div 
+                onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
+                className="rounded-full border border-[#ff2a00]/70 bg-[#12040b]/90 px-4 py-1.5 flex items-center gap-2.5 shadow-[0_0_18px_rgba(255,0,68,0.4)] cursor-pointer hover:border-[#ff5500] transition-all"
               >
-                <motion.img 
-                  whileHover={{ scale: 1.15 }}
-                  animate={{ 
-                    y: [0, -4, 0],
-                  }}
-                  transition={{
-                    y: {
-                      duration: 3,
-                      repeat: Infinity,
-                      ease: "easeInOut"
-                    },
-                    type: "spring", 
-                    stiffness: 300, 
-                    damping: 15
-                  }}
-                  src="/matrix_logo.png" 
-                  alt="Matrix Logo" 
-                  className="h-24 w-auto object-contain filter drop-shadow-[0_0_20px_rgba(132,204,22,0.6)] cursor-pointer" 
-                />
-                <AnimatedBalance balance={activePlayer?.balance ?? 0} size="md" preferredCurrency={preferredCurrency} rates={exchangeRates} />
-              </motion.div>
+                <div className="w-6 h-6 rounded-full bg-red-600 border border-red-400 flex items-center justify-center text-white font-black text-xs shadow-[0_0_10px_rgba(255,0,0,0.8)] shrink-0">
+                  ₹
+                </div>
+                <AnimatedBalance balance={activePlayer?.balance ?? 0} size="md" preferredCurrency={preferredCurrency} rates={exchangeRates} onSelectCurrency={handleSelectCurrency} />
+              </div>
             </div>
 
-            <div className="flex justify-end gap-3">
-              <button 
-                onClick={async () => {
-                  try {
-                    await logout();
-                  } catch (e) {
-                    console.error("Logout failed:", e);
-                  }
-                }}
-                className="p-3 bg-white/5 hover:bg-rose-500/10 border border-white/5 rounded-2xl transition-all hover:scale-110 text-slate-500 hover:text-rose-500"
-                title="Sign Out"
-              >
-                <LogOut className="w-6 h-6" />
-              </button>
-              <button 
-                onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
-                className="p-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl transition-all hover:scale-110 relative"
-              >
-                <Wallet className="w-6 h-6 text-emerald-400" />
-                {currentPlayer?.balance > 0 && (
-                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#0a0a0a]" />
-                )}
-              </button>
-            </div>
+            <button 
+              onClick={() => { setActiveTab('wallet'); playSound('CLICK'); }}
+              className="w-12 h-12 border border-[#ffb700]/60 bg-black/70 rounded-2xl flex items-center justify-center text-[#ffc700] shadow-[0_0_15px_rgba(255,183,0,0.4)] hover:scale-105 active:scale-95 transition-all cursor-pointer relative"
+            >
+              <Wallet className="w-6 h-6 text-[#ffc700]" />
+              <div className="w-3.5 h-3.5 bg-red-600 rounded-full border-2 border-black absolute top-1 right-1 shadow-[0_0_8px_rgba(255,0,0,0.9)]" />
+            </button>
           </div>
 
           <div className={`${activeTab === 'admin' ? 'max-w-7xl' : 'max-w-5xl'} mx-auto p-4 lg:px-10 lg:pb-10 pt-0 w-full overflow-x-hidden`}>
@@ -3658,357 +3694,391 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
 
   const lotteryTimerStr = formatLotteryTimerStr(lotterySecondsLeft);
 
+  const activePendingBet = currentPlayer?.pendingBet || (
+    state.transactions?.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')
+      ? {
+          amount: state.transactions.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')!.amount,
+          timestamp: state.transactions.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')!.timestamp
+        }
+      : null
+  );
+
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 gap-8">
-        {/* Game Main Area */}
-        <div className="bg-[#0b0b0b] border border-white/5 rounded-[2rem] p-8 lg:p-12 text-center relative overflow-hidden shadow-2xl flex flex-col justify-center min-h-[500px]">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent opacity-30" />
-          
-          {/* Next Lottery Result Timer & Total Bets Placed */}
-          <div className="mb-6 flex flex-col gap-3 justify-center mx-auto w-full max-w-xs relative z-20">
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`w-full border rounded-2xl p-4 flex items-center justify-between shadow-2xl relative transition-all duration-300 ${
-                state.lotteryTimerActive && lotterySecondsLeft > 0
-                  ? 'bg-amber-500/5 border-amber-500/15 shadow-amber-500/[0.02]' 
-                  : 'bg-amber-500/5 border-amber-500/15 shadow-amber-500/[0.02]'
-              }`}
-            >
-              {/* Glowing decorative accent */}
-              <div className={`absolute inset-x-0 bottom-0 h-[2px] bg-gradient-to-r from-transparent to-transparent transition-all duration-300 ${
-                state.lotteryTimerActive && lotterySecondsLeft > 0
-                  ? 'via-amber-500/30' 
-                  : 'via-amber-500/30'
-              }`} />
-              
+    <div className="relative space-y-6 max-w-xl mx-auto z-10 pb-12 select-none">
+      <MatrixBackground />
+
+      {/* Main Game Container */}
+      <div className="relative bg-transparent text-center space-y-6 overflow-visible">
+        {/* Subtle Ambient Light Accents */}
+        <div className="absolute -top-24 -left-24 w-64 h-64 bg-red-600/20 rounded-full blur-[80px] pointer-events-none" />
+        <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-cyan-500/20 rounded-full blur-[80px] pointer-events-none" />
+
+        {/* STAT CARDS SECTION */}
+        <div className="space-y-3 mb-8 relative z-20">
+          {/* Card 1: NEXT LOTTERY RESULT */}
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_20px_rgba(255,50,0,0.25)] transition-all hover:shadow-[0_0_30px_rgba(255,50,0,0.4)]"
+          >
+            <div className="bg-[#0c0816]/95 backdrop-blur-md p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="relative flex items-center justify-center">
-                  <span className={`absolute inline-flex h-3 w-3 rounded-full opacity-60 animate-ping transition-colors duration-300 ${
-                    state.lotteryTimerActive && lotterySecondsLeft > 0 ? 'bg-amber-400' : 'bg-amber-400'
-                  }`} />
-                  <span className={`relative inline-flex rounded-full h-2.5 w-2.5 transition-colors duration-300 ${
-                    state.lotteryTimerActive && lotterySecondsLeft > 0 ? 'bg-amber-500' : 'bg-amber-500'
-                  }`} />
-                </div>
-                <div className="text-left w-2/3 shrink-0">
-                  <span className={`text-[9px] uppercase font-black tracking-wider block transition-colors duration-300 ${
-                    state.lotteryTimerActive && lotterySecondsLeft > 0 ? 'text-amber-400' : 'text-amber-500'
-                  }`}>NEXT LOTTERY RESULT</span>
-                  <p className="text-xs font-bold text-slate-300">
+                <div className="w-3 h-3 rounded-full bg-[#ffb700] shadow-[0_0_12px_#ffb700] animate-pulse" />
+                <div className="text-left">
+                  <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#ffb700] block">NEXT LOTTERY</span>
+                  <span className="text-xs font-black uppercase tracking-wider text-white block">RESULT</span>
+                  <p className="text-[11px] font-bold text-slate-300 mt-0.5">
                     {state.lotteryTimerActive && lotterySecondsLeft > 0 ? 'Drawing Soon' : 'Result Pending'}
                   </p>
                 </div>
               </div>
-              
+
               <div className="flex flex-col items-end">
-                <div className={`flex items-center gap-1.5 px-2.5 py-1 border rounded-xl transition-all duration-300 ${
-                  state.lotteryTimerActive && lotterySecondsLeft > 0
-                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' 
-                    : 'bg-amber-500/10 border-amber-500/20 text-white'
-                }`}>
-                  <Clock className={`w-3.5 h-3.5 transition-all duration-300 ${
-                    state.lotteryTimerActive && lotterySecondsLeft > 0 ? 'text-amber-400 animate-pulse' : 'text-amber-400'
-                  }`} />
-                  <span className="font-mono text-sm sm:text-base font-black leading-none text-amber-400">
-                    {lotteryTimerStr}
-                  </span>
+                <div className="flex items-center gap-2 px-3 py-1.5 border border-[#ff2a00] bg-[#1d070b]/90 rounded-xl text-[#ffcc00] shadow-[0_0_12px_rgba(255,0,68,0.4)]">
+                  <Clock className="w-4 h-4 text-[#ffcc00] animate-pulse" />
+                  <span className="font-mono text-base font-black tracking-wider">{lotteryTimerStr}</span>
                 </div>
-                {/* Horizontal time bar indicator */}
-                <div className="w-[64px] bg-white/5 h-1 rounded-full overflow-hidden mt-1.5">
+                {/* Yellow Progress bar */}
+                <div className="w-[84px] bg-gray-900/80 h-1.5 rounded-full overflow-hidden mt-1.5 border border-white/5">
                   <div 
-                    className={`h-full transition-all duration-1000 ease-linear ${
-                      state.lotteryTimerActive && lotterySecondsLeft > 0
-                        ? lotterySecondsLeft > 60 
-                          ? 'bg-amber-400' 
-                          : 'bg-amber-500 animate-pulse'
-                        : 'bg-amber-500'
-                    }`}
-                    style={{ width: `${state.lotteryTimerActive && lotterySecondsLeft > 0 ? (lotterySecondsLeft / (state.lotteryTimerDuration || 300)) * 100 : 0}%` }}
+                    className="h-full bg-gradient-to-r from-[#ffb700] via-[#ff7700] to-[#ff0033] transition-all duration-1000 ease-linear shadow-[0_0_8px_#ffb700]"
+                    style={{ width: `${state.lotteryTimerActive && lotterySecondsLeft > 0 ? (lotterySecondsLeft / (state.lotteryTimerDuration || 300)) * 100 : 75}%` }}
                   />
                 </div>
               </div>
-            </motion.div>
+            </div>
+          </motion.div>
 
-            {/* Total Amount of Bets Placed */}
+          {/* Card 2: TOTAL BETS PLACED */}
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+            className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#ff0033] via-[#ff7700] to-[#ffb700] shadow-[0_0_20px_rgba(255,50,0,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,80,0,0.35)]"
+          >
+            <div className="bg-[#0c0816]/95 backdrop-blur-md p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_12px_rgba(255,100,0,0.4)] shrink-0">
+                  <TrendingUp className="w-5 h-5 text-[#ffcc00]" />
+                </div>
+                <div className="text-left">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-[#ffb700] block">TOTAL BETS PLACED</span>
+                  <p className="text-xs font-semibold text-[#8a9cb5]">All Players Pool</p>
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] px-3.5 py-1.5 bg-[#140a02]/90 border border-[#ffb700]/40 rounded-xl shadow-[0_0_12px_rgba(255,180,0,0.25)]">
+                  {formatBalanceLocal(
+                    Math.max(
+                      state.players?.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) || 0,
+                      state.transactions?.filter(t => t.type === 'bet' && t.status === 'pending').reduce((sum, t) => sum + (t.amount || 0), 0) || 0
+                    )
+                  )}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Card 3: PLAYERS WON */}
+          {(state.isPlayersWonShown ?? true) && (
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
-              className="w-full bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4 flex items-center justify-between shadow-2xl relative overflow-hidden group hover:border-amber-500/30 transition-all duration-300 animate-pulse"
-              style={{ animationDuration: '4s' }}
+              className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff0055] to-[#ffb700] shadow-[0_0_20px_rgba(255,0,68,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,0,68,0.35)]"
             >
-              <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/[0.02] to-amber-500/0" />
-              <div className="absolute inset-x-0 bottom-0 h-[2px] bg-gradient-to-r from-transparent via-amber-500/30 to-transparent" />
-              
-              <div className="flex items-center gap-3 relative z-10">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-                  <TrendingUp className="w-4 h-4 text-amber-400" />
-                </div>
-                <div className="text-left">
-                  <span className="text-[9px] uppercase font-black tracking-wider block text-amber-400">TOTAL BETS PLACED</span>
-                  <p className="text-[10px] text-slate-500 font-medium">All Players Pool</p>
-                </div>
-              </div>
-
-              <div className="flex flex-col items-end relative z-10">
-                <span className="font-mono text-base sm:text-lg font-black text-amber-400 drop-shadow-[0_0_10px_rgba(245,158,11,0.2)]">
-                  {formatBalanceLocal(state.players?.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) || 0)}
-                </span>
-              </div>
-            </motion.div>
-
-            {/* Players Won */}
-            {(state.isPlayersWonShown ?? true) && (
-              <motion.div 
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-                className="w-full bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4 flex items-center justify-between shadow-2xl relative overflow-hidden group hover:border-amber-500/30 transition-all duration-300 animate-pulse"
-                style={{ animationDuration: '5s' }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/[0.02] to-amber-500/0" />
-                <div className="absolute inset-x-0 bottom-0 h-[2px] bg-gradient-to-r from-transparent via-amber-500/30 to-transparent" />
-                
-                <div className="flex items-center gap-3 relative z-10">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-                    <Trophy className="w-4 h-4 text-amber-400" />
+              <div className="bg-[#0c0816]/95 backdrop-blur-md p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_12px_rgba(255,100,0,0.4)] shrink-0">
+                    <Trophy className="w-5 h-5 text-[#ffcc00]" />
                   </div>
                   <div className="text-left">
-                    <span className="text-[9px] uppercase font-black tracking-wider block text-amber-400">PLAYERS WON</span>
-                    <p className="text-[10px] text-slate-500 font-medium">Double/Nothing Winners</p>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-[#ffb700] block">PLAYERS WON</span>
+                    <p className="text-xs font-semibold text-[#8a9cb5]">Double/Nothing Winners</p>
                   </div>
                 </div>
 
-                <div className="flex flex-col items-end relative z-10">
-                  <span className="font-mono text-base sm:text-lg font-black text-amber-400 drop-shadow-[0_0_10px_rgba(245,158,11,0.2)]">
-                    {state.playersWonCount ?? 142}
+                <div className="flex items-center">
+                  <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] px-4 py-1.5 bg-[#140a02]/90 border border-[#ff2a00]/40 rounded-xl shadow-[0_0_12px_rgba(255,0,68,0.3)]">
+                    {state.playersWonCount ?? 1215}
                   </span>
                 </div>
-              </motion.div>
-            )}
-          </div>
-
-          <h2 className="text-4xl lg:text-5xl font-display font-bold mb-4 tracking-tight">Double Your <span className="text-emerald-400">Cash</span></h2>
-          <p className="text-slate-400 mb-12 max-w-sm mx-auto">Enter an amount and try your luck. High risk, high reward.</p>
-
-          <div className="max-w-xs mx-auto w-full space-y-8 relative">
-            {/* Available Balance HUD inside GameView */}
-            <div className="relative flex justify-center mb-2">
-              <motion.div 
-                animate={
-                  flashType === 'win' 
-                    ? { scale: [1, 1.15, 1], borderColor: ['rgba(255,255,255,0.05)', 'rgba(52,211,153,0.5)', 'rgba(255,255,255,0.05)'], backgroundColor: ['rgba(255,255,255,0)', 'rgba(16,185,129,0.1)', 'rgba(255,255,255,0)'] }
-                    : flashType === 'lose'
-                    ? { scale: [1, 0.95, 1], borderColor: ['rgba(255,255,255,0.05)', 'rgba(239,68,68,0.5)', 'rgba(255,255,255,0.05)'], backgroundColor: ['rgba(255,255,255,0)', 'rgba(239,68,68,0.1)', 'rgba(255,255,255,0)'] }
-                    : {}
-                }
-                transition={{ duration: 0.8, ease: "easeInOut" }}
-                className="flex items-center gap-3 px-5 py-2.5 rounded-2xl bg-white/[0.02] border border-white/5 backdrop-blur-sm shadow-xl relative z-10"
-              >
-                <div className={`p-1.5 rounded-lg transition-colors duration-300 ${
-                  flashType === 'win' ? 'bg-emerald-500/20 text-emerald-400' : 
-                  flashType === 'lose' ? 'bg-rose-500/20 text-rose-400' : 
-                  'bg-white/5 text-slate-400'
-                }`}>
-                  <Wallet className="w-4 h-4" />
-                </div>
-                <div className="text-left">
-                  <p className="text-[9px] uppercase tracking-widest font-black text-slate-500">Vault Balance</p>
-                  <motion.p 
-                    animate={
-                      flashType === 'win' 
-                        ? { color: ['#ffffff', '#34d399', '#ffffff'] }
-                        : flashType === 'lose'
-                        ? { color: ['#ffffff', '#f87171', '#ffffff'] }
-                        : {}
-                    }
-                    className="text-lg font-mono font-bold text-white transition-colors duration-300"
-                  >
-                    {formatBalanceLocal(currentBalance)}
-                  </motion.p>
-                </div>
-              </motion.div>
-
-              <AnimatePresence>
-                {floatingIndicator && (
-                  <motion.div
-                    key={floatingIndicator.id}
-                    initial={{ opacity: 0, y: 15, scale: 0.8 }}
-                    animate={{ opacity: 1, y: -45, scale: 1.1 }}
-                    exit={{ opacity: 0, y: -70, scale: 0.9 }}
-                    transition={{ duration: 1.2, ease: "easeOut" }}
-                    className={`absolute z-20 font-mono font-black text-xs px-3 py-1 rounded-full border shadow-lg filter drop-shadow-sm ${
-                      floatingIndicator.type === 'gain' 
-                        ? 'bg-emerald-950/90 text-emerald-400 border-emerald-500/30' 
-                        : 'bg-rose-950/90 text-rose-400 border-rose-500/30'
-                    }`}
-                  >
-                    {floatingIndicator.amount}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            <AnimatePresence>
-              {result === 'win' && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: [0, 0.2, 0] }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="absolute inset-0 bg-emerald-500 rounded-3xl pointer-events-none z-0"
-                />
-              )}
-            </AnimatePresence>
-
-            <div className="relative z-10 space-y-4">
-              <div className="flex justify-between items-end mb-2">
-                <div className="flex flex-col">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Bet Amount</label>
-                  {state.isBetLimitEnabled && (
-                    <span className="text-[8px] text-slate-600 uppercase font-bold tracking-tighter">Max Bet: {formatBalanceLocal(state.maxBet)}</span>
-                  )}
-                </div>
-                <span className="text-2xl font-mono font-bold text-emerald-400">{formatBalanceLocal(betAmount)}</span>
               </div>
-                <input 
-                type="range" 
-                min={minLocalBet} 
-                max={Math.max(minLocalBet, maxBetPossible * rate)}
-                step={minLocalBet}
-                value={isZeroDecimal ? Math.round(betAmount * rate) : Math.round(betAmount * rate * 100) / 100} 
-                onChange={(e) => {
-                  const localVal = Number(e.target.value);
-                  setBetAmount(localVal / rate);
-                  playSound('CLICK'); 
-                }}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={() => setIsDragging(false)}
-                onTouchStart={() => setIsDragging(true)}
-                onTouchEnd={() => setIsDragging(false)}
-                onMouseLeave={() => setIsDragging(false)}
-                onTouchCancel={() => setIsDragging(false)}
-                disabled={isPlacingBet || state.isBettingClosed}
-                className={`w-full h-2 bg-white/5 rounded-lg appearance-none cursor-pointer accent-emerald-500 disabled:opacity-50 transition-all duration-300 ${
-                  isDragging 
-                    ? 'is-dragging shadow-[0_0_25px_rgba(16,185,129,0.5)] border border-emerald-500/30' 
-                    : ''
-                }`}
-              />
-            </div>
+            </motion.div>
+          )}
+        </div>
 
-            <div className="relative space-y-6">
-               {currentPlayer?.pendingBet && (
-                 <motion.div 
-                   initial={{ opacity: 0, scale: 0.95 }}
-                   animate={{ opacity: 1, scale: 1 }}
-                   className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/15 shadow-2xl relative overflow-hidden text-center"
-                 >
-                   <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-emerald-500/30 to-transparent" />
-                   <div className="flex flex-col items-center justify-center space-y-2.5">
-                     <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 animate-pulse">
-                       <CheckCircle2 className="w-5 h-5" />
-                     </div>
-                     <span className="text-[10px] font-black tracking-[0.2em] text-emerald-400 uppercase">Bet Placed</span>
-                     <p className="text-sm font-black text-white">
-                       {formatBalanceLocal(currentPlayer.pendingBet.amount)} Active Bet
-                     </p>
-                     <span className="text-[10px] text-slate-500 font-medium">Awaiting Live Settle. Outcome will be displayed shortly.</span>
-                   </div>
-                 </motion.div>
-               )}
-
-               {state.isBettingClosed && (
-                 <motion.div 
-                   initial={{ opacity: 0, scale: 0.95, y: 5 }}
-                   animate={{ opacity: [1, 0.9, 1], scale: 1, y: 0 }}
-                   className="p-5 rounded-2xl bg-amber-500/5 border border-amber-500/20 shadow-xl relative overflow-hidden text-center z-10 font-sans"
-                 >
-                   <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-amber-500/30 to-transparent" />
-                   <div className="flex flex-col items-center justify-center space-y-2">
-                     <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 animate-pulse">
-                       <Lock className="w-5 h-5" />
-                     </div>
-                     <span className="text-[9px] font-black tracking-widest text-[#f59e0b] uppercase">Betting Closed</span>
-                     <p className="text-xs font-bold text-white leading-relaxed">
-                       Betting closed — Please wait for the next round.
-                     </p>
-                     <span className="text-[9px] text-slate-500 font-medium font-sans">All inputs frozen. Your current stats and balance are unaffected.</span>
-                   </div>
-                 </motion.div>
-               )}
-
-               <button 
-                onClick={handlePlay}
-                disabled={isPlacingBet || state.isBettingClosed || (currentPlayer?.balance ?? 0) < betAmount || betAmount <= 0}
-                className={`
-                  w-full py-5 rounded-2xl text-xl font-bold transition-all duration-300 relative z-10 border-0 cursor-pointer
-                  ${isPlacingBet || state.isBettingClosed || (currentPlayer?.balance ?? 0) < betAmount || betAmount <= 0 
-                    ? 'bg-white/5 text-slate-500 cursor-not-allowed' 
-                    : 'bg-emerald-500 text-black hover:transform hover:scale-[1.02] shadow-2xl shadow-emerald-500/20'
-                  }
-                  ${isMaxBet && !isPlacingBet && !state.isBettingClosed 
-                    ? 'animate-pulse shadow-[0_0_25px_rgba(16,185,129,0.5)] border border-emerald-400/30' 
-                    : ''
-                  }
-                `}
-              >
-                {isPlacingBet 
-                  ? 'PLACING BET...' 
-                  : state.isBettingClosed 
-                  ? 'BETTING CLOSED' 
-                  : currentPlayer?.pendingBet
-                  ? 'ADD TO BET'
-                  : 'DOUBLE OR DONATE'}
-              </button>
-
-              <div className="flex items-center justify-center gap-2.5 text-[10px] font-black tracking-wider text-slate-400 uppercase py-2.5 bg-white/[0.02] border border-white/5 rounded-2xl px-5 select-none shadow-sm transition-all duration-300">
-                <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500/25 animate-pulse shrink-0" />
-                <span>Your Lost Amount Will Be Donated To Poor</span>
-              </div>
-
-              <div className="flex items-start gap-3 text-[9px] font-extrabold tracking-widest text-amber-500/90 uppercase py-3.5 bg-amber-500/[0.02] border border-amber-500/10 rounded-2xl px-5 select-none shadow-sm transition-all duration-300 text-left">
-                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <span className="leading-normal">Don't logout with balance in the account. We are not responsible for your loss.</span>
-              </div>
-              
-              <AnimatePresence mode="wait">
-                {result && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    className="flex flex-col items-center whitespace-nowrap z-0 py-4"
-                  >
-                    {result === 'win' ? (
-                      <span className="font-black text-6xl italic tracking-tighter text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.4)] animate-pulse">
-                        WINNER!
-                      </span>
-                    ) : (
-                      <div className="flex flex-col items-center">
-                        <span className="font-black text-7xl italic tracking-tighter text-red-600 mb-2 drop-shadow-[0_0_30px_rgba(220,38,38,0.4)]">
-                          DONATED
-                        </span>
-                        <span className="text-white font-extrabold tracking-[0.1em] text-xs uppercase text-center max-w-[250px] leading-relaxed drop-shadow-md">
-                          Your Money Has been Donated to The Poor
-                        </span>
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-            
-            {(currentPlayer?.balance ?? 0) < 1 && (
-               <div className="flex items-center justify-center gap-2 text-rose-400 text-xs bg-rose-400/10 py-3 rounded-xl border border-rose-400/20">
-                 <AlertCircle className="w-4 h-4" />
-                 <span>Insufficient balance in vault.</span>
-               </div>
-            )}
+        {/* HERO TITLE SECTION */}
+        <div className="mb-8 relative z-10">
+          <h2 className="text-3xl sm:text-4xl font-black italic tracking-widest uppercase text-white drop-shadow-[0_0_15px_rgba(0,180,255,0.6)] inline-flex items-center flex-wrap justify-center gap-2">
+            <span>DOUBLE YOUR</span>
+            <span className="font-cash text-4xl sm:text-5xl text-[#ffc700] text-glow-gold drop-shadow-[0_0_25px_rgba(255,50,0,0.9)] not-italic tracking-normal">
+              CASH
+            </span>
+          </h2>
+          <div className="mt-2 text-xs sm:text-sm font-semibold text-slate-300/90 space-y-0.5">
+            <p>Enter an amount and try your luck.</p>
+            <p className="text-[#ffcc00] font-bold text-glow-gold">High risk, high reward.</p>
           </div>
         </div>
+
+        {/* BANK VAULT & VAULT BALANCE MODULE */}
+        <div className="mb-8 relative z-10">
+          <div className="flex items-center justify-between bg-[#070b19]/90 border border-[#00d5ff]/40 rounded-2xl p-4 sm:p-5 shadow-[0_0_25px_rgba(0,213,255,0.2)] relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-36 h-36 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="flex items-center gap-3.5 sm:gap-5">
+              {/* 3D Vault Door Image */}
+              <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0 flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full bg-gradient-radial from-cyan-400/30 via-red-600/20 to-transparent blur-md animate-lightning" />
+                <img 
+                  src="/src/assets/images/matrix_vault_door_1784989320760.jpg" 
+                  alt="Vault Door" 
+                  className="w-full h-full object-contain rounded-2xl filter drop-shadow-[0_0_15px_rgba(0,229,255,0.6)] relative z-10"
+                />
+              </div>
+
+              {/* Vault Balance Title & Amount */}
+              <div className="flex flex-col text-left">
+                <span className="text-[11px] sm:text-xs font-mono font-black uppercase text-[#00e5ff] tracking-[0.2em] block drop-shadow-[0_0_8px_rgba(0,229,255,0.8)]">
+                  VAULT BALANCE
+                </span>
+                <motion.div 
+                  animate={
+                    flashType === 'win' 
+                      ? { scale: [1, 1.08, 1], color: ['#ffffff', '#34d399', '#ffffff'] }
+                      : flashType === 'lose'
+                      ? { scale: [1, 0.95, 1], color: ['#ffffff', '#f87171', '#ffffff'] }
+                      : {}
+                  }
+                  transition={{ duration: 0.6 }}
+                  className="text-2xl sm:text-3xl font-mono font-black text-white tracking-tight drop-shadow-[0_0_12px_rgba(255,255,255,0.5)] mt-0.5"
+                >
+                  {formatBalanceLocal(currentBalance)}
+                </motion.div>
+              </div>
+            </div>
+
+            {/* Integrated Shield/Rupee Badge on Right */}
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-[#52000b] border-2 border-red-500 shadow-[0_0_15px_rgba(255,0,0,0.7)] flex items-center justify-center text-[#ffc700] font-black text-lg sm:text-xl shrink-0">
+              ₹
+            </div>
+          </div>
+
+          <AnimatePresence>
+            {floatingIndicator && (
+              <motion.div
+                key={floatingIndicator.id}
+                initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                animate={{ opacity: 1, y: -40, scale: 1.15 }}
+                exit={{ opacity: 0, y: -65, scale: 0.9 }}
+                transition={{ duration: 1.2, ease: "easeOut" }}
+                className={`absolute left-1/2 -translate-x-1/2 z-30 font-mono font-black text-xs px-3.5 py-1 rounded-full border shadow-xl ${
+                  floatingIndicator.type === 'gain' 
+                    ? 'bg-emerald-950/90 text-emerald-400 border-emerald-500/40 shadow-emerald-500/30' 
+                    : 'bg-rose-950/90 text-rose-400 border-rose-500/40 shadow-rose-500/30'
+                }`}
+              >
+                {floatingIndicator.amount}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* BET AMOUNT CONTROL ROW & CUSTOM SLIDER */}
+        <div className="mb-8 relative z-10 space-y-3 bg-[#0a0614]/80 border border-amber-500/20 rounded-2xl p-4 sm:p-5 shadow-[0_0_25px_rgba(0,0,0,0.6)]">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-mono font-black text-[#00e5ff] uppercase tracking-[0.2em] block drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]">
+              BET AMOUNT
+            </span>
+            {state.isBetLimitEnabled && (
+              <span className="text-[10px] font-mono text-amber-400 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                MAX: {formatBalanceLocal(state.maxBet || 500)}
+              </span>
+            )}
+          </div>
+
+          {/* Full-width Long Slider */}
+          <div className="relative flex items-center w-full py-2">
+            <input 
+              type="range" 
+              min={minLocalBet} 
+              max={Math.max(minLocalBet, maxBetPossible * rate)}
+              step={minLocalBet}
+              value={isZeroDecimal ? Math.round(betAmount * rate) : Math.round(betAmount * rate * 100) / 100} 
+              onChange={(e) => {
+                const localVal = Number(e.target.value);
+                setBetAmount(localVal / rate);
+                playSound('CLICK'); 
+              }}
+              onMouseDown={() => setIsDragging(true)}
+              onMouseUp={() => setIsDragging(false)}
+              onTouchStart={() => setIsDragging(true)}
+              onTouchEnd={() => setIsDragging(false)}
+              disabled={isPlacingBet || state.isBettingClosed}
+              className="matrix-slider w-full cursor-pointer disabled:opacity-50"
+            />
+          </div>
+
+          {/* Controls & Display Row Below Slider */}
+          <div className="flex items-center justify-between gap-2 pt-1">
+            {/* Quick Adjustment Pills */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => {
+                  const newAmt = Math.max(minLocalBet / rate, betAmount - 100);
+                  setBetAmount(newAmt);
+                  playSound('CLICK');
+                }}
+                disabled={isPlacingBet || state.isBettingClosed}
+                className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white font-mono font-bold text-sm hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
+              >
+                -
+              </button>
+              <button
+                onClick={() => {
+                  const newAmt = Math.min(maxBetPossible, betAmount + 100);
+                  setBetAmount(newAmt);
+                  playSound('CLICK');
+                }}
+                disabled={isPlacingBet || state.isBettingClosed}
+                className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white font-mono font-bold text-sm hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
+              >
+                +
+              </button>
+              <button
+                onClick={() => {
+                  setBetAmount(maxBetPossible);
+                  playSound('CLICK');
+                }}
+                disabled={isPlacingBet || state.isBettingClosed}
+                className="px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-bold text-xs hover:bg-amber-500/30 transition-all cursor-pointer disabled:opacity-40"
+              >
+                MAX
+              </button>
+            </div>
+
+            {/* Golden Value Display Box */}
+            <div className="border-2 border-[#ffb700] bg-[#1a0c02]/95 px-4 py-1.5 rounded-xl shadow-[0_0_18px_rgba(255,183,0,0.5)] shrink-0 min-w-[120px] text-center">
+              <span className="text-lg sm:text-xl font-mono font-black text-[#ffc700] tracking-tight drop-shadow-[0_0_8px_rgba(255,199,0,0.8)]">
+                {formatBalanceLocal(betAmount)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* BET STATUS / LOCK NOTIFICATIONS */}
+        <div className="mb-6 relative z-10 space-y-3">
+          {activePendingBet && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 shadow-[0_0_25px_rgba(16,185,129,0.25)] relative overflow-hidden text-center"
+            >
+              <div className="flex flex-col items-center justify-center space-y-1.5">
+                <div className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 animate-pulse">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <span className="text-xs font-black tracking-[0.2em] text-emerald-400 uppercase">Bet Placed & Pending</span>
+                <p className="text-base font-black text-white">
+                  {formatBalanceLocal(activePendingBet.amount)} Active Bet
+                </p>
+                <span className="text-[11px] text-slate-300 font-medium">Awaiting Live Settle. Outcome will be displayed shortly.</span>
+              </div>
+            </motion.div>
+          )}
+
+          {state.isBettingClosed && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 shadow-xl relative overflow-hidden text-center"
+            >
+              <div className="flex flex-col items-center justify-center space-y-1.5">
+                <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 animate-pulse">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-black tracking-widest text-amber-400 uppercase">Betting Closed</span>
+                <p className="text-xs font-bold text-white">
+                  Betting closed — Please wait for the next round.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </div>
+
+        {/* ACTION MAIN BUTTON: DOUBLE OR DONATE */}
+        <div className="relative z-10 mb-6">
+          <motion.button 
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handlePlay}
+            disabled={isPlacingBet || state.isBettingClosed || (currentPlayer?.balance ?? 0) < betAmount || betAmount <= 0}
+            className={`
+              w-full py-4 sm:py-5 rounded-2xl text-2xl sm:text-3xl font-black italic tracking-wider uppercase transition-all duration-300 relative border-0 cursor-pointer shadow-[0_0_35px_rgba(255,50,0,0.8)]
+              ${isPlacingBet || state.isBettingClosed || (currentPlayer?.balance ?? 0) < betAmount || betAmount <= 0 
+                ? 'bg-gray-800/80 text-slate-500 cursor-not-allowed shadow-none border border-white/5' 
+                : 'bg-gradient-to-r from-[#ffe600] via-[#ff4d00] to-[#e60000] text-black hover:brightness-110 active:brightness-90'
+              }
+            `}
+          >
+            {isPlacingBet 
+              ? 'PLACING BET...' 
+              : state.isBettingClosed 
+              ? 'BETTING CLOSED' 
+              : currentPlayer?.pendingBet
+              ? 'ADD TO BET'
+              : 'DOUBLE OR DONATE'}
+          </motion.button>
+        </div>
+
+        {/* FOOTER CHARITY DISCLOSURE */}
+        <div className="space-y-2 relative z-10">
+          <div className="flex items-center justify-center gap-2 text-[10px] font-black tracking-wider text-slate-300 uppercase py-2.5 bg-white/[0.03] border border-white/10 rounded-2xl px-4 select-none shadow-sm">
+            <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
+            <span>Your Lost Amount Will Be Donated To Poor</span>
+          </div>
+
+          <div className="flex items-start gap-2.5 text-[9px] font-extrabold tracking-widest text-amber-400 uppercase py-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-4 select-none text-left">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span className="leading-normal">Don't logout with balance in the account. We are not responsible for your loss.</span>
+          </div>
+        </div>
+
+        {/* WIN/LOSS RESULT MODAL ANNOUNCEMENT */}
+        <AnimatePresence mode="wait">
+          {result && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.8, y: 10 }}
+              className="mt-6 flex flex-col items-center justify-center p-4 rounded-2xl bg-black/90 border border-white/20 shadow-2xl relative z-30"
+            >
+              {result === 'win' ? (
+                <span className="font-black text-5xl sm:text-6xl italic tracking-tighter text-emerald-400 text-glow-gold animate-pulse">
+                  WINNER!
+                </span>
+              ) : (
+                <div className="flex flex-col items-center">
+                  <span className="font-black text-6xl sm:text-7xl italic tracking-tighter text-red-600 mb-1 text-glow-red">
+                    DONATED
+                  </span>
+                  <span className="text-white font-extrabold tracking-wider text-xs uppercase text-center max-w-[260px] leading-relaxed">
+                    Your Money Has been Donated to The Poor
+                  </span>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {(currentPlayer?.balance ?? 0) < 1 && (
+          <div className="mt-4 flex items-center justify-center gap-2 text-rose-400 text-xs bg-rose-500/10 py-3 rounded-xl border border-rose-500/20 relative z-10">
+            <AlertCircle className="w-4 h-4" />
+            <span>Insufficient balance in vault.</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4232,9 +4302,10 @@ interface AnimatedBalanceProps {
   size?: 'sm' | 'md' | 'lg';
   preferredCurrency?: string;
   rates?: Record<string, number>;
+  onSelectCurrency?: (code: string) => void;
 }
 
-export function AnimatedBalance({ balance, size = 'md', preferredCurrency, rates }: AnimatedBalanceProps) {
+export function AnimatedBalance({ balance, size = 'md', preferredCurrency, rates, onSelectCurrency }: AnimatedBalanceProps) {
   const currentCurrency = preferredCurrency || localStorage.getItem('preferred_currency') || 'USD';
   const currentRates = rates || getCachedRates().rates;
 
@@ -4245,6 +4316,18 @@ export function AnimatedBalance({ balance, size = 'md', preferredCurrency, rates
   const [particles, setParticles] = useState<{ id: number; color: string; size: number; tx: number; ty: number }[]>([]);
   const [isLossPulse, setIsLossPulse] = useState(false);
   const [isWinBounce, setIsWinBounce] = useState(false);
+  const [currencyDropdownOpen, setCurrencyDropdownOpen] = useState(false);
+  const currencyDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (currencyDropdownRef.current && !currencyDropdownRef.current.contains(event.target as Node)) {
+        setCurrencyDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     const prev = prevBalanceRef.current;
@@ -4281,11 +4364,11 @@ export function AnimatedBalance({ balance, size = 'md', preferredCurrency, rates
   };
 
   return (
-    <div className="relative inline-flex items-center gap-2">
+    <div className="relative inline-flex items-center gap-1.5 flex-wrap justify-center">
       {/* USDT Logo Beside Balance */}
       <USDTLogo size={size} />
 
-      <div className="relative">
+      <div className="relative flex items-center gap-1.5">
         <motion.div
           animate={
             isWinBounce 
@@ -4306,6 +4389,54 @@ export function AnimatedBalance({ balance, size = 'md', preferredCurrency, rates
           <span className="text-emerald-400 opacity-90 mr-0.5">{symbol}</span>
           {formattedValue}
         </motion.div>
+
+        {/* Currency Change Shortcut near Balance */}
+        {onSelectCurrency && (
+          <div className="relative inline-flex items-center z-30" ref={currencyDropdownRef}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setCurrencyDropdownOpen(!currencyDropdownOpen);
+              }}
+              className="flex items-center gap-1 px-1.5 py-0.5 ml-0.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-md text-emerald-400 font-mono text-[10px] sm:text-xs font-bold transition-all cursor-pointer shadow-sm group select-none shrink-0"
+              title="Change Currency Preview"
+            >
+              <span>{currentCurrency}</span>
+              <span className={`text-[9px] text-emerald-400 transition-transform duration-200 ${currencyDropdownOpen ? 'rotate-180' : ''}`}>▼</span>
+            </button>
+
+            {currencyDropdownOpen && (
+              <div className="absolute right-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 w-48 bg-zinc-950/95 border border-emerald-500/40 rounded-xl shadow-2xl p-1.5 z-50 backdrop-blur-xl">
+                <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1 border-b border-white/10 mb-1 flex justify-between items-center">
+                  <span>Currency Preview</span>
+                  <span className="text-emerald-400 font-mono text-[9px]">▼</span>
+                </div>
+                <div className="max-h-52 overflow-y-auto space-y-0.5 pr-0.5 text-left">
+                  {Object.values(SUPPORTED_CURRENCIES).map((curr) => (
+                    <button
+                      key={curr.code}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectCurrency(curr.code);
+                        setCurrencyDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors cursor-pointer ${
+                        currentCurrency === curr.code
+                          ? 'bg-emerald-500/20 text-emerald-300 font-bold'
+                          : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <span className="font-mono text-left">{curr.code} <span className="text-[10px] text-slate-400">({curr.symbol})</span></span>
+                      {currentCurrency === curr.code && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Losses Red Pulse Ring */}
         <AnimatePresence>
@@ -4957,6 +5088,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
         depositNetworks={state.depositNetworks || []}
         currentPlayer={currentPlayer}
         deposits={state.deposits || []}
+        paymentSettings={state.paymentSettings}
         onBack={() => setShowDepositView(false)}
         onDeposit={(amt, depMethod, depDetails, screenshotUrl, existingId, txHash) => {
           onDeposit(amt, depMethod, depDetails, screenshotUrl, existingId, txHash);
@@ -7544,143 +7676,89 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
             </div>
           </div>
 
-          <div className="bg-[#0f0f0f] border border-white/5 p-10 rounded-[3rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] mb-12">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-              <div className="flex items-center gap-5">
-                <div className="p-4 bg-emerald-500/10 rounded-[1.5rem] border border-emerald-500/20">
-                  <QrCode className="w-8 h-8 text-emerald-400" />
+          {/* Payment Method Maintenance Modes Panel */}
+          <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl mb-12">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 pb-6 border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="bg-amber-500/10 p-2.5 rounded-2xl border border-amber-500/20">
+                  <Wrench className="w-6 h-6 text-amber-400" />
                 </div>
                 <div>
-                  <h4 className="text-3xl font-display font-bold text-white tracking-tight">Configuration Hub</h4>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Manage Payment Gateways & Deposit Settings</p>
+                  <h4 className="text-xl font-bold text-white">Payment Method Maintenance Modes</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mt-0.5">Individually toggle maintenance status for UPI and Crypto deposit gateways</p>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={onTogglePaymentLock}
-                  className={`px-6 py-4 rounded-2xl border transition-all flex items-center justify-center gap-3 group ${state.isPaymentLocked ? 'bg-amber-500 text-black border-amber-500 shadow-xl shadow-amber-500/20' : 'bg-white/5 border-white/10 text-slate-500 hover:text-slate-300'}`}
-                >
-                  {state.isPaymentLocked ? <Lock className="w-4 h-4" /> : <LockOpen className="w-4 h-4" />}
-                  <span className="text-[10px] font-black uppercase tracking-widest">
-                    {state.isPaymentLocked ? 'Locked' : 'Unlocked'}
-                  </span>
-                </button>
-                <button 
-                  onClick={handleSavePayment}
-                  className="bg-emerald-500 text-black px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 active:scale-95 transition-all shadow-2xl shadow-emerald-500/30"
-                >
-                  Sync Settings
-                </button>
               </div>
             </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-              <div className="space-y-8">
-                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4 px-1">Primary UPI ID</label>
-                  <div className="relative">
-                    <input 
-                      type="text" 
-                      value={paymentEdit.upiId || ''}
-                      onChange={(e) => setPaymentEdit(prev => ({ ...prev, upiId: e.target.value }))}
-                      placeholder="e.g. aleem@okhdfc"
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 focus:outline-none focus:border-emerald-500 text-emerald-100 font-mono text-lg shadow-inner"
-                    />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                      <Zap className="w-5 h-5 text-emerald-500/30" />
-                    </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* UPI Maintenance Toggle */}
+              <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-3 rounded-xl border ${state.paymentSettings?.upiMaintenanceMode ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
+                    <Smartphone className="w-5 h-5" />
                   </div>
-                </div>
-                
-                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4 px-1">Deposit Flow Note</label>
-                  <textarea 
-                    value={paymentEdit.additionalInstructions || ''}
-                    onChange={(e) => setPaymentEdit(prev => ({ ...prev, additionalInstructions: e.target.value }))}
-                    placeholder="e.g. Minimum deposit ₹500, send screenshot to support..."
-                    className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 focus:outline-none focus:border-emerald-500 text-slate-300 text-sm min-h-[140px] resize-none shadow-inner leading-relaxed"
-                  />
+                  <div>
+                    <h5 className="text-sm font-bold text-white">UPI Payment Gateway</h5>
+                    <p className="text-[10px] text-slate-500">
+                      {state.paymentSettings?.upiMaintenanceMode ? 'Currently Under Maintenance' : 'Operational & Active'}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl space-y-6">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2 px-1 text-emerald-400">Crypto Deposit Wallets Settings</label>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-2">TRC20 Wallet Address (USDT)</label>
-                      <input 
-                        type="text" 
-                        value={paymentEdit.usdtTrc20Address || ''}
-                        onChange={(e) => setPaymentEdit(prev => ({ ...prev, usdtTrc20Address: e.target.value }))}
-                        placeholder="TRC20 Wallet Address (e.g., TYb3j...)"
-                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 text-slate-200 font-mono text-xs shadow-inner"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-2">BEP20 Wallet Address (USDT)</label>
-                      <input 
-                        type="text" 
-                        value={paymentEdit.usdtBep20Address || ''}
-                        onChange={(e) => setPaymentEdit(prev => ({ ...prev, usdtBep20Address: e.target.value }))}
-                        placeholder="BEP20 Wallet Address (e.g., 0x2791...)"
-                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 text-slate-200 font-mono text-xs shadow-inner"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-2">ERC20 Wallet Address (USDT)</label>
-                      <input 
-                        type="text" 
-                        value={paymentEdit.usdtErc20Address || ''}
-                        onChange={(e) => setPaymentEdit(prev => ({ ...prev, usdtErc20Address: e.target.value }))}
-                        placeholder="ERC20 Wallet Address (e.g., 0xdAC1...)"
-                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 text-slate-200 font-mono text-xs shadow-inner"
-                      />
-                    </div>
-                  </div>
-                </div>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    playSound('CLICK');
+                    onUpdatePaymentSettings({
+                      ...state.paymentSettings,
+                      upiMaintenanceMode: !(state.paymentSettings?.upiMaintenanceMode ?? false)
+                    });
+                  }}
+                  className={`px-5 py-2.5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer ${
+                    state.paymentSettings?.upiMaintenanceMode
+                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-lg shadow-rose-500/10'
+                      : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-lg shadow-emerald-500/10'
+                  }`}
+                >
+                  <div className={`w-2 h-2 rounded-full ${state.paymentSettings?.upiMaintenanceMode ? 'bg-rose-400 animate-pulse' : 'bg-emerald-400'}`} />
+                  {state.paymentSettings?.upiMaintenanceMode ? 'Maintenance ON' : 'Maintenance OFF'}
+                </motion.button>
               </div>
 
-              <div className="space-y-6">
-                <div className="bg-white/[0.02] border border-white/5 p-6 rounded-[2.5rem]">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4 px-1 text-center">Master QR Gateway</label>
-                  <div className="relative group aspect-square rounded-[2rem] border-2 border-dashed border-white/10 bg-black/40 flex items-center justify-center overflow-hidden transition-all hover:border-emerald-500/20 active:scale-[0.99]">
-                    {paymentEdit.qrCodeUrl ? (
-                      <>
-                        <img src={paymentEdit.qrCodeUrl} alt="QR Code" className="w-full h-full object-contain p-8" />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3">
-                          <div className="p-3 bg-white/10 rounded-full backdrop-blur-md">
-                            <ImageIcon className="w-8 h-8 text-white" />
-                          </div>
-                          <span className="text-[10px] font-black uppercase text-white tracking-widest">Update Photo</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex flex-col items-center gap-4 text-slate-500 group-hover:text-slate-300 transition-colors">
-                        <div className="p-5 bg-white/5 rounded-full">
-                          <ImageIcon className="w-12 h-12 opacity-20" />
-                        </div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em]">Click to Upload QR</span>
-                      </div>
-                    )}
-                    <input 
-                      type="file" 
-                      accept="image/*"
-                      onChange={handleQrUpload}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                    />
+              {/* Crypto Maintenance Toggle */}
+              <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-3 rounded-xl border ${state.paymentSettings?.cryptoMaintenanceMode ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
+                    <Coins className="w-5 h-5" />
                   </div>
-                  <div className="mt-6 flex flex-col items-center gap-3">
-                    <p className="text-[10px] text-slate-500 italic max-w-[200px] text-center leading-relaxed">This QR will be the primary visual target for player deposits.</p>
-                    {paymentEdit.qrCodeUrl && (
-                      <button 
-                        onClick={() => setPaymentEdit(prev => ({ ...prev, qrCodeUrl: undefined }))}
-                        className="text-[9px] font-black text-rose-500 uppercase hover:text-rose-400 transition-colors flex items-center gap-2 group"
-                      >
-                        <Trash2 className="w-3 h-3 transition-transform group-hover:rotate-12" />
-                        Purge Image
-                      </button>
-                    )}
+                  <div>
+                    <h5 className="text-sm font-bold text-white">Crypto Payment Gateway</h5>
+                    <p className="text-[10px] text-slate-500">
+                      {state.paymentSettings?.cryptoMaintenanceMode ? 'Currently Under Maintenance' : 'Operational & Active'}
+                    </p>
                   </div>
                 </div>
+
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    playSound('CLICK');
+                    onUpdatePaymentSettings({
+                      ...state.paymentSettings,
+                      cryptoMaintenanceMode: !(state.paymentSettings?.cryptoMaintenanceMode ?? false)
+                    });
+                  }}
+                  className={`px-5 py-2.5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer ${
+                    state.paymentSettings?.cryptoMaintenanceMode
+                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-lg shadow-rose-500/10'
+                      : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-lg shadow-emerald-500/10'
+                  }`}
+                >
+                  <div className={`w-2 h-2 rounded-full ${state.paymentSettings?.cryptoMaintenanceMode ? 'bg-rose-400 animate-pulse' : 'bg-emerald-400'}`} />
+                  {state.paymentSettings?.cryptoMaintenanceMode ? 'Maintenance ON' : 'Maintenance OFF'}
+                </motion.button>
               </div>
             </div>
           </div>

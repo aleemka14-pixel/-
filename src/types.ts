@@ -34,23 +34,51 @@ export interface GameHistory {
 
 export interface WithdrawalRequest {
   id: string;
+  withdrawalId?: string;
   playerId: string;
+  userId?: string;
   playerName?: string; // name of the player requesting
   amount: number;
   method: string;
+  network?: string;
   details: string;
   blockchain?: string; // selected blockchain network
   walletAddress?: string; // wallet address entered by user
-  status: 'pending' | 'reviewing' | 'approved' | 'processing' | 'broadcasted' | 'completed' | 'rejected' | 'cancelled' | 'failed';
+  withdrawalAddress?: string;
+  destinationAddress?: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'rejected' | 'cancelled' | 'reviewing' | 'approved' | 'broadcasted';
   timestamp: number;
+  createdAt?: number;
+  processedAt?: number;
   completedDate?: number; // timestamp when approved or completed
   playerBalanceAtRequest: number;
+  balanceBefore?: number;
+  balanceAfter?: number;
   transactionHash?: string; // blockchain transaction hash
+  blockchainTxHash?: string; // blockchain transaction hash
   adminNotes?: string; // notes added by administrator
   fee?: number; // network fee applied
   finalAmount?: number; // amount user receives (amount - fee)
   riskScore?: number; // administrative risk evaluation score (0-100)
+  riskFlags?: string[];
+  requiresManualApproval?: boolean;
+  idempotencyKey?: string;
   notes?: string; // user submitted notes during withdrawal
+}
+
+export interface SavedWithdrawalMethod {
+  id: string;
+  type: 'crypto' | 'upi' | 'bank';
+  label: string;
+  isDefault?: boolean;
+  networkId?: string;
+  walletAddress?: string;
+  upiId?: string;
+  accountHolder?: string;
+  accountNumber?: string;
+  ifsc?: string;
+  bankName?: string;
+  createdAt?: number;
 }
 
 export interface DepositRequest {
@@ -60,16 +88,21 @@ export interface DepositRequest {
   method: string;
   details: string;
   screenshotUrl?: string;
-  status: 'pending' | 'completed' | 'rejected' | 'confirmed';
+  status: 'pending' | 'processing' | 'completed' | 'rejected' | 'confirmed' | 'failed' | string;
   timestamp: number;
   playerBalanceAtRequest: number;
   depositId?: string;
   userId?: string;
+  currency?: string;
   network?: string;
   walletAddress?: string;
+  upiVpa?: string;
+  utrNumber?: string;
+  transactionId?: string;
   transactionHash?: string;
   confirmedAt?: number;
   updatedAt?: number;
+  createdAt?: number;
   balanceBefore?: number;
   balanceAfter?: number;
   adminNotes?: string;
@@ -142,6 +175,8 @@ export interface PaymentSettings {
   usdtTrc20Address?: string;
   usdtBep20Address?: string;
   usdtErc20Address?: string;
+  upiMaintenanceMode?: boolean;
+  cryptoMaintenanceMode?: boolean;
 }
 
 export interface AppState {
@@ -178,6 +213,8 @@ export interface AppState {
   isAnnouncementEnabled?: boolean;
   withdrawalNetworks?: WithdrawalNetwork[];
   withdrawalSettings?: WithdrawalSettings;
+  customTotalBets?: number;
+  isWithdrawalsStopped?: boolean;
 }
 
 export interface WithdrawalNetwork {
@@ -221,4 +258,19 @@ export interface WithdrawalSettings {
   feePercentage?: number;
   kycRequired?: boolean;
   defaultProcessingTime: string;
+}
+
+export interface PaymentGatewayMethod {
+  id: string;
+  gatewayName: string;
+  gatewayType: 'UPI' | 'Crypto' | 'Bank' | string;
+  status: 'active' | 'maintenance' | 'disabled';
+  depositEnabled: boolean;
+  withdrawalEnabled: boolean;
+  maintenanceMessage?: string;
+  providerCode?: string;
+  description?: string;
+  logoUrl?: string;
+  createdAt?: number;
+  updatedAt?: number;
 }

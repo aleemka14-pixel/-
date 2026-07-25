@@ -89,7 +89,7 @@ async function testConnection() {
       const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded');
       
       if (isQuota) {
-        console.warn("[Firebase Info] Connection test info: Quota limit exceeded. Client will operate in DEMO/OFFLINE mode.");
+        console.info("[Firebase Info] Connection test info: Quota limit exceeded. Client will operate in DEMO/OFFLINE mode.");
         if (typeof window !== 'undefined') {
           (window as any).__firestoreQuotaExceeded = true;
           window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: error.message } }));
@@ -154,14 +154,17 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  const msg = errInfo.error.toLowerCase();
+  const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('resource_exhausted') || msg.includes('limit exceeded');
   
-  if (typeof window !== 'undefined') {
-    const msg = errInfo.error.toLowerCase();
-    if (msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('resource_exhausted') || msg.includes('limit exceeded')) {
+  if (isQuota) {
+    console.info('[Firebase Info] Quota limit exceeded. Client operating in demo/offline mode.');
+    if (typeof window !== 'undefined') {
       (window as any).__firestoreQuotaExceeded = true;
       window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: errInfo }));
     }
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
 
   throw new Error(JSON.stringify(errInfo));

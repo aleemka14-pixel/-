@@ -1,45 +1,100 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&family=Dancing+Script:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;600;700;800&family=Dancing+Script:wght@700&family=Permanent+Marker&family=Russo+One&family=Orbitron:wght@700;900&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-display: "Russo One", "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --font-matrix: "Dancing Script", cursive;
+  --font-cash: "Permanent Marker", cursive, sans-serif;
+  --font-orbitron: "Orbitron", sans-serif;
 }
 
 @layer base {
+  html, body, #root {
+    max-width: 100vw;
+    overflow-x: hidden;
+    width: 100%;
+    background-color: #030107;
+  }
   body {
-    @apply bg-[#030303] text-slate-100 antialiased selection:bg-emerald-500/30 selection:text-white;
+    @apply bg-[#030107] text-slate-100 antialiased selection:bg-amber-500/30 selection:text-white;
   }
 }
 
 @layer utilities {
   .glass-card {
-    @apply bg-[#0d0d0d]/80 backdrop-blur-xl border border-white/5 shadow-2xl;
+    @apply bg-[#0c0814]/85 backdrop-blur-md border border-white/10 shadow-2xl;
   }
   
   .glass-button {
     @apply relative overflow-hidden transition-all duration-300 active:scale-[0.97];
   }
-  
-  .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-br from-white to-white/40;
+
+  .neon-border-red {
+    box-shadow: 0 0 15px rgba(255, 0, 68, 0.4), inset 0 0 10px rgba(255, 0, 68, 0.2);
+    border-color: rgba(255, 40, 0, 0.7);
+  }
+
+  .neon-border-gold {
+    box-shadow: 0 0 15px rgba(255, 183, 0, 0.4), inset 0 0 10px rgba(255, 183, 0, 0.2);
+    border-color: rgba(255, 183, 0, 0.7);
+  }
+
+  .neon-border-blue {
+    box-shadow: 0 0 15px rgba(0, 170, 255, 0.4), inset 0 0 10px rgba(0, 170, 255, 0.2);
+    border-color: rgba(0, 170, 255, 0.7);
+  }
+
+  .neon-glow-btn {
+    box-shadow: 0 0 25px rgba(255, 50, 0, 0.8), 0 0 50px rgba(255, 183, 0, 0.5);
+  }
+
+  .text-glow-gold {
+    text-shadow: 0 0 10px rgba(255, 200, 0, 0.8), 0 0 20px rgba(255, 100, 0, 0.5);
+  }
+
+  .text-glow-red {
+    text-shadow: 0 0 10px rgba(255, 0, 68, 0.8), 0 0 20px rgba(255, 0, 0, 0.5);
+  }
+
+  .text-glow-blue {
+    text-shadow: 0 0 10px rgba(0, 229, 255, 0.8), 0 0 20px rgba(0, 150, 255, 0.5);
   }
 }
 
-/* Custom range input styling */
-input[type='range'] {
-  @apply transition-all duration-200;
-}
-
-input[type='range']::-webkit-slider-thumb {
-  @apply w-5 h-5 bg-emerald-500 rounded-full border-4 border-[#030303] shadow-lg cursor-pointer transition-all duration-200 hover:scale-125 hover:bg-emerald-400;
+/* Custom Matrix bet slider thumb */
+input[type='range'].matrix-slider {
   -webkit-appearance: none;
+  background: transparent;
+  height: 16px;
 }
 
-input[type='range'].is-dragging::-webkit-slider-thumb {
-  @apply shadow-[0_0_25px_rgba(16,185,129,1)] scale-[1.35] bg-emerald-300 border-white;
+input[type='range'].matrix-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 16px;
+  cursor: pointer;
+  background: linear-gradient(90deg, #ff0033 0%, #ff5500 50%, #ffcc00 100%);
+  border-radius: 9999px;
+  box-shadow: 0 0 18px rgba(255, 50, 0, 0.8), inset 0 0 8px rgba(255, 200, 0, 0.6);
+}
+
+input[type='range'].matrix-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 38px;
+  width: 38px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ff0055 35%, #990000 100%);
+  border: 3px solid #ffcc00;
+  cursor: pointer;
+  margin-top: -11px;
+  box-shadow: 0 0 22px #ff0055, 0 0 35px #ff7700, inset 0 0 10px #ffcc00;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type='range'].matrix-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 28px #ff0055, 0 0 45px #ffcc00, inset 0 0 14px #ffff00;
 }
 
 /* Scrollbar styling */
@@ -49,9 +104,24 @@ input[type='range'].is-dragging::-webkit-slider-thumb {
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-transparent;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
 }
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+@keyframes lightningPulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.03); }
+}
+
+.animate-lightning {
+  animation: lightningPulse 3s infinite ease-in-out;
+}
+
