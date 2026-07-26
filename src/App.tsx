@@ -779,7 +779,9 @@ export default function App() {
           playersWonCount: data.playersWonCount ?? 142,
           isPlayersWonShown: data.isPlayersWonShown ?? true,
           announcementText: data.announcementText ?? 'Welcome to Matrix Multiplier! Active promotion: Earn double VIP experience this week!',
-          isAnnouncementEnabled: data.isAnnouncementEnabled ?? false
+          isAnnouncementEnabled: data.isAnnouncementEnabled ?? false,
+          customTotalBets: data.customTotalBets !== undefined ? data.customTotalBets : undefined,
+          isWithdrawalsStopped: data.isWithdrawalsStopped ?? false
         }));
       } else if (isAdmin) {
         // Initialize default config if missing and user is admin
@@ -2557,6 +2559,30 @@ export default function App() {
     } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
   };
 
+  const onUpdateCustomTotalBets = async (amt: number) => {
+    if (demoMode) {
+      setState(prev => ({ ...prev, customTotalBets: amt }));
+      playSound('CLICK');
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { customTotalBets: amt }, { merge: true });
+      playSound('CLICK');
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
+  const onToggleWithdrawalsStopped = async () => {
+    if (demoMode) {
+      setState(prev => ({ ...prev, isWithdrawalsStopped: !prev.isWithdrawalsStopped }));
+      playSound('CLICK');
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'config', 'admin'), { isWithdrawalsStopped: !state.isWithdrawalsStopped }, { merge: true });
+      playSound('CLICK');
+    } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'config/admin'); }
+  };
+
   const onPlaceBet = async (amt: number) => {
     if (!user || !currentPlayer) return;
     if (demoMode) {
@@ -3411,6 +3437,8 @@ export default function App() {
                       onResultBet={resultBet}
                       onResultAllBets={resultAllBets}
                       onToggleBettingStatus={onToggleBettingStatus}
+                      onUpdateCustomTotalBets={onUpdateCustomTotalBets}
+                      onToggleWithdrawalsStopped={onToggleWithdrawalsStopped}
                       onUpdateWithdrawalStatus={updateWithdrawalStatus}
                       onUpdateDepositStatus={updateDepositStatus}
                       onToggleMaintenanceMode={onToggleMaintenanceMode}
@@ -3770,10 +3798,12 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
               <div className="flex items-center">
                 <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] px-3.5 py-1.5 bg-[#140a02]/90 border border-[#ffb700]/40 rounded-xl shadow-[0_0_12px_rgba(255,180,0,0.25)]">
                   {formatBalanceLocal(
-                    Math.max(
-                      state.players?.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) || 0,
-                      state.transactions?.filter(t => t.type === 'bet' && t.status === 'pending').reduce((sum, t) => sum + (t.amount || 0), 0) || 0
-                    )
+                    state.customTotalBets !== undefined && state.customTotalBets !== null && state.customTotalBets > 0
+                      ? state.customTotalBets
+                      : Math.max(
+                          state.players?.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) || 0,
+                          state.transactions?.filter(t => t.type === 'bet' && t.status === 'pending').reduce((sum, t) => sum + (t.amount || 0), 0) || 0
+                        )
                   )}
                 </span>
               </div>
@@ -3810,84 +3840,33 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
         </div>
 
         {/* HERO TITLE SECTION */}
-        <div className="mb-8 relative z-10">
+        <div className="mb-6 relative z-10">
           <h2 className="text-3xl sm:text-4xl font-black italic tracking-widest uppercase text-white drop-shadow-[0_0_15px_rgba(0,180,255,0.6)] inline-flex items-center flex-wrap justify-center gap-2">
             <span>DOUBLE YOUR</span>
             <span className="font-cash text-4xl sm:text-5xl text-[#ffc700] text-glow-gold drop-shadow-[0_0_25px_rgba(255,50,0,0.9)] not-italic tracking-normal">
               CASH
             </span>
           </h2>
-          <div className="mt-2 text-xs sm:text-sm font-semibold text-slate-300/90 space-y-0.5">
+          <div className="mt-1 text-xs sm:text-sm font-semibold text-slate-300/90 space-y-0.5">
             <p>Enter an amount and try your luck.</p>
             <p className="text-[#ffcc00] font-bold text-glow-gold">High risk, high reward.</p>
           </div>
         </div>
 
-        {/* BANK VAULT & VAULT BALANCE MODULE */}
-        <div className="mb-8 relative z-10">
-          <div className="flex items-center justify-between bg-[#070b19]/90 border border-[#00d5ff]/40 rounded-2xl p-4 sm:p-5 shadow-[0_0_25px_rgba(0,213,255,0.2)] relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-36 h-36 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none" />
+        {/* WITHDRAWALS STOPPED BANNER (If Active) */}
+        {state.isWithdrawalsStopped && (
+          <motion.div 
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 shadow-[0_0_20px_rgba(244,63,94,0.3)] flex items-center justify-center gap-2 text-xs font-black tracking-wider uppercase text-center relative z-20"
+          >
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
+            <span>Withdrawals are Stopped until Lottery Result</span>
+          </motion.div>
+        )}
 
-            <div className="flex items-center gap-3.5 sm:gap-5">
-              {/* 3D Vault Door Image */}
-              <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0 flex items-center justify-center">
-                <div className="absolute inset-0 rounded-full bg-gradient-radial from-cyan-400/30 via-red-600/20 to-transparent blur-md animate-lightning" />
-                <img 
-                  src="/src/assets/images/matrix_vault_door_1784989320760.jpg" 
-                  alt="Vault Door" 
-                  className="w-full h-full object-contain rounded-2xl filter drop-shadow-[0_0_15px_rgba(0,229,255,0.6)] relative z-10"
-                />
-              </div>
-
-              {/* Vault Balance Title & Amount */}
-              <div className="flex flex-col text-left">
-                <span className="text-[11px] sm:text-xs font-mono font-black uppercase text-[#00e5ff] tracking-[0.2em] block drop-shadow-[0_0_8px_rgba(0,229,255,0.8)]">
-                  VAULT BALANCE
-                </span>
-                <motion.div 
-                  animate={
-                    flashType === 'win' 
-                      ? { scale: [1, 1.08, 1], color: ['#ffffff', '#34d399', '#ffffff'] }
-                      : flashType === 'lose'
-                      ? { scale: [1, 0.95, 1], color: ['#ffffff', '#f87171', '#ffffff'] }
-                      : {}
-                  }
-                  transition={{ duration: 0.6 }}
-                  className="text-2xl sm:text-3xl font-mono font-black text-white tracking-tight drop-shadow-[0_0_12px_rgba(255,255,255,0.5)] mt-0.5"
-                >
-                  {formatBalanceLocal(currentBalance)}
-                </motion.div>
-              </div>
-            </div>
-
-            {/* Integrated Shield/Rupee Badge on Right */}
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-[#52000b] border-2 border-red-500 shadow-[0_0_15px_rgba(255,0,0,0.7)] flex items-center justify-center text-[#ffc700] font-black text-lg sm:text-xl shrink-0">
-              ₹
-            </div>
-          </div>
-
-          <AnimatePresence>
-            {floatingIndicator && (
-              <motion.div
-                key={floatingIndicator.id}
-                initial={{ opacity: 0, y: 10, scale: 0.8 }}
-                animate={{ opacity: 1, y: -40, scale: 1.15 }}
-                exit={{ opacity: 0, y: -65, scale: 0.9 }}
-                transition={{ duration: 1.2, ease: "easeOut" }}
-                className={`absolute left-1/2 -translate-x-1/2 z-30 font-mono font-black text-xs px-3.5 py-1 rounded-full border shadow-xl ${
-                  floatingIndicator.type === 'gain' 
-                    ? 'bg-emerald-950/90 text-emerald-400 border-emerald-500/40 shadow-emerald-500/30' 
-                    : 'bg-rose-950/90 text-rose-400 border-rose-500/40 shadow-rose-500/30'
-                }`}
-              >
-                {floatingIndicator.amount}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* BET AMOUNT CONTROL ROW & CUSTOM SLIDER */}
-        <div className="mb-8 relative z-10 space-y-3 bg-[#0a0614]/80 border border-amber-500/20 rounded-2xl p-4 sm:p-5 shadow-[0_0_25px_rgba(0,0,0,0.6)]">
+        {/* BET AMOUNT CONTROL ROW & CUSTOM SLIDER (Placed directly under Double Your Cash) */}
+        <div className="mb-6 relative z-10 space-y-3 bg-[#0a0614]/80 border border-amber-500/20 rounded-2xl p-4 sm:p-5 shadow-[0_0_25px_rgba(0,0,0,0.6)]">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono font-black text-[#00e5ff] uppercase tracking-[0.2em] block drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]">
               BET AMOUNT
@@ -3969,7 +3948,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
         </div>
 
         {/* BET STATUS / LOCK NOTIFICATIONS */}
-        <div className="mb-6 relative z-10 space-y-3">
+        <div className="mb-4 relative z-10 space-y-3">
           {activePendingBet && (
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
@@ -4008,7 +3987,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
           )}
         </div>
 
-        {/* ACTION MAIN BUTTON: DOUBLE OR DONATE */}
+        {/* ACTION MAIN BUTTON: DOUBLE OR DONATE (Placed exactly under Slider) */}
         <div className="relative z-10 mb-6">
           <motion.button 
             whileHover={{ scale: 1.02 }}
@@ -4034,15 +4013,10 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
         </div>
 
         {/* FOOTER CHARITY DISCLOSURE */}
-        <div className="space-y-2 relative z-10">
+        <div className="space-y-2 relative z-10 mb-6">
           <div className="flex items-center justify-center gap-2 text-[10px] font-black tracking-wider text-slate-300 uppercase py-2.5 bg-white/[0.03] border border-white/10 rounded-2xl px-4 select-none shadow-sm">
             <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
             <span>Your Lost Amount Will Be Donated To Poor</span>
-          </div>
-
-          <div className="flex items-start gap-2.5 text-[9px] font-extrabold tracking-widest text-amber-400 uppercase py-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-4 select-none text-left">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <span className="leading-normal">Don't logout with balance in the account. We are not responsible for your loss.</span>
           </div>
         </div>
 
@@ -5812,6 +5786,13 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                         ) : (
                           /* Withdrawal UI remains simple but polished */
                           <div className="space-y-6">
+                            {state.isWithdrawalsStopped && (
+                              <div className="p-4 bg-rose-500/15 border border-rose-500/30 rounded-2xl flex items-center justify-center gap-2 text-rose-300 font-black text-xs uppercase tracking-wider text-center">
+                                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
+                                <span>Withdrawals are Stopped until Lottery Result</span>
+                              </div>
+                            )}
+
                             {lastWithdrawalIn24h && (
                               <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex flex-col gap-2 text-left">
                                 <div className="flex items-start gap-2.5">
@@ -5839,7 +5820,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">{getCurrencySymbol(currentCurrency)}</span>
                                   <input 
                                     type="number" 
-                                    disabled={!!lastWithdrawalIn24h}
+                                    disabled={state.isWithdrawalsStopped || !!lastWithdrawalIn24h}
                                     value={amount || ''} 
                                     onChange={(e) => setAmount(Number(e.target.value))}
                                     className="w-full bg-white/5 border border-white/5 rounded-xl pl-8 pr-4 py-4 focus:outline-none focus:border-white/20 transition-all font-mono text-lg disabled:opacity-40 disabled:cursor-not-allowed"
@@ -5868,7 +5849,7 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 px-1">YOUR BINANCE EMAIL</label>
                                   <input 
                                     type="email" 
-                                    disabled={!!lastWithdrawalIn24h}
+                                    disabled={state.isWithdrawalsStopped || !!lastWithdrawalIn24h}
                                     value={binanceEmail}
                                     onChange={(e) => setBinanceEmail(e.target.value)}
                                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -5883,11 +5864,15 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
                             </div>
 
                             <button 
-                              disabled={!!lastWithdrawalIn24h || amount < minWithdrawLocal || amount > availableBalanceLocal || !binanceEmail.trim()}
+                              disabled={state.isWithdrawalsStopped || !!lastWithdrawalIn24h || amount < minWithdrawLocal || amount > availableBalanceLocal || !binanceEmail.trim()}
                               onClick={handleConfirm}
                               className="w-full py-5 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 cursor-pointer border-0"
                             >
-                              {lastWithdrawalIn24h ? 'Payout Limit Exceeded (24h)' : 'Confirm Payout'}
+                              {state.isWithdrawalsStopped
+                                ? 'Withdrawals Stopped Until Lottery Result'
+                                : lastWithdrawalIn24h 
+                                ? 'Payout Limit Exceeded (24h)' 
+                                : 'Confirm Payout'}
                             </button>
                           </div>
                         )}
@@ -6034,7 +6019,7 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
+function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdateCustomTotalBets, onToggleWithdrawalsStopped, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
   state: AppState, 
   playSound: (key: any) => void,
   onUpdateWinRate: (rate: number) => void,
@@ -6044,6 +6029,8 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   onToggleBetLimit: () => void,
   onToggleManualMode: () => void,
   onToggleBettingStatus: () => void,
+  onUpdateCustomTotalBets: (amt: number) => void,
+  onToggleWithdrawalsStopped: () => void,
   onUpdatePlayerOverride: (id: string, override: 'win' | 'lose' | 'none') => void,
   onSwitchPlayer: (id: string) => void,
   onResultBet: (playerId: string, outcome: 'win' | 'lose', settlementCurrency?: string) => void,
@@ -7505,6 +7492,95 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
               <p className="text-[10px] text-slate-600 font-medium italic">
                 Adjusts the beautiful dynamic display count of players who have successfully doubled their money. Enter any custom number.
               </p>
+            </div>
+          </div>
+
+          {/* Total Bets Placed Override & Payout Stopped Controls */}
+          <div className="bg-[#0d0d0d] border border-white/5 p-8 rounded-3xl">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 pb-6 border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="bg-amber-500/10 p-2.5 rounded-2xl border border-amber-500/20">
+                  <TrendingUp className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                  <h4 className="text-xl font-bold text-white">Live Total Bets & Payout Controls</h4>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mt-0.5">
+                    Override total bets display & control withdrawal payout state
+                  </p>
+                </div>
+              </div>
+
+              {/* Payout Stopped On/Off Toggle Button */}
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={onToggleWithdrawalsStopped}
+                className={`flex items-center gap-2.5 py-2.5 px-5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 cursor-pointer ${
+                  state.isWithdrawalsStopped
+                    ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-lg shadow-rose-500/10'
+                    : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-lg shadow-emerald-500/10'
+                }`}
+              >
+                <div className={`w-2 h-2 rounded-full ${state.isWithdrawalsStopped ? 'bg-rose-400 animate-pulse' : 'bg-emerald-400'}`} />
+                Payout Stopped: {state.isWithdrawalsStopped ? 'ON' : 'OFF'}
+              </motion.button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Total Bets Custom Window */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-300 font-bold text-sm">Total Bets Placed Window</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 text-sm">₹</span>
+                    <input 
+                      type="number"
+                      min="0"
+                      placeholder="Auto"
+                      value={state.customTotalBets ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? 0 : Number(e.target.value);
+                        onUpdateCustomTotalBets(val);
+                      }}
+                      className="w-36 bg-white/5 border border-white/10 focus:border-amber-500/50 rounded-xl py-2 px-3 font-mono text-right text-xl font-bold text-amber-400 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[0, 5000, 10000, 25000, 50000, 100000].map(val => (
+                    <button
+                      key={val}
+                      onClick={() => onUpdateCustomTotalBets(val)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                        state.customTotalBets === val 
+                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' 
+                          : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'
+                      }`}
+                    >
+                      {val === 0 ? 'Auto Live Sum' : `₹${val.toLocaleString()}`}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 italic">
+                  Changes the total bets number shown on the main player screen live pool card instantly. Enter any custom amount.
+                </p>
+              </div>
+
+              {/* Withdrawals Stopped Status Notice */}
+              <div className="bg-white/[0.02] border border-white/5 p-5 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <h5 className="text-sm font-bold text-white mb-1">Payout Status Banner Notice</h5>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    When <strong className="text-rose-400">Payout Stopped is ON</strong>, players see: <span className="text-rose-300 font-mono text-[11px] block mt-1 bg-rose-950/40 p-2 rounded-lg border border-rose-500/20">"Withdrawals are Stopped until Lottery Result"</span>
+                  </p>
+                </div>
+                <div className="mt-3 flex items-center justify-between pt-3 border-t border-white/5 text-xs font-mono">
+                  <span className="text-slate-500">Player View Status:</span>
+                  <span className={state.isWithdrawalsStopped ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                    {state.isWithdrawalsStopped ? 'Blocked & Banner Displayed' : 'Normal Operations'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
