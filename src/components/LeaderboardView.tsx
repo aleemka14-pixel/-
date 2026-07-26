@@ -26,7 +26,7 @@ type RankCriteria = 'totalWinnings' | 'balance' | 'biggestBet' | 'totalBetsCount
 
 export function LeaderboardView({ preferredCurrency }: { preferredCurrency: string }) {
   const [criteria, setCriteria] = useState<RankCriteria>('totalWinnings');
-  const [players, setPlayers] = useState<Player[]>([]);
+  const [rawPlayers, setRawPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,19 +43,13 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
       setLoading(true);
       setError(null);
       const collectionPath = 'players';
-      console.log('[LEADERBOARD DIAGNOSTICS] Collection Path:', collectionPath);
-      console.log('[LEADERBOARD DIAGNOSTICS] Query Constraints:', 'None (fetching full collection and sorting in memory)');
 
       try {
         const playersRef = collection(db, collectionPath);
         const snap = await getDocs(playersRef);
-        
-        console.log('[LEADERBOARD DIAGNOSTICS] Number of documents returned:', snap.docs.length);
 
         if (!active) return;
 
-        // Process players in memory to handle default values safely
-        // and guarantee no missing index errors from combining orderBy & missing fields
         const allPlayers = snap.docs.map(doc => {
           const data = doc.data();
           return {
@@ -76,17 +70,7 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
           } as Player;
         });
 
-        // Sort based on criteria
-        allPlayers.sort((a, b) => {
-          const valA = (a as any)[criteria] ?? 0;
-          const valB = (b as any)[criteria] ?? 0;
-          if (valB !== valA) return valB - valA;
-          // secondary sort by balance if equal
-          return (b.balance || 0) - (a.balance || 0);
-        });
-
-        // Cap at top 100 for display
-        setPlayers(allPlayers.slice(0, 100));
+        setRawPlayers(allPlayers);
       } catch (err: any) {
         const msg = String(err?.message || err).toLowerCase();
         if (msg.includes('quota') || msg.includes('resource-exhausted') || err?.code === 'resource-exhausted') {
@@ -96,7 +80,7 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
           }
           setError('Database quota reached. Currently running in offline/demo mode.');
         } else {
-          console.error('[LEADERBOARD DIAGNOSTICS] Firestore error code:', err?.code || 'NO_CODE', '| Message:', err?.message, '| Full Error:', err);
+          console.error('[LEADERBOARD DIAGNOSTICS] Firestore error:', err);
           setError('Failed to load leaderboard data. Please try again.');
         }
       } finally {
@@ -108,7 +92,18 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
     return () => {
       active = false;
     };
-  }, [criteria]);
+  }, []);
+
+  const players = useMemo(() => {
+    const list = [...rawPlayers];
+    list.sort((a, b) => {
+      const valA = (a as any)[criteria] ?? 0;
+      const valB = (b as any)[criteria] ?? 0;
+      if (valB !== valA) return valB - valA;
+      return (b.balance || 0) - (a.balance || 0);
+    });
+    return list.slice(0, 100);
+  }, [rawPlayers, criteria]);
 
   // Separate top 3 podium from rest
   const topThree = useMemo(() => players.slice(0, 3), [players]);

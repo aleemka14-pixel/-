@@ -57,7 +57,9 @@ import {
   AlertTriangle,
   Wrench,
   Smartphone,
-  Coins
+  Coins,
+  Shield,
+  Headphones
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
@@ -451,6 +453,80 @@ const synchronizeUserAndPlayer = async (uid: string, uData: any, pData: any) => 
   }
 };
 
+const NextLotteryCard = memo(function NextLotteryCard({
+  lotteryTargetTimestamp,
+  lotteryTimerActive,
+  lotteryTimerDuration,
+}: {
+  lotteryTargetTimestamp?: number;
+  lotteryTimerActive?: boolean;
+  lotteryTimerDuration?: number;
+}) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!lotteryTimerActive) return;
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lotteryTimerActive]);
+
+  const lotterySecondsLeft = lotteryTargetTimestamp && lotteryTimerActive
+    ? Math.max(0, Math.floor((lotteryTargetTimestamp - now) / 1000))
+    : (lotteryTimerDuration ?? 0);
+
+  const formatLotteryTimerStr = (seconds: number) => {
+    if (seconds <= 0) return '00:00';
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    const pad = (num: number) => num < 10 ? `0${num}` : num;
+    if (hrs > 0) return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+    return `${pad(mins)}:${pad(secs)}`;
+  };
+
+  const lotteryTimerStr = formatLotteryTimerStr(lotterySecondsLeft);
+  const progressPercent = lotteryTimerActive && lotterySecondsLeft > 0
+    ? (lotterySecondsLeft / (lotteryTimerDuration || 300)) * 100
+    : 75;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_20px_rgba(255,50,0,0.25)] transition-all hover:shadow-[0_0_30px_rgba(255,50,0,0.4)]"
+    >
+      <div className="bg-[#0c0816]/98 p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 rounded-full bg-[#ffb700] shadow-[0_0_12px_#ffb700] animate-pulse" />
+          <div className="text-left">
+            <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#ffb700] block">NEXT LOTTERY</span>
+            <span className="text-xs font-black uppercase tracking-wider text-white block">RESULT</span>
+            <p className="text-[11px] font-bold text-slate-300 mt-0.5">
+              {lotteryTimerActive && lotterySecondsLeft > 0 ? 'Drawing Soon' : 'Result Pending'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-end">
+          <div className="flex items-center gap-2 px-3 py-1.5 border border-[#ff2a00] bg-[#1d070b]/90 rounded-xl text-[#ffcc00] shadow-[0_0_12px_rgba(255,0,68,0.4)]">
+            <Clock className="w-4 h-4 text-[#ffcc00] animate-pulse" />
+            <span className="font-mono text-base font-black tracking-wider">{lotteryTimerStr}</span>
+          </div>
+          {/* Yellow Progress bar */}
+          <div className="w-[84px] bg-gray-900/80 h-1.5 rounded-full overflow-hidden mt-1.5 border border-white/5">
+            <div 
+              className="h-full bg-gradient-to-r from-[#ffb700] via-[#ff7700] to-[#ff0033] transition-all duration-1000 ease-linear shadow-[0_0_8px_#ffb700]"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [state, setState] = useState<AppState>(INITIAL_STATE);
@@ -829,7 +905,7 @@ export default function App() {
         mergedPlayers = rawUsers
           .filter(u => u !== undefined && u !== null && u.id)
           .map(u => {
-            const p = rawPlayers.find(pl => pl && pl.id === u.id);
+            const p = (u.id === user?.uid && rawCurrentPlayer) ? rawCurrentPlayer : rawPlayers.find(pl => pl && pl.id === u.id);
             
             const u_walletBalance = u.walletBalance;
             const u_balance = u.balance;
@@ -844,6 +920,8 @@ export default function App() {
               walletBalance = Number(p_balance);
             }
             
+            const effectivePendingBet = p?.pendingBet || (u.id === user?.uid && rawCurrentPlayer?.pendingBet) || undefined;
+
             return {
               id: u.id,
               name: u.username || u.name || u.displayName || p?.name || 'Player',
@@ -856,7 +934,7 @@ export default function App() {
               referralCount: p?.referralCount ?? u.referralCount ?? 0,
               totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
               preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
-              pendingBet: p?.pendingBet || undefined,
+              pendingBet: effectivePendingBet,
               wins: p?.wins ?? u.wins ?? 0,
               losses: p?.losses ?? u.losses ?? 0,
             } as Player;
@@ -868,6 +946,7 @@ export default function App() {
           const exists = mergedPlayers.some(mp => mp && mp.id === p.id);
           if (!exists) {
             const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            const effectivePendingBet = (p.id === user?.uid && rawCurrentPlayer?.pendingBet) ? rawCurrentPlayer.pendingBet : p.pendingBet;
             mergedPlayers.push({
               id: p.id,
               name: p.name || 'Player',
@@ -880,7 +959,7 @@ export default function App() {
               referralCount: p.referralCount ?? 0,
               totalWagered: p.totalWagered ?? 0,
               preferredCurrency: p.preferredCurrency || 'USDT',
-              pendingBet: p.pendingBet || undefined,
+              pendingBet: effectivePendingBet || undefined,
               wins: p.wins ?? 0,
               losses: p.losses ?? 0,
             } as Player);
@@ -892,6 +971,7 @@ export default function App() {
           .filter(p => p !== undefined && p !== null)
           .map(p => {
             const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
+            const effectivePendingBet = (p.id === user?.uid && rawCurrentPlayer?.pendingBet) ? rawCurrentPlayer.pendingBet : p.pendingBet;
             return {
               id: p.id || '',
               name: p.name || 'Player',
@@ -904,7 +984,7 @@ export default function App() {
               referralCount: p.referralCount ?? 0,
               totalWagered: p.totalWagered ?? 0,
               preferredCurrency: p.preferredCurrency || 'USDT',
-              pendingBet: p.pendingBet || undefined,
+              pendingBet: effectivePendingBet || undefined,
               wins: p.wins ?? 0,
               losses: p.losses ?? 0,
             } as Player;
@@ -932,7 +1012,7 @@ export default function App() {
             referralCount: p?.referralCount ?? 0,
             totalWagered: p?.totalWagered ?? 0,
             preferredCurrency: p?.preferredCurrency || 'USDT',
-            pendingBet: p?.pendingBet || undefined,
+            pendingBet: p?.pendingBet || rawCurrentPlayer?.pendingBet || undefined,
             wins: p?.wins ?? 0,
             losses: p?.losses ?? 0,
           } as Player);
@@ -951,14 +1031,21 @@ export default function App() {
 
       setState(prev => {
         const playersList = prev.players || [];
-        // Maintain the active user's current live balance if they are already in the list to avoid flickers
         const currentUid = user?.uid;
-        const userDocBalance = currentUid ? playersList.find(pl => pl && pl.id === currentUid)?.balance : undefined;
+        
         const updated = mergedPlayers.map(p => {
-          if (currentUid && p && p.id === currentUid && userDocBalance !== undefined) {
-            return { ...p, balance: userDocBalance };
-          }
-          return p;
+          const existingPlayer = playersList.find(pl => pl && pl.id === p.id);
+          const userDocBalance = currentUid && p && p.id === currentUid ? existingPlayer?.balance : undefined;
+          const effectiveBalance = userDocBalance !== undefined ? userDocBalance : p.balance;
+          
+          // Preserve pendingBet from state if incoming item didn't explicitly set pendingBet to null
+          const effectivePendingBet = p.pendingBet !== undefined ? p.pendingBet : existingPlayer?.pendingBet;
+
+          return {
+            ...p,
+            balance: effectiveBalance,
+            pendingBet: effectivePendingBet
+          };
         });
         return { ...prev, players: updated };
       });
@@ -1254,18 +1341,23 @@ export default function App() {
         const l = colName === 'transactions' ? 500 : 50; // Cap transactions at 500 for performance
         return isAdmin 
           ? query(collection(db, colName), orderBy('timestamp', 'desc'), limit(l))
-          : query(collection(db, colName), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'), limit(l));
+          : query(collection(db, colName), where('playerId', '==', currentUserId));
       };
 
       reg(onSnapshot(getQuery('transactions'), (snap) => {
-        const transactions = snap.docs.map(d => d.data() as Transaction);
+        const transactions = snap.docs
+          .map(d => d.data() as Transaction)
+          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         setState(prev => ({ ...prev, transactions }));
       }, (err) => {
         if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
           console.warn(`Admin access to transactions denied for ${currentUserEmail} (${currentUserId}). Falling back to personal view.`);
-          const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'));
+          const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', currentUserId));
           reg(onSnapshot(fallbackQuery, (s) => {
-             setState(prev => ({ ...prev, transactions: s.docs.map(d => d.data() as Transaction) }));
+             const transactions = s.docs
+               .map(d => d.data() as Transaction)
+               .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+             setState(prev => ({ ...prev, transactions }));
            }, (fErr) => {
               handleListenerError('Transactions Fallback Error', fErr);
            }));
@@ -1275,14 +1367,19 @@ export default function App() {
       }));
 
       reg(onSnapshot(getQuery('withdrawals'), (snap) => {
-        const withdrawals = snap.docs.map(d => d.data() as WithdrawalRequest);
+        const withdrawals = snap.docs
+          .map(d => d.data() as WithdrawalRequest)
+          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         setState(prev => ({ ...prev, withdrawals }));
       }, (err) => {
         if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
           console.warn(`Admin access to withdrawals denied. Falling back.`);
-          const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'));
+          const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', currentUserId));
           reg(onSnapshot(fallbackQuery, (s) => {
-            setState(prev => ({ ...prev, withdrawals: s.docs.map(d => d.data() as WithdrawalRequest) }));
+            const withdrawals = s.docs
+              .map(d => d.data() as WithdrawalRequest)
+              .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            setState(prev => ({ ...prev, withdrawals }));
           }, (fErr) => {
             handleListenerError('Withdrawals Fallback Error', fErr);
           }));
@@ -1292,14 +1389,19 @@ export default function App() {
       }));
 
       reg(onSnapshot(getQuery('deposits'), (snap) => {
-        const deposits = snap.docs.map(d => d.data() as DepositRequest);
+        const deposits = snap.docs
+          .map(d => d.data() as DepositRequest)
+          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         setState(prev => ({ ...prev, deposits }));
       }, (err) => {
         if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
           console.warn(`Admin access to deposits denied. Falling back.`);
-          const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', currentUserId), orderBy('timestamp', 'desc'));
+          const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', currentUserId));
           reg(onSnapshot(fallbackQuery, (s) => {
-            setState(prev => ({ ...prev, deposits: s.docs.map(d => d.data() as DepositRequest) }));
+            const deposits = s.docs
+              .map(d => d.data() as DepositRequest)
+              .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            setState(prev => ({ ...prev, deposits }));
           }, (fErr) => {
             handleListenerError('Deposits Fallback Error', fErr);
           }));
@@ -3622,15 +3724,6 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
   }, [playerTransactions]);
 
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [globalTimeLeft, setGlobalTimeLeft] = useState<number>(60 - new Date().getSeconds());
-
-  // Update globalTimeLeft every second to sync with the wall clock's current minute
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setGlobalTimeLeft(60 - new Date().getSeconds());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Sync isSpinning when a pending bet exists (e.g. after refresh/login)
   useEffect(() => {
@@ -3706,22 +3799,6 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
     }
   };
 
-  const lotterySecondsLeft = state.lotteryTargetTimestamp && state.lotteryTimerActive
-    ? Math.max(0, Math.floor((state.lotteryTargetTimestamp - Date.now()) / 1000))
-    : (state.lotteryTimerDuration ?? 0);
-
-  const formatLotteryTimerStr = (seconds: number) => {
-    if (seconds <= 0) return '00:00';
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    const pad = (num: number) => num < 10 ? `0${num}` : num;
-    if (hrs > 0) return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
-    return `${pad(mins)}:${pad(secs)}`;
-  };
-
-  const lotteryTimerStr = formatLotteryTimerStr(lotterySecondsLeft);
-
   const activePendingBet = currentPlayer?.pendingBet || (
     state.transactions?.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')
       ? {
@@ -3738,44 +3815,17 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
       {/* Main Game Container */}
       <div className="relative bg-transparent text-center space-y-6 overflow-visible">
         {/* Subtle Ambient Light Accents */}
-        <div className="absolute -top-24 -left-24 w-64 h-64 bg-red-600/20 rounded-full blur-[80px] pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-cyan-500/20 rounded-full blur-[80px] pointer-events-none" />
+        <div className="absolute -top-24 -left-24 w-64 h-64 bg-red-600/15 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-cyan-500/15 rounded-full blur-2xl pointer-events-none" />
 
         {/* STAT CARDS SECTION */}
         <div className="space-y-3 mb-8 relative z-20">
           {/* Card 1: NEXT LOTTERY RESULT */}
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_20px_rgba(255,50,0,0.25)] transition-all hover:shadow-[0_0_30px_rgba(255,50,0,0.4)]"
-          >
-            <div className="bg-[#0c0816]/95 backdrop-blur-md p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-[#ffb700] shadow-[0_0_12px_#ffb700] animate-pulse" />
-                <div className="text-left">
-                  <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#ffb700] block">NEXT LOTTERY</span>
-                  <span className="text-xs font-black uppercase tracking-wider text-white block">RESULT</span>
-                  <p className="text-[11px] font-bold text-slate-300 mt-0.5">
-                    {state.lotteryTimerActive && lotterySecondsLeft > 0 ? 'Drawing Soon' : 'Result Pending'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-col items-end">
-                <div className="flex items-center gap-2 px-3 py-1.5 border border-[#ff2a00] bg-[#1d070b]/90 rounded-xl text-[#ffcc00] shadow-[0_0_12px_rgba(255,0,68,0.4)]">
-                  <Clock className="w-4 h-4 text-[#ffcc00] animate-pulse" />
-                  <span className="font-mono text-base font-black tracking-wider">{lotteryTimerStr}</span>
-                </div>
-                {/* Yellow Progress bar */}
-                <div className="w-[84px] bg-gray-900/80 h-1.5 rounded-full overflow-hidden mt-1.5 border border-white/5">
-                  <div 
-                    className="h-full bg-gradient-to-r from-[#ffb700] via-[#ff7700] to-[#ff0033] transition-all duration-1000 ease-linear shadow-[0_0_8px_#ffb700]"
-                    style={{ width: `${state.lotteryTimerActive && lotterySecondsLeft > 0 ? (lotterySecondsLeft / (state.lotteryTimerDuration || 300)) * 100 : 75}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          </motion.div>
+          <NextLotteryCard 
+            lotteryTargetTimestamp={state.lotteryTargetTimestamp} 
+            lotteryTimerActive={state.lotteryTimerActive} 
+            lotteryTimerDuration={state.lotteryTimerDuration} 
+          />
 
           {/* Card 2: TOTAL BETS PLACED */}
           <motion.div 
@@ -3784,7 +3834,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
             transition={{ delay: 0.05 }}
             className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#ff0033] via-[#ff7700] to-[#ffb700] shadow-[0_0_20px_rgba(255,50,0,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,80,0,0.35)]"
           >
-            <div className="bg-[#0c0816]/95 backdrop-blur-md p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
+            <div className="bg-[#0c0816]/98 p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_12px_rgba(255,100,0,0.4)] shrink-0">
                   <TrendingUp className="w-5 h-5 text-[#ffcc00]" />
@@ -3818,7 +3868,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
               transition={{ delay: 0.1 }}
               className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff0055] to-[#ffb700] shadow-[0_0_20px_rgba(255,0,68,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,0,68,0.35)]"
             >
-              <div className="bg-[#0c0816]/95 backdrop-blur-md p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
+              <div className="bg-[#0c0816]/98 p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_12px_rgba(255,100,0,0.4)] shrink-0">
                     <Trophy className="w-5 h-5 text-[#ffcc00]" />
@@ -3852,6 +3902,53 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
             <p className="text-[#ffcc00] font-bold text-glow-gold">High risk, high reward.</p>
           </div>
         </div>
+
+        {/* VAULT BALANCE CARD */}
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12 }}
+          className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_25px_rgba(0,170,255,0.25)] transition-all hover:shadow-[0_0_35px_rgba(255,80,0,0.4)] my-6 relative z-10"
+        >
+          <div className="bg-[#080512]/98 p-4 rounded-[14px] flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              {/* 3D Bank Vault Door Graphic */}
+              <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-slate-700 via-slate-900 to-black border-2 border-slate-500/80 shadow-[0_0_20px_rgba(0,170,255,0.4)] flex items-center justify-center shrink-0">
+                {/* Vault Outer Wheel Rim */}
+                <div className="absolute inset-1 rounded-full border border-slate-400/50 bg-gradient-to-tr from-slate-800 to-slate-950 flex items-center justify-center">
+                  {/* Rivets around edge */}
+                  {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
+                    <div
+                      key={deg}
+                      className="absolute w-1.5 h-1.5 rounded-full bg-slate-300 shadow-[0_0_3px_#fff]"
+                      style={{ transform: `rotate(${deg}deg) translate(0, -26px)` }}
+                    />
+                  ))}
+                  {/* Central Steering Wheel & Locking Bolts */}
+                  <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border-2 border-cyan-400/80 bg-gradient-to-br from-slate-600 via-slate-800 to-black shadow-[inset_0_0_8px_rgba(0,255,255,0.5)] flex items-center justify-center relative">
+                    {/* Spokes */}
+                    <div className="absolute w-full h-0.5 bg-cyan-300/80" />
+                    <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-45" />
+                    <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-90" />
+                    <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-[135deg]" />
+                    {/* Center Hub */}
+                    <div className="w-4 h-4 rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 border border-white shadow-[0_0_8px_#00e5ff] relative z-10" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Vault Balance Text */}
+              <div className="text-left">
+                <span className="text-xs sm:text-sm font-mono font-black uppercase tracking-widest text-[#00bfff] block drop-shadow-[0_0_8px_rgba(0,191,255,0.6)]">
+                  VAULT BALANCE
+                </span>
+                <span className="text-2xl sm:text-3xl font-black tracking-tight text-white block mt-0.5 drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
+                  {formatBalanceLocal(currentPlayer?.balance ?? 0)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
 
         {/* WITHDRAWALS STOPPED BANNER (If Active) */}
         {state.isWithdrawalsStopped && (
@@ -4017,6 +4114,61 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
           <div className="flex items-center justify-center gap-2 text-[10px] font-black tracking-wider text-slate-300 uppercase py-2.5 bg-white/[0.03] border border-white/10 rounded-2xl px-4 select-none shadow-sm">
             <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
             <span>Your Lost Amount Will Be Donated To Poor</span>
+          </div>
+        </div>
+
+        {/* BOTTOM FEATURE BADGES GRID */}
+        <div className="relative z-10 grid grid-cols-4 gap-1 sm:gap-2 bg-[#090514]/90 border border-slate-800 rounded-2xl p-2.5 sm:p-4 text-center shadow-2xl backdrop-blur-md">
+          {/* Item 1: 100% SECURE */}
+          <div className="flex flex-col items-center justify-center p-1 space-y-1">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
+              <Shield className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+            </div>
+            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+              100% SECURE
+            </span>
+            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+              Safe & Protected
+            </span>
+          </div>
+
+          {/* Item 2: INSTANT GAME */}
+          <div className="flex flex-col items-center justify-center p-1 space-y-1 border-l border-slate-800/80">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
+              <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+            </div>
+            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+              INSTANT GAME
+            </span>
+            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+              Fast & Fair
+            </span>
+          </div>
+
+          {/* Item 3: PROVABLY FAIR */}
+          <div className="flex flex-col items-center justify-center p-1 space-y-1 border-l border-slate-800/80">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
+              <Crown className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+            </div>
+            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+              PROVABLY FAIR
+            </span>
+            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+              Transparent
+            </span>
+          </div>
+
+          {/* Item 4: 24/7 SUPPORT */}
+          <div className="flex flex-col items-center justify-center p-1 space-y-1 border-l border-slate-800/80">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
+              <Headphones className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+            </div>
+            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+              24/7 SUPPORT
+            </span>
+            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+              We're Here
+            </span>
           </div>
         </div>
 

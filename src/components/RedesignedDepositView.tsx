@@ -1402,13 +1402,13 @@ export function RedesignedDepositView({
                 <p className="text-xs font-mono text-slate-500">No active deposit claims recorded.</p>
               </div>
             ) : (
-              <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+              <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar touch-pan-y" style={{ touchAction: 'pan-y' }}>
                 {userDeposits.map((dep) => {
                   const isUp = dep.method.toLowerCase().includes('upi');
                   return (
                     <div
                       key={dep.id}
-                      onClick={() => setSelectedTxForModal(dep)}
+                      onPointerDown={() => setSelectedTxForModal(dep)}
                       className="p-3 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl flex items-center justify-between gap-3 transition-all cursor-pointer"
                     >
                       <div className="space-y-0.5 min-w-0">
