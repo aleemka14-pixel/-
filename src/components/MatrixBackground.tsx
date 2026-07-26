@@ -156,7 +156,7 @@ export const MatrixBackground = memo(function MatrixBackground() {
       <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-gradient-radial from-red-600/15 via-amber-500/5 to-transparent blur-3xl pointer-events-none" />
 
       {/* Lightning & Particle Canvas */}
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
       {/* 1. TOP-LEFT ROTATING CASINO ROULETTE WHEEL */}
       <div className="absolute -top-16 -left-20 w-80 h-80 sm:w-96 sm:h-96 opacity-25 pointer-events-none animate-[spin_50s_linear_infinite]">

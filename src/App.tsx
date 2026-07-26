@@ -3031,7 +3031,7 @@ export default function App() {
       <div className="flex min-w-0 w-full max-w-full overflow-x-hidden">
         {/* Sidebar */}
         <aside className={`
-          fixed inset-y-0 left-0 z-50 w-72 bg-[#0d0d0d] border-r border-white/5 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0
+          fixed inset-y-0 left-0 z-50 w-72 bg-[#0d0d0d] border-r border-white/5 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 overflow-y-auto custom-scrollbar
           ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}>
           <div className="p-6 flex flex-col h-full">
