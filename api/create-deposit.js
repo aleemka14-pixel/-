@@ -6,7 +6,7 @@ import {
   recordProviderFailure, 
   recordProviderSuccess,
   addPaymentLog
-} from './payment-service.js';
+} from './_services/payment-service.js';
 import { doc, getDoc, writeBatch, collection, query, where, getDocs } from 'firebase/firestore';
 
 /**
@@ -16,6 +16,18 @@ import { doc, getDoc, writeBatch, collection, query, where, getDocs } from 'fire
  * Uses the dynamic centralized configuration and adapter patterns.
  */
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({

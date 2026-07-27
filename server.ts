@@ -17,8 +17,14 @@ async function startServer() {
     try {
       const apiPath = req.path; // e.g. /api/admin/wallet-status
       
+      // Handle aliased routes in local dev
+      let normalizedPath = apiPath;
+      if (normalizedPath === '/api/create-withdrawal') {
+        normalizedPath = '/api/create-withdraw';
+      }
+
       // Map to the JS/TS files inside /api folder
-      let relativePath = apiPath;
+      let relativePath = normalizedPath;
       if (!relativePath.endsWith(".js") && !relativePath.endsWith(".ts")) {
         relativePath += ".js";
       }

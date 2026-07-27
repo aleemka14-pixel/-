@@ -5,7 +5,7 @@ import {
   recordProviderFailure, 
   recordProviderSuccess,
   addPaymentLog
-} from './payment-service.js';
+} from './_services/payment-service.js';
 import { doc, getDoc, runTransaction, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 
 /**
@@ -67,6 +67,18 @@ function verifyNowPaymentsSignature(headers, payload, ipnSecret) {
  * Handles production-ready Instant Payment Notifications (IPN) sent by the NOWPayments gateway.
  */
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, x-nowpayments-sig, np-sig'
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   // 1. Accept POST requests only
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
