@@ -1,11 +1,15 @@
-import { initializeApp } from 'firebase/app';
-import { initializeAuth, GoogleAuthProvider, signInWithPopup, signOut, browserLocalPersistence, browserPopupRedirectResolver } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeAuth, getAuth, GoogleAuthProvider, signInWithPopup, signOut, browserLocalPersistence, browserPopupRedirectResolver } from 'firebase/auth';
+import { initializeFirestore, getFirestore, doc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // Support loading Firebase config from environment variables (useful for Vercel deployments)
 // with a fallback to the committed firebase-applet-config.json values.
 const env = (import.meta as any).env || {};
+
+const targetDbId = (env.VITE_FIREBASE_FIRESTORE_DATABASE_ID && env.VITE_FIREBASE_FIRESTORE_DATABASE_ID !== '(default)' && env.VITE_FIREBASE_FIRESTORE_DATABASE_ID.trim() !== '') 
+  ? env.VITE_FIREBASE_FIRESTORE_DATABASE_ID 
+  : (firebaseConfigJson.firestoreDatabaseId || 'ai-studio-8036f1f6-5204-4076-9a49-fc8a3d7ebda4');
 
 const firebaseConfig = {
   apiKey: env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey,
@@ -14,9 +18,7 @@ const firebaseConfig = {
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
   appId: env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
-  firestoreDatabaseId: (env.VITE_FIREBASE_FIRESTORE_DATABASE_ID && env.VITE_FIREBASE_FIRESTORE_DATABASE_ID !== '(default)' && env.VITE_FIREBASE_FIRESTORE_DATABASE_ID.trim() !== '') 
-    ? env.VITE_FIREBASE_FIRESTORE_DATABASE_ID 
-    : firebaseConfigJson.firestoreDatabaseId,
+  firestoreDatabaseId: targetDbId,
 };
 
 console.log('[PRODUCTION DIAGNOSTICS 1] Firebase Project ID:', firebaseConfig.projectId);
@@ -29,24 +31,41 @@ console.log('[PRODUCTION DIAGNOSTICS 5] Config check:', {
   rawConfigJsonDbId: firebaseConfigJson.firestoreDatabaseId,
 });
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Set log level to 'error' to suppress harmless gRPC stream disconnection warnings
-setLogLevel('error');
+try {
+  setLogLevel('error');
+} catch (e) {
+  // Ignored
+}
 
-// Improved Firestore initialization with auto-detect long-polling and multi-tab persistent offline cache
-export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
-}, firebaseConfig.firestoreDatabaseId);
+// Resilient Firestore initialization with fallback to standard getFirestore if persistent cache is blocked in iframe/cross-origin
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  }, firebaseConfig.firestoreDatabaseId);
+} catch (e) {
+  console.warn('[Firebase Info] Fallback to standard Firestore instance:', e);
+  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+export const db = dbInstance;
 
-// Use initializeAuth with explicit persistence and resolver for better iframe compatibility
-export const auth = initializeAuth(app, {
-  persistence: browserLocalPersistence,
-  popupRedirectResolver: browserPopupRedirectResolver,
-});
+// Resilient Auth initialization
+let authInstance;
+try {
+  authInstance = initializeAuth(app, {
+    persistence: browserLocalPersistence,
+    popupRedirectResolver: browserPopupRedirectResolver,
+  });
+} catch (e) {
+  authInstance = getAuth(app);
+}
+export const auth = authInstance;
 
 export const googleProvider = new GoogleAuthProvider();
 

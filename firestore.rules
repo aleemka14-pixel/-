@@ -28,13 +28,23 @@ service cloud.firestore {
 
     // --- Users & Profiles Security ---
     match /users/{userId} {
-      allow read, create, update: if true;
+      allow read: if true;
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if isAdmin() || (
+        isOwner(userId) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['balance', 'walletBalance'])
+      );
       allow delete: if isAdmin();
     }
 
     // --- Players Collection ---
     match /players/{playerId} {
-      allow read, create, update: if true;
+      allow read: if true;
+      allow create: if isOwner(playerId) || isAdmin();
+      allow update: if isAdmin() || (
+        isOwner(playerId) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['balance', 'walletBalance'])
+      );
       allow delete: if isAdmin();
     }
 

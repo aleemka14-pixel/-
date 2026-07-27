@@ -73,8 +73,27 @@ const DEFAULT_PAYMENT_CONFIG = {
 export class PaymentService {
   constructor() {
     // 1. Initialize Firebase App server-side securely
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    let firebaseConfig;
+    try {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      }
+    } catch (e) {
+      console.warn('[PaymentService] Config read warning:', e.message);
+    }
+
+    if (!firebaseConfig) {
+      firebaseConfig = {
+        projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0100195413',
+        appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || '1:996872918053:web:2511101fd327cf9f7e1bcc',
+        apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyCl-J4tP32LvcMtExXC_c84fqbTr6VdFs0',
+        authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || 'gen-lang-client-0100195413.firebaseapp.com',
+        firestoreDatabaseId: process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || process.env.FIREBASE_FIRESTORE_DATABASE_ID || 'ai-studio-8036f1f6-5204-4076-9a49-fc8a3d7ebda4',
+        storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || 'gen-lang-client-0100195413.firebasestorage.app',
+        messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || '996872918053'
+      };
+    }
 
     let app;
     if (getApps().length === 0) {
@@ -90,7 +109,8 @@ export class PaymentService {
       // Ignored if already set
     }
     
-    this.db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    const dbId = firebaseConfig.firestoreDatabaseId || process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID;
+    this.db = dbId ? getFirestore(app, dbId) : getFirestore(app);
     
     // Instantiate core operational logger
     this.logger = new PaymentLogger(this.db);

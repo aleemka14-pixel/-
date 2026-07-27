@@ -99,6 +99,7 @@ import {
   deleteDoc,
   writeBatch,
   increment,
+  runTransaction,
   limit
 } from 'firebase/firestore';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
@@ -1031,19 +1032,28 @@ export default function App() {
 
       setState(prev => {
         const playersList = prev.players || [];
-        const currentUid = user?.uid;
         
         const updated = mergedPlayers.map(p => {
           const existingPlayer = playersList.find(pl => pl && pl.id === p.id);
-          const userDocBalance = currentUid && p && p.id === currentUid ? existingPlayer?.balance : undefined;
-          const effectiveBalance = userDocBalance !== undefined ? userDocBalance : p.balance;
+          // Always prioritize the real-time balance from Firestore document (p.balance / p.walletBalance)
+          const effectiveBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) 
+            ? Number(p.balance) 
+            : (existingPlayer?.balance ?? 0);
           
-          // Preserve pendingBet from state if incoming item didn't explicitly set pendingBet to null
-          const effectivePendingBet = p.pendingBet !== undefined ? p.pendingBet : existingPlayer?.pendingBet;
+          // Preserve pendingBet correctly: if p explicitly sets null, it is cleared; if undefined, keep existing or rawCurrentPlayer
+          let effectivePendingBet = p.pendingBet;
+          if (effectivePendingBet === undefined) {
+            if (p.id === user?.uid && rawCurrentPlayer?.pendingBet !== undefined) {
+              effectivePendingBet = rawCurrentPlayer.pendingBet;
+            } else {
+              effectivePendingBet = existingPlayer?.pendingBet;
+            }
+          }
 
           return {
             ...p,
             balance: effectiveBalance,
+            walletBalance: effectiveBalance,
             pendingBet: effectivePendingBet
           };
         });
@@ -1227,9 +1237,13 @@ export default function App() {
           setState(prev => {
             const otherPlayers = prev.players.filter(pl => pl.id !== p.id);
             const existingP = prev.players.find(pl => pl.id === p.id);
+            const liveBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) 
+              ? Number(p.balance) 
+              : (existingP?.balance ?? 0);
             const mergedPlayer = {
               ...p,
-              balance: existingP ? existingP.balance : p.balance // Use the user doc's balance as master
+              balance: liveBalance,
+              walletBalance: liveBalance
             };
             return { ...prev, players: [...otherPlayers, mergedPlayer] };
           });
@@ -2700,42 +2714,63 @@ export default function App() {
       throw new Error("Betting closed — Please wait for the next round.");
     }
     try {
-      const batch = writeBatch(db);
-      const txnId = Math.random().toString(36).substr(2, 9);
+      const txnId = `tx_bet_${user.uid}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
       const timestamp = Date.now();
+      const playerRef = doc(db, 'players', user.uid);
+      const userRef = doc(db, 'users', user.uid);
+      const txnRef = doc(db, 'transactions', txnId);
 
-      batch.set(doc(db, 'transactions', txnId), {
-        id: txnId,
-        playerId: user.uid,
-        type: 'bet',
-        amount: amt,
-        timestamp,
-        status: 'pending'
+      await runTransaction(db, async (txn) => {
+        const playerSnap = await txn.get(playerRef);
+        const userSnap = await txn.get(userRef);
+
+        if (!playerSnap.exists()) {
+          throw new Error("Player profile not found.");
+        }
+
+        const playerData = playerSnap.data();
+        const currentBalance = Number(userSnap.exists() ? (userSnap.data().walletBalance ?? userSnap.data().balance ?? playerData.balance) : playerData.balance) || 0;
+
+        if (currentBalance < amt) {
+          throw new Error("Insufficient balance to place bet.");
+        }
+
+        const newBalance = Math.max(0, currentBalance - amt);
+        const existingAmount = playerData.pendingBet?.amount || 0;
+        const newAmount = existingAmount + amt;
+
+        txn.set(txnRef, {
+          id: txnId,
+          playerId: user.uid,
+          type: 'bet',
+          amount: amt,
+          timestamp,
+          status: 'pending'
+        });
+
+        txn.update(playerRef, {
+          balance: newBalance,
+          walletBalance: newBalance,
+          pendingBet: { amount: newAmount, timestamp },
+          totalWagered: (playerData.totalWagered || 0) + amt,
+          totalBetsCount: (playerData.totalBetsCount || 0) + 1,
+          biggestBet: Math.max(amt, playerData.biggestBet || 0),
+          lastActive: timestamp
+        });
+
+        if (userSnap.exists()) {
+          const uData = userSnap.data();
+          txn.update(userRef, {
+            walletBalance: newBalance,
+            balance: newBalance,
+            totalWagered: (uData.totalWagered || 0) + amt,
+            totalBetsCount: (uData.totalBetsCount || 0) + 1,
+            biggestBet: Math.max(amt, uData.biggestBet || 0),
+            lastActive: timestamp,
+            updatedAt: timestamp
+          });
+        }
       });
-
-      const existingAmount = currentPlayer.pendingBet?.amount || 0;
-      const newAmount = existingAmount + amt;
-
-      batch.update(doc(db, 'players', user.uid), {
-        balance: increment(-amt),
-        pendingBet: { amount: newAmount, timestamp },
-        totalWagered: increment(amt),
-        totalBetsCount: increment(1),
-        biggestBet: amt > (currentPlayer.biggestBet || 0) ? amt : (currentPlayer.biggestBet || amt),
-        lastActive: timestamp
-      });
-
-      batch.update(doc(db, 'users', user.uid), {
-        walletBalance: increment(-amt),
-        balance: increment(-amt),
-        totalWagered: increment(amt),
-        totalBetsCount: increment(1),
-        biggestBet: amt > (currentPlayer.biggestBet || 0) ? amt : (currentPlayer.biggestBet || amt),
-        lastActive: timestamp,
-        updatedAt: timestamp
-      });
-
-      await batch.commit();
 
       if (!state.manualMode) {
         const targetUid = user.uid;
