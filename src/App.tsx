@@ -497,29 +497,29 @@ const NextLotteryCard = memo(function NextLotteryCard({
     <motion.div 
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_15px_rgba(255,50,0,0.2)] transition-all hover:shadow-[0_0_25px_rgba(255,50,0,0.35)]"
+      className="w-full p-[1px] rounded-xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_15px_rgba(255,50,0,0.2)]"
     >
-      <div className="bg-[#0c0816]/98 p-2.5 sm:p-3 rounded-[10px] flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
+      <div className="bg-[#0b0818]/95 backdrop-blur-md p-2.5 sm:p-3 rounded-[11px] flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-2.5 h-2.5 rounded-full bg-[#ffb700] shadow-[0_0_10px_#ffb700] animate-pulse shrink-0" />
-          <div className="text-left">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#ffb700]">NEXT LOTTERY</span>
-              <span className="text-[10px] font-black uppercase tracking-wider text-white">RESULT</span>
+          <div className="text-left min-w-0">
+            <div className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-[10px] sm:text-xs font-mono font-black uppercase tracking-wider text-[#ffb700]">NEXT LOTTERY</span>
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-white">RESULT</span>
             </div>
-            <p className="text-[10px] font-bold text-slate-300">
+            <p className="text-[9px] sm:text-[10px] font-bold text-slate-300/80 truncate">
               {lotteryTimerActive && lotterySecondsLeft > 0 ? 'Drawing Soon' : 'Result Pending'}
             </p>
           </div>
         </div>
 
-        <div className="flex flex-col items-end">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 border border-[#ff2a00] bg-[#1d070b]/90 rounded-lg text-[#ffcc00] shadow-[0_0_10px_rgba(255,0,68,0.3)]">
-            <Clock className="w-3.5 h-3.5 text-[#ffcc00] animate-pulse" />
-            <span className="font-mono text-sm sm:text-base font-black tracking-wider">{lotteryTimerStr}</span>
+        <div className="flex flex-col items-end shrink-0">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 border border-[#ff2a00]/80 bg-[#1d070b]/90 rounded-lg text-[#ffcc00] shadow-[0_0_10px_rgba(255,0,68,0.3)]">
+            <Clock className="w-3.5 h-3.5 text-[#ffcc00] animate-pulse shrink-0" />
+            <span className="font-mono text-xs sm:text-sm font-black tracking-wider whitespace-nowrap">{lotteryTimerStr}</span>
           </div>
           {/* Yellow Progress bar */}
-          <div className="w-[72px] sm:w-[84px] bg-gray-900/80 h-1 sm:h-1.5 rounded-full overflow-hidden mt-1 border border-white/5">
+          <div className="w-[72px] sm:w-[84px] bg-gray-900/90 h-1 sm:h-1.5 rounded-full overflow-hidden mt-1 border border-white/10">
             <div 
               className="h-full bg-gradient-to-r from-[#ffb700] via-[#ff7700] to-[#ff0033] transition-all duration-1000 ease-linear shadow-[0_0_8px_#ffb700]"
               style={{ width: `${progressPercent}%` }}
@@ -3888,46 +3888,68 @@ const GameView = memo(function GameView({ state, currentPlayer, onPlaceBet, play
           </div>
         </div>
 
-        {/* VAULT BALANCE CARD */}
+        {/* VAULT BALANCE CARD - IRON MAN ARC REACTOR CORE */}
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.12 }}
-          className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_20px_rgba(0,170,255,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,80,0,0.35)] my-1.5 sm:my-2.5 relative z-10"
+          className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#00f0ff] via-[#0066ff] to-[#7928ca] shadow-[0_0_25px_rgba(0,240,255,0.25)] transition-all hover:shadow-[0_0_35px_rgba(0,240,255,0.4)] my-1.5 sm:my-2.5 relative z-10"
         >
-          <div className="bg-[#080512]/98 p-2.5 sm:p-3 rounded-[10px] flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              {/* 3D Bank Vault Door Graphic */}
-              <div className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-slate-700 via-slate-900 to-black border-2 border-slate-500/80 shadow-[0_0_15px_rgba(0,170,255,0.35)] flex items-center justify-center shrink-0">
-                {/* Vault Outer Wheel Rim */}
-                <div className="absolute inset-0.5 rounded-full border border-slate-400/50 bg-gradient-to-tr from-slate-800 to-slate-950 flex items-center justify-center">
-                  {/* Rivets around edge */}
-                  {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
-                    <div
-                      key={deg}
-                      className="absolute w-1 h-1 rounded-full bg-slate-300 shadow-[0_0_2px_#fff]"
-                      style={{ transform: `rotate(${deg}deg) translate(0, -17px)` }}
-                    />
-                  ))}
-                  {/* Central Steering Wheel & Locking Bolts */}
-                  <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full border border-cyan-400/80 bg-gradient-to-br from-slate-600 via-slate-800 to-black shadow-[inset_0_0_6px_rgba(0,255,255,0.5)] flex items-center justify-center relative">
-                    {/* Spokes */}
-                    <div className="absolute w-full h-0.5 bg-cyan-300/80" />
-                    <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-45" />
-                    <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-90" />
-                    <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-[135deg]" />
-                    {/* Center Hub */}
-                    <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 border border-white shadow-[0_0_6px_#00e5ff] relative z-10" />
+          <div className="bg-[#050814]/98 p-2.5 sm:p-3 rounded-[10px] flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
+              {/* Iron Man Mark I / Sci-Fi Arc Reactor Graphic */}
+              <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shrink-0 group">
+                {/* Outer Plasma Glow Halo */}
+                <div className="absolute -inset-1.5 rounded-full bg-gradient-to-r from-cyan-500 via-blue-600 to-teal-400 opacity-70 blur-md animate-arc-pulse pointer-events-none" />
+
+                {/* Heavy Titanium Outer Housing */}
+                <div className="relative w-full h-full rounded-full bg-gradient-to-br from-slate-800 via-slate-950 to-black p-0.5 border border-cyan-400/60 shadow-[0_0_15px_rgba(0,240,255,0.5)] flex items-center justify-center overflow-hidden">
+                  
+                  {/* Rotating Metallic Outer Notch Ring */}
+                  <div className="absolute inset-0.5 rounded-full border border-cyan-500/30 animate-arc-clockwise flex items-center justify-center">
+                    {[0, 36, 72, 108, 144, 180, 216, 252, 288, 324].map((deg) => (
+                      <div
+                        key={deg}
+                        className="absolute w-0.5 h-1.5 bg-cyan-300 shadow-[0_0_4px_#00f0ff]"
+                        style={{ transform: `rotate(${deg}deg) translate(0, -20px)` }}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Counter-rotating Plasma Grid Line */}
+                  <div className="absolute inset-1.5 rounded-full border border-dashed border-blue-400/50 animate-arc-counter" />
+
+                  {/* Copper Induction Coils (10 Core Coils around reactor) */}
+                  <div className="absolute inset-2 rounded-full flex items-center justify-center">
+                    {[0, 36, 72, 108, 144, 180, 216, 252, 288, 324].map((deg) => (
+                      <div
+                        key={deg}
+                        className="absolute w-1 h-2 rounded-xs bg-gradient-to-t from-amber-500 via-yellow-300 to-cyan-300 border border-amber-300/80 shadow-[0_0_5px_rgba(0,240,255,0.8)]"
+                        style={{ transform: `rotate(${deg}deg) translate(0, -13px)` }}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Central Bright Blue Plasma Energy Core */}
+                  <div className="relative w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-gradient-to-br from-cyan-200 via-cyan-400 to-blue-700 border border-white shadow-[0_0_10px_#00f0ff,inset_0_0_6px_#ffffff] flex items-center justify-center animate-pulse z-10">
+                    {/* Center Core Node Star */}
+                    <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-white shadow-[0_0_8px_#ffffff]" />
                   </div>
                 </div>
               </div>
 
-              {/* Vault Balance Text */}
-              <div className="text-left">
-                <span className="text-[10px] sm:text-xs font-mono font-black uppercase tracking-widest text-[#00bfff] block drop-shadow-[0_0_6px_rgba(0,191,255,0.5)]">
-                  VAULT BALANCE
-                </span>
-                <span className="text-xl sm:text-2xl font-black tracking-tight text-white block mt-0.5 drop-shadow-[0_0_10px_rgba(255,255,255,0.4)]">
+              {/* Holographic Balance Typography */}
+              <div className="text-left min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] sm:text-xs font-mono font-black uppercase tracking-widest text-[#00f0ff] block drop-shadow-[0_0_6px_rgba(0,240,255,0.8)]">
+                    VAULT BALANCE CORE
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-cyan-500/10 border border-cyan-400/30 text-[9px] font-mono text-cyan-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                    ACTIVE
+                  </span>
+                </div>
+                <span className="text-xl sm:text-2xl font-black tracking-tight text-white block mt-0.5 drop-shadow-[0_0_12px_rgba(0,240,255,0.7)] font-mono">
                   {formatBalanceLocal(currentPlayer?.balance ?? 0)}
                 </span>
               </div>
@@ -3947,87 +3969,119 @@ const GameView = memo(function GameView({ state, currentPlayer, onPlaceBet, play
           </motion.div>
         )}
 
-        {/* BET AMOUNT CONTROL ROW & CUSTOM SLIDER */}
-        <div className="my-1.5 sm:my-2.5 relative z-10 space-y-1.5 sm:space-y-2 bg-[#0a0614]/80 border border-amber-500/20 rounded-xl p-2.5 sm:p-3.5 shadow-[0_0_20px_rgba(0,0,0,0.6)]">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] sm:text-xs font-mono font-black text-[#00e5ff] uppercase tracking-[0.15em] block drop-shadow-[0_0_6px_rgba(0,229,255,0.5)]">
-              BET AMOUNT
-            </span>
-            {state.isBetLimitEnabled && (
-              <span className="text-[9px] font-mono text-amber-400 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
-                MAX: {formatBalanceLocal(state.maxBet || 500)}
-              </span>
-            )}
-          </div>
+        {/* FUTURISTIC BET CONTROL MODULE & SLIDER */}
+        {(() => {
+          const sliderMin = minLocalBet;
+          const sliderMax = Math.max(minLocalBet, maxBetPossible * rate);
+          const currentLocalVal = isZeroDecimal ? Math.round(betAmount * rate) : Math.round(betAmount * rate * 100) / 100;
+          const rawPercent = (currentLocalVal - sliderMin) / Math.max(1, sliderMax - sliderMin);
+          const percentFilled = Math.min(100, Math.max(0, rawPercent * 100));
 
-          {/* Full-width Long Slider */}
-          <div className="relative flex items-center w-full py-1">
-            <input 
-              type="range" 
-              min={minLocalBet} 
-              max={Math.max(minLocalBet, maxBetPossible * rate)}
-              step={minLocalBet}
-              value={isZeroDecimal ? Math.round(betAmount * rate) : Math.round(betAmount * rate * 100) / 100} 
-              onChange={(e) => {
-                const localVal = Number(e.target.value);
-                setBetAmount(localVal / rate);
-                playSound('CLICK'); 
-              }}
-              onMouseDown={() => setIsDragging(true)}
-              onMouseUp={() => setIsDragging(false)}
-              onTouchStart={() => setIsDragging(true)}
-              onTouchEnd={() => setIsDragging(false)}
-              disabled={isPlacingBet || state.isBettingClosed}
-              className="matrix-slider w-full cursor-pointer disabled:opacity-50"
-            />
-          </div>
+          return (
+            <div className="my-1.5 sm:my-2.5 relative z-10 space-y-2 bg-[#060817]/90 border border-cyan-500/30 backdrop-blur-md rounded-xl p-3 sm:p-4 shadow-[0_0_25px_rgba(0,0,0,0.8)]">
+              {/* Floating HUD Indicator Bar */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] sm:text-xs font-mono font-black text-[#00f0ff] uppercase tracking-[0.15em] block drop-shadow-[0_0_6px_rgba(0,240,255,0.8)]">
+                    BET AMOUNT
+                  </span>
+                  <span className="text-[9px] font-mono text-cyan-300 bg-cyan-950/80 border border-cyan-500/40 px-2 py-0.5 rounded-full shadow-[0_0_8px_rgba(0,240,255,0.3)]">
+                    {Math.round(percentFilled)}%
+                  </span>
+                </div>
 
-          {/* Controls & Display Row Below Slider */}
-          <div className="flex items-center justify-between gap-2 pt-0.5">
-            {/* Quick Adjustment Pills */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  const newAmt = Math.max(minLocalBet / rate, betAmount - 100);
-                  setBetAmount(newAmt);
-                  playSound('CLICK');
-                }}
-                disabled={isPlacingBet || state.isBettingClosed}
-                className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white font-mono font-bold text-xs hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
-              >
-                -
-              </button>
-              <button
-                onClick={() => {
-                  const newAmt = Math.min(maxBetPossible, betAmount + 100);
-                  setBetAmount(newAmt);
-                  playSound('CLICK');
-                }}
-                disabled={isPlacingBet || state.isBettingClosed}
-                className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white font-mono font-bold text-xs hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
-              >
-                +
-              </button>
-              <button
-                onClick={() => {
-                  setBetAmount(maxBetPossible);
-                  playSound('CLICK');
-                }}
-                disabled={isPlacingBet || state.isBettingClosed}
-                className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-bold text-[10px] sm:text-xs hover:bg-amber-500/30 transition-all cursor-pointer disabled:opacity-40"
-              >
-                MAX
-              </button>
+                {/* HUD Floating Value Display Box */}
+                <div className="relative border border-cyan-400/80 bg-[#061224]/95 px-3 py-1 rounded-lg shadow-[0_0_15px_rgba(0,240,255,0.4)] flex items-center gap-1.5 animate-hud-pulse">
+                  <span className="text-sm sm:text-base font-mono font-black text-[#00f0ff] tracking-tight drop-shadow-[0_0_8px_rgba(0,240,255,0.9)]">
+                    {formatBalanceLocal(betAmount)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Interactive Slider Track with Neon Gradient Glow */}
+              <div className="relative flex items-center w-full my-2 py-1.5 px-1 bg-[#030611] rounded-full border border-cyan-500/30 shadow-[inset_0_0_10px_rgba(0,0,0,0.9)]">
+                {/* Glowing Filled Progress Bar Underneath */}
+                <div 
+                  className="absolute left-1 top-1.5 bottom-1.5 rounded-full transition-all duration-75 pointer-events-none"
+                  style={{ 
+                    width: `calc(${percentFilled}% - 8px)`,
+                    minWidth: '12px',
+                    background: 'linear-gradient(90deg, #00f0ff 0%, #0088ff 50%, #ffaa00 80%, #ff0055 100%)',
+                    boxShadow: '0 0 14px rgba(0, 240, 255, 0.8)'
+                  }}
+                />
+
+                {/* Futuristic Range Input */}
+                <input 
+                  type="range" 
+                  min={minLocalBet} 
+                  max={Math.max(minLocalBet, maxBetPossible * rate)}
+                  step={minLocalBet}
+                  value={isZeroDecimal ? Math.round(betAmount * rate) : Math.round(betAmount * rate * 100) / 100} 
+                  onChange={(e) => {
+                    const localVal = Number(e.target.value);
+                    setBetAmount(localVal / rate);
+                    playSound('CLICK'); 
+                  }}
+                  onMouseDown={() => setIsDragging(true)}
+                  onMouseUp={() => setIsDragging(false)}
+                  onTouchStart={() => setIsDragging(true)}
+                  onTouchEnd={() => setIsDragging(false)}
+                  disabled={isPlacingBet || state.isBettingClosed}
+                  className="futuristic-slider w-full cursor-pointer disabled:opacity-50"
+                />
+              </div>
+
+              {/* Quick Adjustment Pills (NO '+' or '-' buttons!) */}
+              <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                <div className="flex items-center gap-1.5 w-full justify-between">
+                  <button
+                    onClick={() => {
+                      setBetAmount(minLocalBet / rate);
+                      playSound('CLICK');
+                    }}
+                    disabled={isPlacingBet || state.isBettingClosed}
+                    className="flex-1 py-1.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 font-mono font-bold text-[11px] sm:text-xs hover:bg-cyan-900/60 hover:border-cyan-400 transition-all cursor-pointer disabled:opacity-40 shadow-[0_0_8px_rgba(0,240,255,0.15)]"
+                  >
+                    MIN
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newAmt = Math.max(minLocalBet / rate, betAmount / 2);
+                      setBetAmount(newAmt);
+                      playSound('CLICK');
+                    }}
+                    disabled={isPlacingBet || state.isBettingClosed}
+                    className="flex-1 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-200 font-mono font-bold text-[11px] sm:text-xs hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    ½
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newAmt = Math.min(maxBetPossible, betAmount * 2);
+                      setBetAmount(newAmt);
+                      playSound('CLICK');
+                    }}
+                    disabled={isPlacingBet || state.isBettingClosed}
+                    className="flex-1 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-200 font-mono font-bold text-[11px] sm:text-xs hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    2x
+                  </button>
+                  <button
+                    onClick={() => {
+                      setBetAmount(maxBetPossible);
+                      playSound('CLICK');
+                    }}
+                    disabled={isPlacingBet || state.isBettingClosed}
+                    className="flex-1 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/30 to-orange-500/30 border border-amber-500/50 text-amber-300 font-mono font-bold text-[11px] sm:text-xs hover:from-amber-500/40 hover:to-orange-500/40 transition-all cursor-pointer disabled:opacity-40 shadow-[0_0_10px_rgba(245,158,11,0.25)]"
+                  >
+                    MAX
+                  </button>
+                </div>
+              </div>
             </div>
-
-            {/* Golden Value Display Box */}
-            <div className="border border-[#ffb700] bg-[#1a0c02]/95 px-3 py-1 rounded-lg shadow-[0_0_12px_rgba(255,183,0,0.4)] shrink-0 min-w-[100px] text-center">
-              <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] tracking-tight drop-shadow-[0_0_6px_rgba(255,199,0,0.8)]">
-                {formatBalanceLocal(betAmount)}
-              </span>
-            </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* BET STATUS / LOCK NOTIFICATIONS */}
         <div className="my-1.5 sm:my-2 relative z-10 space-y-2">

@@ -5,15 +5,10 @@ import {
   addPaymentLog,
   recordProviderSuccess,
   recordProviderFailure
-} from '../_services/payment-service.js';
+} from '../../_services/payment-service.js';
 import { doc, getDoc, runTransaction, updateDoc } from 'firebase/firestore';
-import walletService from '../../services/wallet-service.js';
+import walletService from '../../../services/wallet-service.js';
 
-/**
- * Vercel Serverless Function: /api/upi/webhook
- * Provider-agnostic UPI Webhook Handler.
- * Verifies callback, checks idempotency, and credits wallet via Wallet Service.
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -59,7 +54,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Optional secret header/token verification
     const expectedSecret = process.env.UPI_WEBHOOK_SECRET;
     if (expectedSecret) {
       const headerSecret = req.headers['x-upi-secret'] || secret;
@@ -73,7 +67,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Lookup matching deposit document
     const depositRef = doc(db, 'deposits', resolvedOrderId);
     const depositSnap = await getDoc(depositRef);
 
@@ -90,7 +83,6 @@ export default async function handler(req, res) {
     const expectedAmount = Number(depositData.amount);
     const receivedAmount = amount ? Number(amount) : expectedAmount;
 
-    // Validate amount match
     if (Math.abs(expectedAmount - receivedAmount) > 0.01) {
       console.error(`[UPI Webhook Error]: Amount mismatch. Expected: ${expectedAmount}, Received: ${receivedAmount}`);
       return res.status(400).json({
@@ -99,7 +91,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Idempotency check: Ignore duplicate webhooks if deposit is already completed/confirmed
     if (depositData.status === 'completed' || depositData.status === 'confirmed' || depositData.credited === true) {
       console.log(`[Duplicate UPI Webhook Ignored]: Order '${resolvedOrderId}' is already credited.`);
       return res.status(200).json({
@@ -116,7 +107,6 @@ export default async function handler(req, res) {
     if (isSuccess) {
       const timestampNow = Date.now();
 
-      // Atomic mark as completed in deposits collection
       await runTransaction(db, async (txn) => {
         const freshSnap = await txn.get(depositRef);
         if (!freshSnap.exists()) throw new Error('Deposit order missing.');
@@ -137,7 +127,6 @@ export default async function handler(req, res) {
         });
       });
 
-      // Credit wallet via Wallet Service
       const walletRes = await walletService.deposit(
         resolvedUserId,
         expectedAmount,
@@ -162,8 +151,6 @@ export default async function handler(req, res) {
         `PaymentId: ${paymentId || 'N/A'} | UTR: ${utr || 'N/A'}`
       );
 
-      console.log(`[UPI Deposit Success]: User ${resolvedUserId} credited with ₹${expectedAmount}. New balance: ${walletRes.balanceAfter}`);
-
       return res.status(200).json({
         success: true,
         message: 'UPI deposit verified and wallet credited successfully.',
@@ -174,7 +161,6 @@ export default async function handler(req, res) {
         status: 'completed'
       });
     } else {
-      // Mark as failed or cancelled
       const newStatus = normalizedStatus.includes('CANCEL') ? 'cancelled' : 'failed';
       await updateDoc(depositRef, {
         status: newStatus,

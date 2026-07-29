@@ -91,37 +91,115 @@
   }
 }
 
-/* Custom Matrix bet slider thumb */
-input[type='range'].matrix-slider {
+/* Custom Futuristic Casino Bet Slider */
+input[type='range'].futuristic-slider {
   -webkit-appearance: none;
+  appearance: none;
   background: transparent;
-  height: 16px;
-}
-
-input[type='range'].matrix-slider::-webkit-slider-runnable-track {
+  height: 20px;
   width: 100%;
-  height: 16px;
   cursor: pointer;
-  background: linear-gradient(90deg, #ff0033 0%, #ff5500 50%, #ffcc00 100%);
-  border-radius: 9999px;
-  box-shadow: inset 0 0 6px rgba(255, 200, 0, 0.5);
+  outline: none;
+  z-index: 20;
+  position: relative;
 }
 
-input[type='range'].matrix-slider::-webkit-slider-thumb {
+/* Chrome / Safari / Edge Thumb */
+input[type='range'].futuristic-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  height: 36px;
-  width: 36px;
+  appearance: none;
+  height: 32px;
+  width: 32px;
   border-radius: 50%;
-  background: radial-gradient(circle, #ff0055 35%, #990000 100%);
-  border: 3px solid #ffcc00;
-  cursor: pointer;
-  margin-top: -10px;
-  box-shadow: 0 0 12px #ff0055;
-  transition: transform 0.15s ease;
+  background: radial-gradient(circle at 35% 35%, #00f0ff 0%, #0066ff 45%, #070b19 80%, #02040a 100%);
+  border: 2px solid #00f0ff;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.9), inset 0 0 8px rgba(255, 255, 255, 0.8);
+  cursor: grab;
+  margin-top: -6px;
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
 }
 
-input[type='range'].matrix-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.1);
+input[type='range'].futuristic-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.25);
+  box-shadow: 0 0 25px rgba(0, 240, 255, 1), inset 0 0 12px rgba(255, 255, 255, 1);
+}
+
+/* Firefox Thumb */
+input[type='range'].futuristic-slider::-moz-range-thumb {
+  height: 32px;
+  width: 32px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #00f0ff 0%, #0066ff 45%, #070b19 80%, #02040a 100%);
+  border: 2px solid #00f0ff;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.9), inset 0 0 8px rgba(255, 255, 255, 0.8);
+  cursor: grab;
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
+}
+
+input[type='range'].futuristic-slider::-moz-range-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.25);
+}
+
+/* Track transparent since we render custom glowing track underneath */
+input[type='range'].futuristic-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  border: none;
+}
+
+input[type='range'].futuristic-slider::-moz-range-track {
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  border: none;
+}
+
+/* Arc Reactor Animations */
+@keyframes arcRotateClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes arcRotateCounter {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
+@keyframes arcEnergyPulse {
+  0%, 100% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 10px rgba(0, 240, 255, 0.8)) drop-shadow(0 0 20px rgba(0, 150, 255, 0.6));
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 18px rgba(0, 240, 255, 1)) drop-shadow(0 0 32px rgba(0, 200, 255, 0.9));
+    transform: scale(1.04);
+  }
+}
+
+@keyframes hudGlowPulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(0, 240, 255, 0.4), inset 0 0 8px rgba(0, 240, 255, 0.2); }
+  50% { box-shadow: 0 0 22px rgba(0, 240, 255, 0.7), inset 0 0 14px rgba(0, 240, 255, 0.4); }
+}
+
+.animate-arc-clockwise {
+  animation: arcRotateClockwise 18s linear infinite;
+}
+
+.animate-arc-counter {
+  animation: arcRotateCounter 12s linear infinite;
+}
+
+.animate-arc-pulse {
+  animation: arcEnergyPulse 2.5s ease-in-out infinite;
+}
+
+.animate-hud-pulse {
+  animation: hudGlowPulse 2s ease-in-out infinite;
 }
 
 /* Scrollbar styling */

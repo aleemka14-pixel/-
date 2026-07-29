@@ -1,10 +1,5 @@
-import { reliabilityManager } from '../../backend/services/reliability-manager.js';
+import { walletService } from '../../../backend/services/wallet-service.js';
 
-/**
- * Serverless API Endpoint: GET /api/admin/system-health
- * 
- * Fetches the centralized system health status and triggers an on-demand check if requested.
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -18,19 +13,22 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', ['GET']);
+    return res.status(405).json({ success: false, error: `Method ${req.method} Not Allowed` });
+  }
+
   try {
-    // Perform live health check on demand
-    const health = await reliabilityManager.runHealthCheck();
-    
+    const diagnostics = await walletService.getHealthStatus();
     return res.status(200).json({
       success: true,
-      health
+      diagnostics
     });
   } catch (error) {
-    console.error("[API System Health Error]:", error);
+    console.error("Error in wallet-status API:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || "Internal Server Error"
+      error: error.message || "Failed to retrieve hot wallet diagnostics."
     });
   }
 }

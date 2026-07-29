@@ -3,14 +3,11 @@ import {
   db, 
   getPaymentSettings, 
   addPaymentLog 
-} from './_services/payment-service.js';
+} from '../_services/payment-service.js';
 import { doc, getDoc, writeBatch, collection, query, where, getDocs } from 'firebase/firestore';
 
 /**
- * Vercel Serverless Function: create-upi-deposit
- * 
- * Generates and stores a new UPI deposit request in INR.
- * Creates deposit tracking record in Firestore 'deposits' collection.
+ * Vercel Serverless Function Handler: create-upi-deposit
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -52,7 +49,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // UTR / Reference ID Format Validation (if provided)
     if (providedUtr) {
       if (!/^[a-zA-Z0-9]{6,20}$/.test(providedUtr)) {
         return res.status(400).json({
@@ -61,7 +57,6 @@ export default async function handler(req, res) {
         });
       }
 
-      // Check for duplicate UTR across existing deposits
       try {
         const depositsRef = collection(db, 'deposits');
         const utrQuery = query(
@@ -81,8 +76,6 @@ export default async function handler(req, res) {
     }
 
     const numAmount = Number(amount);
-
-    // Fetch dynamic settings or fallback defaults
     const settings = await getPaymentSettings().catch(() => ({}));
 
     if (settings.maintenanceMode) {
@@ -92,7 +85,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Limits in INR: Min ₹100, Max ₹100,000
     const minRequired = settings.upiSettings?.minDepositInr || 100;
     const maxRequired = settings.upiSettings?.maxDepositInr || 100000;
     const cooldownSeconds = 30;
@@ -104,7 +96,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Duplicate check cooldown
     try {
       const depositsRef = collection(db, 'deposits');
       const cooldownThreshold = Date.now() - cooldownSeconds * 1000;
@@ -126,19 +117,16 @@ export default async function handler(req, res) {
       console.warn("[API Info] Duplicate prevention check skipped:", e.message);
     }
 
-    // Generate unique deposit and transaction IDs
     const randomHex = crypto.randomBytes(4).toString('hex').toUpperCase();
     const paymentId = `DEP-UPI-${randomHex}`;
     const txnId = `TXN-UPI-${randomHex}`;
 
-    // Configured or default UPI VPA
     const upiVpa = settings.upiSettings?.vpa || settings.upiVpa || 'matrixpay@upi';
     const merchantName = settings.upiSettings?.merchantName || 'Matrix Casino';
 
     const qrData = `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent(merchantName)}&am=${numAmount}&tr=${paymentId}&cu=INR`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
 
-    // Get current balance snapshot
     let playerBalance = 0;
     try {
       const playerRef = doc(db, 'players', resolvedUserId);

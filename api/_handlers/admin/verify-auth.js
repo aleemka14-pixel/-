@@ -1,9 +1,3 @@
-/**
- * Serverless API Endpoint: POST /api/admin/verify-auth
- * 
- * Securely verifies admin login credentials and confirmation passwords
- * using server-side environment variables without exposing secrets to the client.
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');

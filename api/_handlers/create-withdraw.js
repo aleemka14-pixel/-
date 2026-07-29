@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { withdrawalService } from '../backend/services/withdrawal-service.js';
+import { withdrawalService } from '../../backend/services/withdrawal-service.js';
 
 // Safe Firebase App initialization
 let firebaseConfig;
@@ -38,8 +38,7 @@ const dbId = firebaseConfig.firestoreDatabaseId || process.env.VITE_FIREBASE_FIR
 const db = dbId ? getFirestore(app, dbId) : getFirestore(app);
 
 /**
- * API Endpoint: POST /api/create-withdraw (or /api/create-withdrawal)
- * Production-ready automatic crypto/fiat withdrawal endpoint.
+ * Vercel Serverless Function Handler: create-withdraw
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');

@@ -5,13 +5,10 @@ import {
   recordProviderFailure, 
   recordProviderSuccess,
   addPaymentLog
-} from './_services/payment-service.js';
+} from '../_services/payment-service.js';
 import { doc, getDoc, runTransaction, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
-import walletService from '../services/wallet-service.js';
+import walletService from '../../services/wallet-service.js';
 
-/**
- * Helper to recursively sort keys of an object alphabetically for NOWPayments IPN signature verification.
- */
 function sortObject(obj) {
   if (typeof obj !== 'object' || obj === null) {
     return obj;
@@ -27,9 +24,6 @@ function sortObject(obj) {
   return sortedObj;
 }
 
-/**
- * Verifies the NOWPayments IPN signature using HMAC-SHA512.
- */
 function verifyNowPaymentsSignature(headers, payload, ipnSecret) {
   if (!ipnSecret) {
     console.error("[Errors] Signature verification failed: NOWPAYMENTS_IPN_SECRET (or DB ipnSecret) is missing.");
@@ -58,9 +52,7 @@ function verifyNowPaymentsSignature(headers, payload, ipnSecret) {
 }
 
 /**
- * Vercel Serverless Function: Webhook
- * 
- * Handles production-ready Instant Payment Notifications (IPN) sent by the NOWPayments gateway.
+ * Vercel Serverless Function Handler: webhook
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -75,7 +67,6 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // 1. Accept POST requests only
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({
@@ -85,10 +76,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 3. Parse the webhook payload securely
     const payload = req.body;
-    
-    // 9. Add comprehensive logging for: Webhook received
     console.log("[Webhook received] Received NOWPayments IPN webhook payload:", JSON.stringify(payload));
 
     if (!payload || Object.keys(payload).length === 0) {
@@ -100,11 +88,11 @@ export default async function handler(req, res) {
     }
 
     const {
-      payment_id,       // NOWPayments transaction unique ID
-      payment_status,   // Current state of the transaction (e.g., 'finished', 'failed', 'expired', 'waiting', 'confirming', 'confirmed', 'refunded')
-      price_amount,     // Original pricing amount requested
-      actually_paid,    // Amount the customer actually transferred to the gateway
-      order_id          // Custom order reference passed during payment creation (matching depositId)
+      payment_id,
+      payment_status,
+      price_amount,
+      actually_paid,
+      order_id
     } = payload;
 
     if (!payment_id) {
@@ -115,14 +103,10 @@ export default async function handler(req, res) {
       });
     }
 
-    // Fetch config for database fallback secret
     const settings = await getPaymentSettings();
     const providerConfig = settings.providers.nowpayments;
-
-    // Determine the IPN secret from environment variable (preferred) or DB fallback
     const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET || (providerConfig && providerConfig.credentials && providerConfig.credentials.ipnSecret);
 
-    // 2. Verify every webhook using the official NOWPayments IPN signature
     const isAuthenticated = verifyNowPaymentsSignature(req.headers, payload, ipnSecret);
 
     if (!isAuthenticated) {
@@ -134,14 +118,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // 9. Add comprehensive logging for: Signature verified
     console.log("[Signature verified] NOWPayments IPN signature matched and verified successfully.");
 
-    // 4. Find the matching deposit using payment_id stored in Firebase
     let depositSnap = null;
     let depositDoc = null;
 
-    // Search by paymentId field matching payment_id
     const qPaymentId = query(collection(db, 'deposits'), where('paymentId', '==', payment_id));
     const snapPaymentId = await getDocs(qPaymentId);
     if (!snapPaymentId.empty) {
@@ -149,7 +130,6 @@ export default async function handler(req, res) {
       depositDoc = depositSnap.data();
     }
 
-    // Fallback: search by depositId matching order_id
     if (!depositDoc && order_id) {
       const qOrderId = query(collection(db, 'deposits'), where('depositId', '==', order_id));
       const snapOrderId = await getDocs(qOrderId);
@@ -159,7 +139,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Fallback: search by direct document ID matching order_id
     if (!depositDoc && order_id) {
       const directDocRef = doc(db, 'deposits', order_id);
       const directSnap = await getDoc(directDocRef);
@@ -169,7 +148,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Fallback: search by direct document ID matching payment_id
     if (!depositDoc && payment_id) {
       const directDocRef = doc(db, 'deposits', payment_id);
       const directSnap = await getDoc(directDocRef);
@@ -187,18 +165,10 @@ export default async function handler(req, res) {
       });
     }
 
-    // 9. Add comprehensive logging for: Deposit found
     const depositId = depositDoc.depositId || depositSnap.id;
     const playerId = depositDoc.playerId || depositDoc.userId;
     console.log(`[Deposit found] Matching deposit found: ${depositId} | Player: ${playerId} | Amount: ${depositDoc.amount} | Status: ${depositDoc.status}`);
 
-    // 5. Handle payment statuses: waiting, confirming, confirmed, finished, failed, expired, refunded
-    const validStatuses = ['waiting', 'confirming', 'confirmed', 'finished', 'failed', 'expired', 'refunded'];
-    if (!validStatuses.includes(payment_status)) {
-      console.warn(`[Security Warning] Unrecognized payment status received: ${payment_status}`);
-    }
-
-    // 6a. Validate payment amount: ensure price_amount matches what was originally requested
     const expectedAmount = Number(depositDoc.amount);
     const webhookPriceAmount = Number(price_amount);
     if (isNaN(webhookPriceAmount) || Math.abs(expectedAmount - webhookPriceAmount) > 0.01) {
@@ -210,10 +180,8 @@ export default async function handler(req, res) {
       });
     }
 
-    // 6b. Validate currency/network: prevent network or currency tampering
     const expectedNetwork = (depositDoc.network || depositDoc.method || '').toUpperCase();
     const receivedCurrency = (payload.pay_currency || '').toUpperCase();
-    console.log(`[Verification] Validating currency/network: Expected Network: ${expectedNetwork} | Received Pay Currency: ${receivedCurrency}`);
 
     let isNetworkValid = true;
     if (expectedNetwork === 'BTC' || expectedNetwork === 'BITCOIN') {
@@ -239,14 +207,10 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log("[Verification] Webhook payload signature, amount, and network successfully validated.");
-
-    // 4. Prevent duplicate transactions: Check transaction ID before processing
     const txnId = `TXN-NOW-${payment_id}`;
     const txnRef = doc(db, 'transactions', txnId);
     const txnSnap = await getDoc(txnRef);
     if (txnSnap.exists()) {
-      console.log(`[Duplicate webhook ignored] Webhook ignored because transactionId ${payment_id} already exists in transactions ledger.`);
       return res.status(200).json({
         success: true,
         message: "Duplicate webhook delivery ignored. Transaction already processed.",
@@ -255,9 +219,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Protect against duplicate credit checks on deposit status
     if (depositDoc.status === 'completed' || depositDoc.status === 'confirmed' || depositDoc.credited === true) {
-      console.log(`[Duplicate webhook ignored] Webhook ignored for payment_id: ${payment_id} because deposit ${depositId} has already been credited.`);
       return res.status(200).json({
         success: true,
         message: "Duplicate webhook delivery ignored. Deposit has already been credited.",
@@ -266,21 +228,14 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Implement payment status handling rules:
-    // - Add user balance ONLY when payment status is confirmed/finished.
-    // - Never add balance for waiting, confirming, failed, or expired payments.
     const isCreditingStatus = payment_status === 'confirmed' || payment_status === 'finished';
 
     if (isCreditingStatus) {
-      const playerRef = doc(db, 'players', playerId);
-      const userRef = doc(db, 'users', playerId);
       const depositRef = doc(db, 'deposits', depositSnap.id);
       const timestampNow = Date.now();
       let updatedBalance = 0;
-      let balanceBefore = 0;
 
       try {
-        // Check & mark deposit completed atomically
         let dbAmount = 0;
         await runTransaction(db, async (transaction) => {
           const freshDepositSnap = await transaction.get(depositRef);
@@ -303,7 +258,6 @@ export default async function handler(req, res) {
           });
         });
 
-        // Credit balance using Wallet Service with idempotency protection
         const walletRes = await walletService.deposit(
           playerId,
           dbAmount,
@@ -319,9 +273,6 @@ export default async function handler(req, res) {
           db
         );
         updatedBalance = walletRes.balanceAfter;
-
-        // 7. Balance updated log (shows previous balance, added amount, and new balance)
-        console.log(`[Balance updated] Player ${playerId} wallet balance successfully updated from ${balanceBefore} to ${updatedBalance} (+${depositDoc.amount}).`);
 
         await recordProviderSuccess('nowpayments');
 
@@ -341,7 +292,6 @@ export default async function handler(req, res) {
 
       } catch (txError) {
         if (txError.message === 'ALREADY_CREDITED') {
-          console.log(`[Duplicate webhook ignored] Concurrent request duplicate ignored for payment_id: ${payment_id}`);
           return res.status(200).json({
             success: true,
             message: "Duplicate payment ignored. Deposit already credited.",
@@ -353,9 +303,8 @@ export default async function handler(req, res) {
       }
     }
 
-    // 3b. Non-crediting statuses handling: waiting, confirming, failed, expired, refunded
     const depositRef = doc(db, 'deposits', depositSnap.id);
-    let mappedStatus = 'pending'; // default for waiting, confirming
+    let mappedStatus = 'pending';
 
     if (payment_status === 'failed' || payment_status === 'expired') {
       mappedStatus = 'rejected';
@@ -369,8 +318,6 @@ export default async function handler(req, res) {
       updatedAt: Date.now(),
       transactionHash: payload.txn_id || payload.transaction_hash || ''
     });
-
-    console.log(`[Deposit updated] Deposit ${depositId} updated to mapped status: ${mappedStatus} (payment_status: ${payment_status})`);
 
     await addPaymentLog(
       'info',
@@ -387,7 +334,6 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    // 9. Add comprehensive logging for: Errors
     console.error("[Errors] Webhook processing failed with error:", error);
     return res.status(500).json({
       success: false,

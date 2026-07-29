@@ -1,4 +1,4 @@
-import walletService from '../../services/wallet-service.js';
+import walletService from '../../../services/wallet-service.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -21,7 +21,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'userId and amount are required' });
     }
 
-    const result = await walletService.withdraw(
+    const result = await walletService.deposit(
       userId,
       Number(amount),
       metadata || {},
@@ -33,10 +33,10 @@ export default async function handler(req, res) {
       ...result
     });
   } catch (err) {
-    console.error('[API Wallet Withdraw Error]:', err);
-    return res.status(400).json({
+    console.error('[API Wallet Deposit Error]:', err);
+    return res.status(500).json({
       success: false,
-      error: err.message || 'Withdrawal processing failed'
+      error: err.message || 'Deposit processing failed'
     });
   }
 }

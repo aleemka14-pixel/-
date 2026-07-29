@@ -1,4 +1,4 @@
-import verifyWalletIntegrity from '../../services/wallet-integrity-check.js';
+import verifyWalletIntegrity from '../../../services/wallet-integrity-check.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');

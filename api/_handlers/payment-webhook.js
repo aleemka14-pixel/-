@@ -6,15 +6,12 @@ import {
   recordProviderFailure, 
   recordProviderSuccess,
   addPaymentLog
-} from './_services/payment-service.js';
+} from '../_services/payment-service.js';
 import { doc, getDoc, runTransaction, collection, query, where, getDocs } from 'firebase/firestore';
-import walletService from '../services/wallet-service.js';
+import walletService from '../../services/wallet-service.js';
 
 /**
- * Vercel Serverless Function: payment-webhook
- * 
- * Secure webhook receiver for processing crypto payment confirmations.
- * Uses centralized Payment Service adapters to verify signatures.
+ * Vercel Serverless Function Handler: payment-webhook
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -57,7 +54,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 1. Fetch config and check signature/auth via Adapter
     const settings = await getPaymentSettings();
     const providerConfig = settings.providers.cryptodirect;
 
@@ -80,7 +76,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2. Enforce that payment state must be 'confirmed' or 'completed'
     const statusLower = status.toLowerCase();
     if (statusLower !== 'confirmed' && statusLower !== 'completed' && statusLower !== 'finished') {
       return res.status(200).json({
@@ -89,7 +84,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Look up existing Deposit document in Firestore
     const depositRef = doc(db, 'deposits', depositId);
     const depositSnap = await getDoc(depositRef);
 
@@ -102,7 +96,6 @@ export default async function handler(req, res) {
 
     const depositData = depositSnap.data();
 
-    // 4. Idempotency Check: Prevent duplicate processing if already completed
     if (depositData.status === 'confirmed' || depositData.status === 'completed') {
       console.log(`[Idempotency Enforced] Deposit '${depositId}' is already processed/confirmed.`);
       return res.status(200).json({
@@ -113,7 +106,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 5. Validate Webhook Data vs. Original DB Document (Integrity Guard)
     const netUpper = network.toUpperCase();
     const dbNet = (depositData.network || depositData.method || '').toUpperCase();
     
@@ -141,7 +133,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 6. Prevent double spend: Check if transaction hash already exists for another completed deposit
     try {
       const depositsRef = collection(db, 'deposits');
       const q = query(
@@ -161,15 +152,10 @@ export default async function handler(req, res) {
       console.warn("[API Webhook Info] Duplicate transaction hash search bypassed:", e.message);
     }
 
-    // 7. Execute Atomic Firestore Transaction for Balance Credit
     const playerId = depositData.playerId || depositData.userId;
-    const playerRef = doc(db, 'players', playerId);
-    const userRef = doc(db, 'users', playerId);
-    
     const timestampNow = Date.now();
     let updatedBalance = 0;
 
-    // First mark deposit as confirmed
     await runTransaction(db, async (transaction) => {
       const freshDepositSnap = await transaction.get(depositRef);
       if (!freshDepositSnap.exists()) {
@@ -187,7 +173,6 @@ export default async function handler(req, res) {
       });
     });
 
-    // Execute wallet deposit via Wallet Service
     const walletRes = await walletService.deposit(
       playerId,
       dbAmount,

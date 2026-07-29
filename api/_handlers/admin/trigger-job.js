@@ -1,10 +1,5 @@
-import { reliabilityManager } from '../../backend/services/reliability-manager.js';
+import { reliabilityManager } from '../../../backend/services/reliability-manager.js';
 
-/**
- * Serverless API Endpoint: POST /api/admin/trigger-job
- * 
- * Securely triggers a registered background job instantly.
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -30,7 +25,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: "Missing jobName parameter in request body." });
     }
 
-    // Access control check
     if (adminRole === 'Support') {
       return res.status(403).json({
         success: false,

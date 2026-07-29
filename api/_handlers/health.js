@@ -1,10 +1,7 @@
-import { reliabilityManager } from '../backend/services/reliability-manager.js';
+import { reliabilityManager } from '../../backend/services/reliability-manager.js';
 
 /**
- * Serverless API Endpoint: GET /api/health
- * 
- * Production Health Monitoring Endpoint returning overall status, database,
- * walletService, and paymentService health metrics.
+ * Vercel Serverless Function Handler: health
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');

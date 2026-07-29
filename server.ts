@@ -21,31 +21,15 @@ async function startServer() {
   app.use("/api/create-withdraw*", withdrawRateLimit);
   app.use("/api/admin/*", adminRateLimit);
 
-  // Dynamic router for Vercel handlers in /api
+  // Central Gateway router in /api/index.js
   app.all("/api/*", async (req, res) => {
     try {
-      const apiPath = req.path; // e.g. /api/admin/wallet-status
-      
-      // Handle aliased routes in local dev
-      let normalizedPath = apiPath;
-      if (normalizedPath === '/api/create-withdrawal') {
-        normalizedPath = '/api/create-withdraw';
-      }
-
-      // Map to the JS/TS files inside /api folder
-      let relativePath = normalizedPath;
-      if (!relativePath.endsWith(".js") && !relativePath.endsWith(".ts")) {
-        relativePath += ".js";
-      }
-
-      const fullPath = path.join(process.cwd(), relativePath);
-
-      // Import the serverless function handler
+      const fullPath = path.join(process.cwd(), "api", "index.js");
       const module = await import(`file://${fullPath}`);
       if (module.default && typeof module.default === "function") {
         await module.default(req, res);
       } else {
-        res.status(404).json({ success: false, error: `API handler for ${apiPath} not found or invalid.` });
+        res.status(404).json({ success: false, error: `API handler for ${req.path} not found.` });
       }
     } catch (err: any) {
       console.error(`Error in API handler for ${req.path}:`, err);

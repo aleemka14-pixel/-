@@ -2,14 +2,9 @@ import {
   db, 
   getPaymentSettings, 
   addPaymentLog 
-} from '../_services/payment-service.js';
-import { doc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
+} from '../../_services/payment-service.js';
+import { doc, setDoc } from 'firebase/firestore';
 
-/**
- * Vercel Serverless Function: /api/upi/create-order
- * Provider-agnostic UPI Payment Order Generator.
- * Compatible with Razorpay, Cashfree, PayU, or static UPI QR solutions.
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -74,7 +69,6 @@ export default async function handler(req, res) {
     const merchantUpi = upiId || process.env.UPI_ID || settings.providers?.upi?.credentials?.upiId || 'merchant@upi';
     const selectedCurrency = currency || 'INR';
 
-    // Generate UPI URI
     const upiString = `upi://pay?pa=${encodeURIComponent(merchantUpi)}&pn=${encodeURIComponent('Casino App')}&am=${numAmount}&tr=${orderId}&tn=${encodeURIComponent(`Deposit Ref ${orderId}`)}&cu=${selectedCurrency}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiString)}`;
 

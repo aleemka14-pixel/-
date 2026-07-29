@@ -1,4 +1,4 @@
-import { db, addPaymentLog } from '../_services/payment-service.js';
+import { db, addPaymentLog } from '../../_services/payment-service.js';
 import { 
   collection, 
   query, 
@@ -10,13 +10,11 @@ import {
   getDoc, 
   updateDoc 
 } from 'firebase/firestore';
-import walletService from '../../services/wallet-service.js';
-import { withdrawalService } from '../../backend/services/withdrawal-service.js';
+import walletService from '../../../services/wallet-service.js';
+import { withdrawalService } from '../../../backend/services/withdrawal-service.js';
 
 /**
- * Vercel Serverless Function: /api/admin/payments
- * Complete Admin Payment & Transaction Monitoring System.
- * Supports searching, filtering deposits/withdrawals, retrying missed webhooks, and log views.
+ * Vercel Serverless Function Handler: admin/payments
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -35,7 +33,6 @@ export default async function handler(req, res) {
     const action = req.query.action || (req.body && req.body.action) || 'summary';
     const limitVal = Number(req.query.limit || (req.body && req.body.limit) || 50);
 
-    // 1. Payment Summary Metrics
     if (action === 'summary') {
       const depositsRef = collection(db, 'deposits');
       const withdrawalsRef = collection(db, 'withdrawals');
@@ -84,7 +81,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2. List Deposits with Filters
     if (action === 'list_deposits') {
       const { status, method, userId, search } = req.body || req.query || {};
       const depositsRef = collection(db, 'deposits');
@@ -110,7 +106,6 @@ export default async function handler(req, res) {
         deposits.push({ id: dDoc.id, ...data });
       });
 
-      // Sort newest first
       deposits.sort((a, b) => (b.createdAt || b.timestamp || 0) - (a.createdAt || a.timestamp || 0));
 
       return res.status(200).json({
@@ -120,7 +115,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. List Withdrawals with Filters
     if (action === 'list_withdrawals') {
       const { status, network, userId, search } = req.body || req.query || {};
       const withdrawalsRef = collection(db, 'withdrawals');
@@ -155,7 +149,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 4. Manual Deposit Retry / Force Credit
     if (action === 'retry_deposit') {
       const { depositId, adminId, reason } = req.body || {};
 
@@ -187,7 +180,6 @@ export default async function handler(req, res) {
         });
       }
 
-      // Credit wallet via wallet service
       const walletRes = await walletService.deposit(
         resolvedUserId,
         amount,
@@ -226,7 +218,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // 5. Payment Logs
     if (action === 'payment_logs') {
       const logsRef = collection(db, 'paymentLogs');
       const snap = await getDocs(query(logsRef, limitDoc(limitVal)));

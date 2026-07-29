@@ -1,10 +1,6 @@
-import { db } from '../_services/payment-service.js';
+import { db } from '../../_services/payment-service.js';
 import { doc, getDoc } from 'firebase/firestore';
 
-/**
- * Vercel Serverless Function: /api/upi/status
- * Queries the status of a UPI deposit order.
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');

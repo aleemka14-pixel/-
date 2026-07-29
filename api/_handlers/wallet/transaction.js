@@ -1,4 +1,4 @@
-import walletService from '../../services/wallet-service.js';
+import walletService from '../../../services/wallet-service.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');

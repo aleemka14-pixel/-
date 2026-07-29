@@ -2,9 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { withdrawalService } from '../../backend/services/withdrawal-service.js';
+import { withdrawalService } from '../../../backend/services/withdrawal-service.js';
 
-// Safe Firebase App initialization
 let firebaseConfig;
 try {
   const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -37,11 +36,6 @@ if (getApps().length === 0) {
 const dbId = firebaseConfig.firestoreDatabaseId || process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID;
 const db = dbId ? getFirestore(app, dbId) : getFirestore(app);
 
-/**
- * Serverless API Endpoint: POST /api/admin/process-withdrawal
- * Securely processes pending/processing/failed/cancelled withdrawals.
- * Actions supported: 'approve', 'reject', 'complete', 'retry', 'cancel'
- */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
