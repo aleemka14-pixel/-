@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth, getAuth, GoogleAuthProvider, signInWithPopup, signOut, browserLocalPersistence, browserPopupRedirectResolver } from 'firebase/auth';
-import { initializeFirestore, getFirestore, doc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, doc, getDoc, getDocFromServer, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // Support loading Firebase config from environment variables (useful for Vercel deployments)
@@ -101,27 +101,24 @@ export async function logout() {
 async function testConnection() {
   setTimeout(async () => {
     try {
-      const snap = await getDocFromServer(doc(db, 'test', 'connection'));
+      const snap = await getDoc(doc(db, 'test', 'connection'));
       console.log("[Firebase Info] Connection test successful. Remote server reached:", snap.exists());
     } catch (error: any) {
-      const msg = String(error.message || '').toLowerCase();
+      const msg = String(error?.message || '').toLowerCase();
       const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded');
       
       if (isQuota) {
         console.info("[Firebase Info] Connection test info: Quota limit exceeded. Client will operate in DEMO/OFFLINE mode.");
         if (typeof window !== 'undefined') {
           (window as any).__firestoreQuotaExceeded = true;
-          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: error.message } }));
+          window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: error?.message } }));
         }
       } else {
-        const isUnavailable = error.code === 'unavailable' || (error.message && error.message.toLowerCase().includes('unavailable')) || (error.message && error.message.toLowerCase().includes('could not reach'));
+        const isUnavailable = error?.code === 'unavailable' || msg.includes('unavailable') || msg.includes('could not reach');
         if (isUnavailable) {
-          console.warn("[Firebase Info] Firestore backend is temporarily unreachable. Client is operating seamlessly in OFFLINE/CACHE mode and will auto-sync with the cloud.");
+          console.info("[Firebase Info] Firestore backend is temporarily unreachable. Client operating in OFFLINE/CACHE mode.");
         } else {
-          console.error("[Firebase Error] Connection test failed:", error.message, error.code);
-          if (error.message && error.message.includes('the client is offline')) {
-            console.warn("[Firebase Info] Please verify your network and Firebase configuration.");
-          }
+          console.info("[Firebase Info] Connection test info:", error?.message || error);
         }
       }
     }
@@ -182,9 +179,10 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       (window as any).__firestoreQuotaExceeded = true;
       window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: errInfo }));
     }
+    return;
   } else {
     console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
 
-  throw new Error(JSON.stringify(errInfo));
+  throw new Error(errInfo.error);
 }

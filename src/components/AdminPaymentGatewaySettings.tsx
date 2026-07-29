@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, ToggleLeft, ToggleRight, Plus, Trash2, Edit3, Save, X, 
@@ -73,7 +73,7 @@ const DEFAULT_GATEWAYS: PaymentGatewayMethod[] = [
   }
 ];
 
-export function AdminPaymentGatewaySettings({ db, playSound, adminRole }: AdminPaymentGatewaySettingsProps) {
+export const AdminPaymentGatewaySettings = memo(function AdminPaymentGatewaySettings({ db, playSound, adminRole }: AdminPaymentGatewaySettingsProps) {
   const isReadOnly = adminRole === 'Support';
 
   const [gateways, setGateways] = useState<PaymentGatewayMethod[]>([]);
@@ -614,4 +614,4 @@ export function AdminPaymentGatewaySettings({ db, playSound, adminRole }: AdminP
       </AnimatePresence>
     </div>
   );
-}
+});

@@ -7,6 +7,7 @@ import {
   addPaymentLog
 } from './_services/payment-service.js';
 import { doc, getDoc, runTransaction, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import walletService from '../services/wallet-service.js';
 
 /**
  * Helper to recursively sort keys of an object alphabetically for NOWPayments IPN signature verification.
@@ -30,14 +31,9 @@ function sortObject(obj) {
  * Verifies the NOWPayments IPN signature using HMAC-SHA512.
  */
 function verifyNowPaymentsSignature(headers, payload, ipnSecret) {
-  const isProduction = process.env.NODE_ENV === 'production';
   if (!ipnSecret) {
-    if (isProduction) {
-      console.error("[Errors] Signature verification failed: NOWPAYMENTS_IPN_SECRET is missing in production environment.");
-      return false;
-    }
-    console.warn("[Security Warning] NOWPAYMENTS_IPN_SECRET is not configured on the server. Webhook signature checking is bypassed in local/dev environments.");
-    return true;
+    console.error("[Errors] Signature verification failed: NOWPAYMENTS_IPN_SECRET (or DB ipnSecret) is missing.");
+    return false;
   }
 
   const signature = headers['x-nowpayments-sig'] || headers['np-sig'];
@@ -284,60 +280,19 @@ export default async function handler(req, res) {
       let balanceBefore = 0;
 
       try {
-        // Run atomic Firebase transaction
+        // Check & mark deposit completed atomically
+        let dbAmount = 0;
         await runTransaction(db, async (transaction) => {
-          const freshPlayerSnap = await transaction.get(playerRef);
           const freshDepositSnap = await transaction.get(depositRef);
-
-          if (!freshPlayerSnap.exists()) {
-            throw new Error(`Player document with ID '${playerId}' does not exist.`);
-          }
-
           if (!freshDepositSnap.exists()) {
             throw new Error(`Deposit document with ID '${depositSnap.id}' does not exist.`);
           }
-
           const freshDepositData = freshDepositSnap.data();
-          // Idempotency check inside the transaction block
           if (freshDepositData.status === 'completed' || freshDepositData.status === 'confirmed' || freshDepositData.credited === true) {
             throw new Error("ALREADY_CREDITED");
           }
+          dbAmount = Number(freshDepositData.amount || 0);
 
-          const playerData = freshPlayerSnap.data();
-          balanceBefore = playerData.balance || 0;
-
-          // Sync check with the 'users' collection to use the latest balance
-          const freshUserSnap = await transaction.get(userRef);
-          if (freshUserSnap.exists()) {
-            balanceBefore = freshUserSnap.data().balance ?? freshUserSnap.data().walletBalance ?? balanceBefore;
-          }
-
-          const dbAmount = Number(freshDepositData.amount);
-          updatedBalance = balanceBefore + dbAmount;
-
-          // Increase the user's wallet balance exactly once
-          transaction.update(playerRef, { balance: updatedBalance });
-
-          if (freshUserSnap.exists()) {
-            transaction.update(userRef, {
-              balance: updatedBalance,
-              walletBalance: updatedBalance,
-              updatedAt: timestampNow
-            });
-          } else {
-            transaction.set(userRef, {
-              userId: playerId,
-              username: playerData.name || 'Player',
-              email: playerData.email || '',
-              balance: updatedBalance,
-              walletBalance: updatedBalance,
-              createdAt: timestampNow,
-              updatedAt: timestampNow,
-              status: 'active'
-            });
-          }
-
-          // Mark the deposit as credited & store requested fields
           transaction.update(depositRef, {
             status: 'completed',
             credited: true,
@@ -346,39 +301,24 @@ export default async function handler(req, res) {
             payment_status: payment_status,
             updatedAt: timestampNow
           });
-
-          // 5. Store complete payment history in Firestore
-          const transactionDoc = {
-            id: txnId,
-            transactionId: payment_id.toString(),
-            playerId: playerId,
-            userId: playerId,
-            type: 'crypto_deposit',
-            action: 'crypto_deposit',
-            amount: dbAmount,
-            balanceBefore: balanceBefore,
-            balanceAfter: updatedBalance,
-            referenceId: depositSnap.id,
-            network: expectedNetwork,
-            status: 'completed',
-            transactionHash: payload.txn_id || payload.transaction_hash || payment_id || '',
-            timestamp: timestampNow,
-            createdAt: depositDoc.createdAt || depositDoc.timestamp || timestampNow,
-            updatedAt: timestampNow,
-            completedAt: timestampNow,
-            
-            // Required ledger fields
-            paymentId: payment_id.toString(),
-            orderId: order_id || depositDoc.depositId || depositSnap.id || '',
-            payAmount: Number(actually_paid || payload.pay_amount || dbAmount),
-            currency: payload.pay_currency || payload.price_currency || depositDoc.currency || 'USDT',
-            walletAddress: payload.pay_address || depositDoc.walletAddress || '',
-            paymentStatus: payment_status,
-            paymentProvider: 'NOWPayments'
-          };
-
-          transaction.set(txnRef, transactionDoc);
         });
+
+        // Credit balance using Wallet Service with idempotency protection
+        const walletRes = await walletService.deposit(
+          playerId,
+          dbAmount,
+          {
+            depositId: depositSnap.id,
+            payment_id: String(payment_id),
+            network: expectedNetwork,
+            transactionHash: payload.txn_id || payload.transaction_hash || payment_id || '',
+            source: 'webhook',
+            description: `Deposit Credited: ${dbAmount} USDT (${expectedNetwork})`
+          },
+          `dep_${depositSnap.id}`,
+          db
+        );
+        updatedBalance = walletRes.balanceAfter;
 
         // 7. Balance updated log (shows previous balance, added amount, and new balance)
         console.log(`[Balance updated] Player ${playerId} wallet balance successfully updated from ${balanceBefore} to ${updatedBalance} (+${depositDoc.amount}).`);

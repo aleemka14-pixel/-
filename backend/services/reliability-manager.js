@@ -14,7 +14,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { paymentServiceInstance } from '../../payment/services/payment-service.js';
-import { walletService } from './wallet-service.js';
+import { walletService } from '../../services/wallet-service.js';
 
 /**
  * PRODUCTION-GRADE RELIABILITY LAYER & SCHEDULER
@@ -57,6 +57,15 @@ export class ReliabilityManager {
            msg.includes('Quota exceeded') || 
            msg.includes('quota') || 
            msg.includes('Free daily read units');
+  }
+
+  /**
+   * Checks if an error is due to Firestore permission rules.
+   */
+  isPermissionError(err) {
+    if (!err) return false;
+    const msg = (err.message || String(err)).toLowerCase();
+    return msg.includes('permission') || msg.includes('insufficient permissions');
   }
 
   /**
@@ -475,6 +484,8 @@ export class ReliabilityManager {
         
         if (this.isQuotaError(e)) {
           this.handleQuotaError(e);
+        } else if (this.isPermissionError(e)) {
+          console.warn(`[ReliabilityManager] Background Job "${jobName}" bypassed due to Firestore permissions: ${e.message}`);
         } else {
           try {
             await this.logger.error('system', `Background Job "${jobName}" Failed: ${e.message}`);
@@ -588,55 +599,36 @@ export class ReliabilityManager {
               throw new Error('Deposit already confirmed.');
             }
 
-            const playerData = freshPlayerSnap.data();
-            let balanceBefore = playerData.balance || 0;
-
-            const freshUserSnap = await transaction.get(userRef);
-            if (freshUserSnap.exists()) {
-              balanceBefore = freshUserSnap.data().balance ?? freshUserSnap.data().walletBalance ?? balanceBefore;
-            }
-
-            const updatedBalance = balanceBefore + dbAmount;
-
-            // Credit user balance atomically
-            transaction.update(playerRef, { balance: updatedBalance });
-
-            if (freshUserSnap.exists()) {
-              transaction.update(userRef, {
-                balance: updatedBalance,
-                walletBalance: updatedBalance,
-                updatedAt: Date.now()
-              });
-            }
-
             // Update status
-            transaction.update(depositRef, {
-              status: 'confirmed',
-              transactionHash,
-              confirmedAt: Date.now(),
-              updatedAt: Date.now(),
-              adminNotes: `${freshDep.adminNotes || ''}\n[Auto-Reconciled by ReliabilityManager background task at ${new Date().toISOString()}]`.trim()
+            await runTransaction(this.db, async (txn) => {
+              const freshDepSnap = await txn.get(depositRef);
+              if (!freshDepSnap.exists()) throw new Error(`Deposit ${dep.id} missing`);
+              const freshDep = freshDepSnap.data();
+              if (freshDep.status === 'confirmed' || freshDep.status === 'completed') {
+                throw new Error('Deposit already confirmed.');
+              }
+              txn.update(depositRef, {
+                status: 'confirmed',
+                transactionHash,
+                confirmedAt: Date.now(),
+                updatedAt: Date.now(),
+                adminNotes: `${freshDep.adminNotes || ''}\n[Auto-Reconciled by ReliabilityManager background task at ${new Date().toISOString()}]`.trim()
+              });
             });
 
-            // Persist Ledger entry deterministically
-            const txnId = `TXN-CONF-${transactionHash}`;
-            const txnRef = doc(this.db, 'transactions', txnId);
-            transaction.set(txnRef, {
-              id: txnId,
-              transactionId: txnId,
+            // Credit balance via Wallet Service
+            await walletService.deposit(
               playerId,
-              userId: playerId,
-              type: 'deposit',
-              amount: dbAmount,
-              balanceBefore,
-              balanceAfter: updatedBalance,
-              referenceId: dep.id,
-              network: dep.network || dep.method || 'USDT',
-              status: 'completed',
-              transactionHash,
-              timestamp: Date.now(),
-              createdAt: Date.now()
-            });
+              dbAmount,
+              {
+                depositId: dep.id,
+                transactionHash,
+                source: 'reliability_manager_reconciliation',
+                description: `Auto-Reconciled Deposit: ${dbAmount} USDT`
+              },
+              `dep_reconcile_${dep.id}`,
+              this.db
+            );
           });
 
           await this.logger.success('system', `Auto-recovered pending deposit: credited ${dbAmount} USDT to player "${playerId}".`, `DepositId: ${dep.id}`);

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 import { ChevronDown, Globe } from 'lucide-react';
 import { SUPPORTED_CURRENCIES } from '../lib/currency';
 
@@ -7,7 +7,7 @@ interface CurrencySelectorProps {
   onSelectCurrency: (code: string) => void;
 }
 
-export function CurrencySelector({ preferredCurrency, onSelectCurrency }: CurrencySelectorProps) {
+export const CurrencySelector = memo(function CurrencySelector({ preferredCurrency, onSelectCurrency }: CurrencySelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -95,4 +95,4 @@ export function CurrencySelector({ preferredCurrency, onSelectCurrency }: Curren
       )}
     </div>
   );
-}
+});

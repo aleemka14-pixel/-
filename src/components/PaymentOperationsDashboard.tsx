@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Filter, Activity, ArrowUpRight, ArrowDownLeft, ShieldAlert, 
@@ -42,7 +42,7 @@ interface UnifiedTransaction {
   riskReasons: string[];
 }
 
-export function PaymentOperationsDashboard({
+export const PaymentOperationsDashboard = memo(function PaymentOperationsDashboard({
   withdrawals = [],
   deposits = [],
   players = [],
@@ -2433,4 +2433,4 @@ export function PaymentOperationsDashboard({
 
     </div>
   );
-}
+});

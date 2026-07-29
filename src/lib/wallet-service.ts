@@ -151,15 +151,22 @@ export class WalletServiceTS {
       }
 
       // 6. Record transaction in ledger
+      const currency = metadata.currency || 'USDT';
+      const baseCurrency = metadata.baseCurrency || 'USDT';
+      const baseAmount = metadata.baseAmount !== undefined ? Number(metadata.baseAmount) : numAmount;
+
       const ledgerEntry = {
         transactionId: txnId,
         userId,
         type,
         amount: numAmount,
+        currency,
+        baseAmount,
+        baseCurrency,
         balanceBefore,
         balanceAfter,
         status: 'completed',
-        description: metadata.description || `Wallet ${type} of ₹${numAmount}`,
+        description: metadata.description || `Wallet ${type} of ${currency === 'INR' ? '₹' : ''}${numAmount}`,
         createdAt: now,
         idempotencyKey: externalTxId || null,
         metadata: {

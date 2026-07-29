@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Calendar, SlidersHorizontal, ArrowUpRight, CheckCircle, 
@@ -17,7 +17,7 @@ interface AdminDepositLedgerProps {
   playSound: (key: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
 }
 
-export function AdminDepositLedger({ 
+export const AdminDepositLedger = memo(function AdminDepositLedger({ 
   deposits = [], 
   players = [], 
   adminRole = 'Super Admin', 
@@ -1406,4 +1406,4 @@ export function AdminDepositLedger({
 
     </div>
   );
-}
+});

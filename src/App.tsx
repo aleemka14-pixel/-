@@ -61,7 +61,7 @@ import {
   Shield,
   Headphones
 } from 'lucide-react';
-import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings } from './types.ts';
+import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings, ActiveBet } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
 import { RedesignedDepositView } from './components/RedesignedDepositView.tsx';
 import { RedesignedWithdrawView } from './components/RedesignedWithdrawView.tsx';
@@ -103,6 +103,7 @@ import {
   limit
 } from 'firebase/firestore';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { walletServiceTS } from './lib/wallet-service';
 
 // High-fidelity modern sound effects
 const SOUNDS = {
@@ -496,27 +497,29 @@ const NextLotteryCard = memo(function NextLotteryCard({
     <motion.div 
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_20px_rgba(255,50,0,0.25)] transition-all hover:shadow-[0_0_30px_rgba(255,50,0,0.4)]"
+      className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_15px_rgba(255,50,0,0.2)] transition-all hover:shadow-[0_0_25px_rgba(255,50,0,0.35)]"
     >
-      <div className="bg-[#0c0816]/98 p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-3 h-3 rounded-full bg-[#ffb700] shadow-[0_0_12px_#ffb700] animate-pulse" />
+      <div className="bg-[#0c0816]/98 p-2.5 sm:p-3 rounded-[10px] flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-[#ffb700] shadow-[0_0_10px_#ffb700] animate-pulse shrink-0" />
           <div className="text-left">
-            <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#ffb700] block">NEXT LOTTERY</span>
-            <span className="text-xs font-black uppercase tracking-wider text-white block">RESULT</span>
-            <p className="text-[11px] font-bold text-slate-300 mt-0.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono font-black uppercase tracking-widest text-[#ffb700]">NEXT LOTTERY</span>
+              <span className="text-[10px] font-black uppercase tracking-wider text-white">RESULT</span>
+            </div>
+            <p className="text-[10px] font-bold text-slate-300">
               {lotteryTimerActive && lotterySecondsLeft > 0 ? 'Drawing Soon' : 'Result Pending'}
             </p>
           </div>
         </div>
 
         <div className="flex flex-col items-end">
-          <div className="flex items-center gap-2 px-3 py-1.5 border border-[#ff2a00] bg-[#1d070b]/90 rounded-xl text-[#ffcc00] shadow-[0_0_12px_rgba(255,0,68,0.4)]">
-            <Clock className="w-4 h-4 text-[#ffcc00] animate-pulse" />
-            <span className="font-mono text-base font-black tracking-wider">{lotteryTimerStr}</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 border border-[#ff2a00] bg-[#1d070b]/90 rounded-lg text-[#ffcc00] shadow-[0_0_10px_rgba(255,0,68,0.3)]">
+            <Clock className="w-3.5 h-3.5 text-[#ffcc00] animate-pulse" />
+            <span className="font-mono text-sm sm:text-base font-black tracking-wider">{lotteryTimerStr}</span>
           </div>
           {/* Yellow Progress bar */}
-          <div className="w-[84px] bg-gray-900/80 h-1.5 rounded-full overflow-hidden mt-1.5 border border-white/5">
+          <div className="w-[72px] sm:w-[84px] bg-gray-900/80 h-1 sm:h-1.5 rounded-full overflow-hidden mt-1 border border-white/5">
             <div 
               className="h-full bg-gradient-to-r from-[#ffb700] via-[#ff7700] to-[#ff0033] transition-all duration-1000 ease-linear shadow-[0_0_8px_#ffb700]"
               style={{ width: `${progressPercent}%` }}
@@ -583,7 +586,6 @@ export default function App() {
   });
   const [demoBalance, setDemoBalance] = useState<number | null>(null);
   const [demoTransactions, setDemoTransactions] = useState<Transaction[]>([]);
-  const [demoPendingBet, setDemoPendingBet] = useState<{ amount: number; timestamp: number } | null>(null);
 
   useEffect(() => {
     const handleQuotaExceeded = () => {
@@ -818,13 +820,15 @@ export default function App() {
     const handleListenerError = (context: string, err: any) => {
       const msg = String(err?.message || err).toLowerCase();
       const isQuota = msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('limit exceeded');
-      if (isQuota) {
-        if (typeof window !== 'undefined') {
+      const isUnavailable = err?.code === 'unavailable' || msg.includes('unavailable') || msg.includes('could not reach');
+      if (isQuota || isUnavailable) {
+        if (isQuota && typeof window !== 'undefined') {
           (window as any).__firestoreQuotaExceeded = true;
           window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { error: err?.message || String(err) } }));
         }
+        console.info(`[Firebase Info] ${context} running in offline/cached mode:`, err?.message || String(err));
       } else {
-        console.error(`${context}:`, err);
+        console.warn(`${context}:`, err?.message || String(err));
       }
     };
 
@@ -899,126 +903,157 @@ export default function App() {
     let rawCurrentPlayer: Player | null = null;
     const syncAttempted = new Set<string>();
 
+    const getEffectiveBalance = (u?: any, p?: any, fallback: number = 0): number => {
+      const checkVal = (v: any) => v !== undefined && v !== null && !Number.isNaN(Number(v));
+      if (u && checkVal(u.walletBalance)) return Number(u.walletBalance);
+      if (u && checkVal(u.balance)) return Number(u.balance);
+      if (p && checkVal(p.walletBalance)) return Number(p.walletBalance);
+      if (p && checkVal(p.balance)) return Number(p.balance);
+      return fallback;
+    };
+
     const mergeAndSetPlayers = () => {
-      let mergedPlayers: Player[] = [];
-      
-      if (rawUsers && rawUsers.length > 0) {
-        mergedPlayers = rawUsers
-          .filter(u => u !== undefined && u !== null && u.id)
-          .map(u => {
-            const p = (u.id === user?.uid && rawCurrentPlayer) ? rawCurrentPlayer : rawPlayers.find(pl => pl && pl.id === u.id);
-            
-            const u_walletBalance = u.walletBalance;
-            const u_balance = u.balance;
-            const p_balance = p?.balance;
-            
-            let walletBalance = 0;
-            if (u_walletBalance !== undefined && u_walletBalance !== null && !Number.isNaN(Number(u_walletBalance))) {
-              walletBalance = Number(u_walletBalance);
-            } else if (u_balance !== undefined && u_balance !== null && !Number.isNaN(Number(u_balance))) {
-              walletBalance = Number(u_balance);
-            } else if (p_balance !== undefined && p_balance !== null && !Number.isNaN(Number(p_balance))) {
-              walletBalance = Number(p_balance);
-            }
-            
-            const effectivePendingBet = p?.pendingBet || (u.id === user?.uid && rawCurrentPlayer?.pendingBet) || undefined;
+      const playersMap = new Map<string, Player>();
 
-            return {
-              id: u.id,
-              name: u.username || u.name || u.displayName || p?.name || 'Player',
-              email: u.email || p?.email || '',
-              balance: walletBalance,
-              walletBalance: walletBalance,
-              override: p?.override || u.override || 'none',
-              referralCode: p?.referralCode || u.referralCode || '',
-              referredBy: p?.referredBy || u.referredBy || '',
-              referralCount: p?.referralCount ?? u.referralCount ?? 0,
-              totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
-              preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
-              pendingBet: effectivePendingBet,
-              wins: p?.wins ?? u.wins ?? 0,
-              losses: p?.losses ?? u.losses ?? 0,
-            } as Player;
+      const getItemId = (item: any): string => {
+        if (!item) return '';
+        return String(item.id || item.uid || item.userId || '').trim();
+      };
+
+      // 1. Process rawUsers (from users collection)
+      (rawUsers || []).forEach(u => {
+        if (!u) return;
+        const uid = getItemId(u);
+        if (!uid) return;
+
+        const p = (uid === user?.uid && rawCurrentPlayer) 
+          ? rawCurrentPlayer 
+          : (rawPlayers || []).find(pl => pl && getItemId(pl) === uid);
+
+        const effBalance = getEffectiveBalance(u, p, 0);
+
+        const playerObj: Player = {
+          ...p,
+          ...u,
+          id: uid,
+          name: u.username || u.name || u.displayName || p?.name || 'Player',
+          email: u.email || p?.email || '',
+          balance: effBalance,
+          walletBalance: effBalance,
+          override: p?.override || u.override || 'none',
+          referralCode: p?.referralCode || u.referralCode || '',
+          referredBy: p?.referredBy || u.referredBy || '',
+          referralCount: p?.referralCount ?? u.referralCount ?? 0,
+          totalWagered: p?.totalWagered ?? u.totalWagered ?? 0,
+          preferredCurrency: p?.preferredCurrency || u.preferredCurrency || 'USDT',
+          wins: p?.wins ?? u.wins ?? 0,
+          losses: p?.losses ?? u.losses ?? 0,
+          lastActive: u.lastActive || p?.lastActive || u.updatedAt || p?.updatedAt || Date.now(),
+          createdAt: u.createdAt || p?.createdAt || Date.now(),
+        } as Player;
+
+        playersMap.set(uid, playerObj);
+      });
+
+      // 2. Process rawPlayers (from players collection - fill gaps / add players not in users collection)
+      (rawPlayers || []).forEach(p => {
+        if (!p) return;
+        const pid = getItemId(p);
+        if (!pid) return;
+
+        if (playersMap.has(pid)) {
+          const existing = playersMap.get(pid)!;
+          const effBalance = getEffectiveBalance(existing, p, existing.balance || 0);
+          playersMap.set(pid, {
+            ...p,
+            ...existing,
+            balance: effBalance,
+            walletBalance: effBalance,
+            lastActive: existing.lastActive || p.lastActive || p.updatedAt || Date.now(),
+            createdAt: existing.createdAt || p.createdAt || Date.now(),
           });
+        } else {
+          const effBalance = getEffectiveBalance(null, p, 0);
+          playersMap.set(pid, {
+            ...p,
+            id: pid,
+            name: p.name || 'Player',
+            email: p.email || '',
+            balance: effBalance,
+            walletBalance: effBalance,
+            override: p.override || 'none',
+            referralCode: p.referralCode || '',
+            referredBy: p.referredBy || '',
+            referralCount: p.referralCount ?? 0,
+            totalWagered: p.totalWagered ?? 0,
+            preferredCurrency: p.preferredCurrency || 'USDT',
+            wins: p.wins ?? 0,
+            losses: p.losses ?? 0,
+            lastActive: p.lastActive || p.updatedAt || Date.now(),
+            createdAt: p.createdAt || Date.now(),
+          } as Player);
+        }
+      });
 
-        // Include players that might not have a user doc yet (backward compatibility/safety)
-        (rawPlayers || []).forEach(p => {
-          if (!p || !p.id) return;
-          const exists = mergedPlayers.some(mp => mp && mp.id === p.id);
-          if (!exists) {
-            const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
-            const effectivePendingBet = (p.id === user?.uid && rawCurrentPlayer?.pendingBet) ? rawCurrentPlayer.pendingBet : p.pendingBet;
-            mergedPlayers.push({
-              id: p.id,
-              name: p.name || 'Player',
-              email: p.email || '',
-              balance: playerBalance,
-              walletBalance: playerBalance,
-              override: p.override || 'none',
-              referralCode: p.referralCode || '',
-              referredBy: p.referredBy || '',
-              referralCount: p.referralCount ?? 0,
-              totalWagered: p.totalWagered ?? 0,
-              preferredCurrency: p.preferredCurrency || 'USDT',
-              pendingBet: effectivePendingBet || undefined,
-              wins: p.wins ?? 0,
-              losses: p.losses ?? 0,
-            } as Player);
+      // 3. Process saved demo registered players (localStorage)
+      try {
+        const savedDemoJson = localStorage.getItem('demo_registered_players');
+        if (savedDemoJson) {
+          const savedDemoPlayers: Player[] = JSON.parse(savedDemoJson);
+          if (Array.isArray(savedDemoPlayers) && savedDemoPlayers.length > 0) {
+            savedDemoPlayers.forEach(dp => {
+              if (!dp) return;
+              const dpid = getItemId(dp);
+              if (dpid && !playersMap.has(dpid)) {
+                const effBalance = getEffectiveBalance(dp, null, 1000);
+                playersMap.set(dpid, {
+                  ...dp,
+                  id: dpid,
+                  balance: effBalance,
+                  walletBalance: effBalance,
+                  lastActive: dp.lastActive || Date.now(),
+                  createdAt: dp.createdAt || Date.now(),
+                } as Player);
+              }
+            });
           }
-        });
-      } else {
-        // If rawUsers is empty, construct from rawPlayers directly
-        mergedPlayers = (rawPlayers || [])
-          .filter(p => p !== undefined && p !== null)
-          .map(p => {
-            const playerBalance = p.balance !== undefined && p.balance !== null && !Number.isNaN(Number(p.balance)) ? Number(p.balance) : 0;
-            const effectivePendingBet = (p.id === user?.uid && rawCurrentPlayer?.pendingBet) ? rawCurrentPlayer.pendingBet : p.pendingBet;
-            return {
-              id: p.id || '',
-              name: p.name || 'Player',
-              email: p.email || '',
-              balance: playerBalance,
-              walletBalance: playerBalance,
-              override: p.override || 'none',
-              referralCode: p.referralCode || '',
-              referredBy: p.referredBy || '',
-              referralCount: p.referralCount ?? 0,
-              totalWagered: p.totalWagered ?? 0,
-              preferredCurrency: p.preferredCurrency || 'USDT',
-              pendingBet: effectivePendingBet || undefined,
-              wins: p.wins ?? 0,
-              losses: p.losses ?? 0,
-            } as Player;
-          });
+        }
+      } catch (e) {
+        console.warn('Failed to load demo_registered_players from localStorage:', e);
       }
 
-      // Ensure the current user is ALWAYS present in the merged list (for profile integrity)
+      // 4. Ensure current user is always present
       if (user && user.uid) {
-        const hasCurrentUser = mergedPlayers.some(p => p && p.id === user.uid);
-        if (!hasCurrentUser) {
-          const p = rawCurrentPlayer || rawPlayers.find(pl => pl && pl.id === user.uid);
-          const cachedBalanceStr = localStorage.getItem(`last_known_balance_${user.uid}`);
+        const curUid = user.uid;
+        if (!playersMap.has(curUid)) {
+          const p = rawCurrentPlayer || (rawPlayers || []).find(pl => getItemId(pl) === curUid);
+          const cachedBalanceStr = localStorage.getItem(`last_known_balance_${curUid}`);
           const cachedBalance = cachedBalanceStr ? parseFloat(cachedBalanceStr) : 0;
-          const currentPlayerBalance = !Number.isNaN(cachedBalance) ? cachedBalance : 0;
-          
-          mergedPlayers.push({
-            id: user.uid,
+          const fallbackBal = !Number.isNaN(cachedBalance) ? cachedBalance : 0;
+          const effBalance = getEffectiveBalance(null, p, fallbackBal);
+
+          playersMap.set(curUid, {
+            ...p,
+            id: curUid,
             name: p?.name || user.displayName || 'Player',
             email: p?.email || user.email || '',
-            balance: p?.balance !== undefined ? p.balance : currentPlayerBalance,
-            walletBalance: p?.balance !== undefined ? p.balance : currentPlayerBalance,
+            balance: effBalance,
+            walletBalance: effBalance,
             override: p?.override || 'none',
             referralCode: p?.referralCode || '',
             referredBy: p?.referredBy || '',
             referralCount: p?.referralCount ?? 0,
             totalWagered: p?.totalWagered ?? 0,
             preferredCurrency: p?.preferredCurrency || 'USDT',
-            pendingBet: p?.pendingBet || rawCurrentPlayer?.pendingBet || undefined,
             wins: p?.wins ?? 0,
             losses: p?.losses ?? 0,
+            lastActive: p?.lastActive || p?.updatedAt || Date.now(),
+            createdAt: p?.createdAt || Date.now(),
           } as Player);
         }
       }
+
+      const mergedPlayers = Array.from(playersMap.values());
 
       // Sort in-memory by balance descending for Leaderboard and Admin Panel
       mergedPlayers.sort((a, b) => {
@@ -1031,31 +1066,20 @@ export default function App() {
       console.log('Players displayed:', mergedPlayers ? mergedPlayers.length : 0);
 
       setState(prev => {
-        const playersList = prev.players || [];
-        
+        const existingMap = new Map<string, Player>((prev.players || []).map(item => [item.id, item]));
+
         const updated = mergedPlayers.map(p => {
-          const existingPlayer = playersList.find(pl => pl && pl.id === p.id);
-          // Always prioritize the real-time balance from Firestore document (p.balance / p.walletBalance)
-          const effectiveBalance = p.balance !== undefined && !Number.isNaN(Number(p.balance)) 
-            ? Number(p.balance) 
-            : (existingPlayer?.balance ?? 0);
-          
-          // Preserve pendingBet correctly: if p explicitly sets null, it is cleared; if undefined, keep existing or rawCurrentPlayer
-          let effectivePendingBet = p.pendingBet;
-          if (effectivePendingBet === undefined) {
-            if (p.id === user?.uid && rawCurrentPlayer?.pendingBet !== undefined) {
-              effectivePendingBet = rawCurrentPlayer.pendingBet;
-            } else {
-              effectivePendingBet = existingPlayer?.pendingBet;
-            }
-          }
+          const existing = existingMap.get(p.id);
+          const effBalance = getEffectiveBalance(p, existing, 0);
 
           return {
+            ...(existing || {}),
             ...p,
-            balance: effectiveBalance,
-            walletBalance: effectiveBalance,
-            pendingBet: effectivePendingBet
-          };
+            balance: effBalance,
+            walletBalance: effBalance,
+            lastActive: p.lastActive || existing?.lastActive || Date.now(),
+            createdAt: p.createdAt || existing?.createdAt || Date.now(),
+          } as Player;
         });
         return { ...prev, players: updated };
       });
@@ -1073,10 +1097,8 @@ export default function App() {
         console.log('Users fetched:', rawUsers.length);
         mergeAndSetPlayers();
       }, (err) => {
-        rawUsers = [];
-        console.log('Users fetched: 0 (permission denied/error)');
         mergeAndSetPlayers();
-        handleListenerError('Failed to listen to users collection', err);
+        handleListenerError('Users listener error', err);
       }));
     } else {
       // Non-admins do not load users collection
@@ -1085,8 +1107,8 @@ export default function App() {
       mergeAndSetPlayers();
     }
 
-    // Query players collection safely without orderBy to avoid missing field/index exclusion in Firestore
-    const playersQuery = query(collection(db, 'players'), limit(isAdmin ? 500 : 100));
+    // Query players collection safely without restrictive queries or artificial limits
+    const playersQuery = collection(db, 'players');
 
     console.log('[PRODUCTION DIAGNOSTICS 2] Query path:', 'collection(db, "players")');
 
@@ -1096,17 +1118,8 @@ export default function App() {
       console.log('Players fetched:', rawPlayers.length);
       mergeAndSetPlayers();
     }, (err) => {
-      const msg = String(err?.message || err).toLowerCase();
-      if (!msg.includes('quota') && !msg.includes('resource-exhausted') && err?.code !== 'resource-exhausted') {
-        console.error('[PRODUCTION DIAGNOSTICS 4] Firestore permission / listener error on players collection:', {
-          code: err.code,
-          message: err.message,
-          name: err.name,
-        });
-      }
-      rawPlayers = [];
       mergeAndSetPlayers();
-      handleListenerError('Failed to listen to players collection', err);
+      handleListenerError('Players listener error', err);
     }));
 
     const syncCurrentUserDocuments = async (u: any, p: any) => {
@@ -1352,10 +1365,10 @@ export default function App() {
 
       // Query helper to switch between own and admin data
       const getQuery = (colName: string) => {
-        const l = colName === 'transactions' ? 500 : 50; // Cap transactions at 500 for performance
+        const l = colName === 'transactions' ? 100 : 100; // Capped at 100 for query optimization
         return isAdmin 
           ? query(collection(db, colName), orderBy('timestamp', 'desc'), limit(l))
-          : query(collection(db, colName), where('playerId', '==', currentUserId));
+          : query(collection(db, colName), where('playerId', '==', currentUserId), limit(100));
       };
 
       reg(onSnapshot(getQuery('transactions'), (snap) => {
@@ -1366,7 +1379,7 @@ export default function App() {
       }, (err) => {
         if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
           console.warn(`Admin access to transactions denied for ${currentUserEmail} (${currentUserId}). Falling back to personal view.`);
-          const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', currentUserId));
+          const fallbackQuery = query(collection(db, 'transactions'), where('playerId', '==', currentUserId), limit(100));
           reg(onSnapshot(fallbackQuery, (s) => {
              const transactions = s.docs
                .map(d => d.data() as Transaction)
@@ -1388,7 +1401,7 @@ export default function App() {
       }, (err) => {
         if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
           console.warn(`Admin access to withdrawals denied. Falling back.`);
-          const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', currentUserId));
+          const fallbackQuery = query(collection(db, 'withdrawals'), where('playerId', '==', currentUserId), limit(100));
           reg(onSnapshot(fallbackQuery, (s) => {
             const withdrawals = s.docs
               .map(d => d.data() as WithdrawalRequest)
@@ -1410,7 +1423,7 @@ export default function App() {
       }, (err) => {
         if (err.message.includes('permission-denied') || (err as any).code === 'permission-denied') {
           console.warn(`Admin access to deposits denied. Falling back.`);
-          const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', currentUserId));
+          const fallbackQuery = query(collection(db, 'deposits'), where('playerId', '==', currentUserId), limit(100));
           reg(onSnapshot(fallbackQuery, (s) => {
             const deposits = s.docs
               .map(d => d.data() as DepositRequest)
@@ -1591,12 +1604,11 @@ export default function App() {
       return {
         ...currentPlayer,
         balance: demoBalance !== null ? demoBalance : 1000,
-        pendingBet: demoPendingBet,
         totalWagered: (currentPlayer?.totalWagered || 0) + (demoTransactions.filter(t => t.type === 'bet').reduce((acc, t) => acc + t.amount, 0))
       } as Player;
     }
     return currentPlayer;
-  }, [currentPlayer, demoMode, demoBalance, demoPendingBet, demoTransactions]);
+  }, [currentPlayer, demoMode, demoBalance, demoTransactions]);
 
   const activeState = useMemo(() => {
     if (demoMode) {
@@ -1709,21 +1721,25 @@ export default function App() {
     }
 
     try {
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'transactions', id), newTxn);
-      
-      const playerRef = doc(db, 'players', user.uid);
-      const balanceChange = (txn.type === 'win' || txn.type === 'deposit') ? txn.amount : -txn.amount;
-      batch.update(playerRef, { balance: increment(balanceChange) });
-      
-      const userRef = doc(db, 'users', user.uid);
-      batch.update(userRef, { 
-        walletBalance: increment(balanceChange),
-        balance: increment(balanceChange),
-        updatedAt: Date.now()
-      });
-      
-      await batch.commit();
+      if (txn.type === 'deposit') {
+        await fetch('/api/admin/wallet/deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid, amount: txn.amount, description: 'Manual Admin Deposit', reason: 'Admin Manual Deposit', idempotencyKey: id })
+        });
+      } else if (txn.type === 'withdrawal') {
+        await fetch('/api/admin/wallet/withdraw', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid, amount: txn.amount, description: 'Manual Admin Withdrawal', reason: 'Admin Manual Withdrawal', idempotencyKey: id })
+        });
+      } else {
+        await fetch('/api/admin/wallet/adjust', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid, amount: txn.amount, description: `Manual Admin Adjustment (${txn.type})`, reason: `Manual Admin Adjustment (${txn.type})`, isDeduction: txn.amount < 0, idempotencyKey: id })
+        });
+      }
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'transactions');
     }
@@ -1881,86 +1897,63 @@ export default function App() {
       if (!depositSnap.exists()) return;
       const deposit = depositSnap.data() as DepositRequest;
 
-      const batch = writeBatch(db);
-      batch.update(depositRef, { status });
+      await updateDoc(depositRef, { status, updatedAt: Date.now() });
 
       if (status === 'completed') {
-        const playerRef = doc(db, 'players', deposit.playerId);
-        batch.update(playerRef, { balance: increment(deposit.amount) });
-        const userRef = doc(db, 'users', deposit.playerId);
-        batch.update(userRef, { 
-          walletBalance: increment(deposit.amount),
-          balance: increment(deposit.amount),
-          updatedAt: Date.now()
+        await fetch('/api/admin/wallet/deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: deposit.playerId,
+            amount: deposit.amount,
+            description: `Admin Approved Deposit: ${deposit.amount}`,
+            reason: 'Admin Approved Deposit',
+            idempotencyKey: `dep_admin_${depositRef.id}`
+          })
         });
         playSound('WIN');
       }
-
-      await batch.commit();
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'deposits');
     }
   };
 
-  const resultBet = async (playerId: string, outcome: 'win' | 'lose', settlementCurrency: string = 'USDT') => {
+  const resultBet = async (playerId: string, outcome: 'win' | 'lose', settlementCurrency: string = 'USDT', betAmount?: number) => {
     try {
       const currentRates = exchangeRates || getCachedRates().rates;
       const playerRef = doc(db, 'players', playerId);
       const playerSnap = await getDoc(playerRef);
       if (!playerSnap.exists()) return;
-      const player = playerSnap.data() as Player;
-      if (!player.pendingBet) return;
 
-      const amount = player.pendingBet.amount;
+      const amount = betAmount || 0;
       const isWin = outcome === 'win';
       const winAmount = amount * 2;
       
       const batch = writeBatch(db);
 
-      // Find and mark pending bet transactions as completed
-      try {
-        const pendingTxQuery = query(
-          collection(db, 'transactions'),
-          where('playerId', '==', playerId),
-          where('type', '==', 'bet'),
-          where('status', '==', 'pending')
-        );
-        const pendingTxSnap = await getDocs(pendingTxQuery);
-        pendingTxSnap.docs.forEach(d => {
-          batch.update(d.ref, { status: 'completed' });
-        });
-      } catch (err) {
-        console.warn('Could not query pending bet transactions:', err);
-      }
-
       if (isWin) {
-        const winTxnId = Math.random().toString(36).substr(2, 9);
+        const winTxnId = `win_${playerId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         const exRate = currentRates[settlementCurrency] || 1.0;
         const settledAmt = winAmount * exRate;
 
-        const winTxn: Transaction = {
-          id: winTxnId,
-          playerId: playerId,
-          type: 'win',
-          amount: winAmount,
-          timestamp: Date.now(),
-          status: 'completed',
-          settlementCurrency,
-          exchangeRate: exRate,
-          preferredCurrency: settlementCurrency,
-          preferredAmount: settledAmt
-        } as any;
-        batch.set(doc(db, 'transactions', winTxnId), winTxn);
+        await walletServiceTS.gameWin(
+          playerId,
+          winAmount,
+          {
+            settlementCurrency,
+            exchangeRate: exRate,
+            preferredAmount: settledAmt,
+            description: `Win Settlement: ${winAmount}`
+          },
+          winTxnId
+        );
+
         batch.update(playerRef, { 
-          balance: increment(winAmount),
-          pendingBet: null,
           totalWinnings: increment(winAmount),
           wins: increment(1),
           lastActive: Date.now()
         });
         batch.update(doc(db, 'users', playerId), {
-          walletBalance: increment(winAmount),
-          balance: increment(winAmount),
           totalWinnings: increment(winAmount),
           wins: increment(1),
           lastActive: Date.now(),
@@ -1970,7 +1963,6 @@ export default function App() {
         triggerConfetti();
       } else {
         batch.update(playerRef, { 
-          pendingBet: null,
           losses: increment(1),
           lastActive: Date.now()
         });
@@ -1985,103 +1977,6 @@ export default function App() {
       await batch.commit();
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'players');
-    }
-  };
-
-  const resultAllBets = async (outcome: 'win' | 'lose', settlementCurrency: string = 'USDT') => {
-    const pendingPlayers = state.players.filter(p => p.pendingBet);
-    if (pendingPlayers.length === 0) return;
-
-    try {
-      const currentRates = exchangeRates || getCachedRates().rates;
-      const batch = writeBatch(db);
-      let winSoundPlayed = false;
-      let loseSoundPlayed = false;
-
-      for (const player of pendingPlayers) {
-        if (!player.pendingBet) continue;
-        const playerRef = doc(db, 'players', player.id);
-        const amount = player.pendingBet.amount;
-        const isWin = outcome === 'win';
-        const winAmount = amount * 2;
-
-        try {
-          const pendingTxQuery = query(
-            collection(db, 'transactions'),
-            where('playerId', '==', player.id),
-            where('type', '==', 'bet'),
-            where('status', '==', 'pending')
-          );
-          const pendingTxSnap = await getDocs(pendingTxQuery);
-          pendingTxSnap.docs.forEach(d => {
-            batch.update(d.ref, { status: 'completed' });
-          });
-        } catch (err) {
-          console.warn('Could not query pending transactions in resultAllBets:', err);
-        }
-
-        if (isWin) {
-          const winTxnId = Math.random().toString(36).substr(2, 9);
-          const exRate = currentRates[settlementCurrency] || 1.0;
-          const settledAmt = winAmount * exRate;
-
-          const winTxn: Transaction = {
-            id: winTxnId,
-            playerId: player.id,
-            type: 'win',
-            amount: winAmount,
-            timestamp: Date.now(),
-            status: 'completed',
-            settlementCurrency,
-            exchangeRate: exRate,
-            preferredCurrency: settlementCurrency,
-            preferredAmount: settledAmt
-          } as any;
-          batch.set(doc(db, 'transactions', winTxnId), winTxn);
-          batch.update(playerRef, { 
-            balance: increment(winAmount),
-            pendingBet: null,
-            totalWinnings: increment(winAmount),
-            wins: increment(1),
-            lastActive: Date.now()
-          });
-          batch.update(doc(db, 'users', player.id), {
-            walletBalance: increment(winAmount),
-            balance: increment(winAmount),
-            totalWinnings: increment(winAmount),
-            wins: increment(1),
-            lastActive: Date.now(),
-            updatedAt: Date.now()
-          });
-          winSoundPlayed = true;
-        } else {
-          batch.update(playerRef, { 
-            pendingBet: null,
-            losses: increment(1),
-            lastActive: Date.now()
-          });
-          batch.update(doc(db, 'users', player.id), {
-            losses: increment(1),
-            lastActive: Date.now(),
-            updatedAt: Date.now()
-          });
-          loseSoundPlayed = true;
-        }
-      }
-
-      await batch.commit();
-
-      if (outcome === 'win' && winSoundPlayed) {
-        const currentUserWin = pendingPlayers.find(p => p.id === user?.uid);
-        const winAmount = currentUserWin?.pendingBet ? currentUserWin.pendingBet.amount * 2 : undefined;
-        playSound('WIN', winAmount);
-        triggerConfetti();
-      } else if (loseSoundPlayed) {
-        playSound('LOSE');
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'players');
-      throw e;
     }
   };
 
@@ -2169,9 +2064,13 @@ export default function App() {
         createdCount: migrationCount,
         existedCount: existingPlayerIds.size,
       };
-    } catch (err) {
-      console.error("Error during safe user-to-player migration:", err);
-      throw err;
+    } catch (err: any) {
+      console.warn("Error during safe user-to-player migration:", err?.message || err);
+      handleFirestoreError(err, OperationType.GET, 'users/players');
+      return {
+        createdCount: 0,
+        existedCount: 0,
+      };
     }
   };
 
@@ -2390,9 +2289,22 @@ export default function App() {
     if (demoMode) {
       const demoPlayer: Player = {
         ...newPlayer,
-        balance: 1000 // Give them demo chips
+        balance: 1000, // Give them demo chips
+        lastActive: Date.now(),
+        createdAt: Date.now()
       };
       setDemoBalance(1000);
+
+      // Save demo player into localStorage for persistence across refreshes
+      try {
+        const existingDemoJson = localStorage.getItem('demo_registered_players');
+        const existingDemo: Player[] = existingDemoJson ? JSON.parse(existingDemoJson) : [];
+        const updatedDemo = [...existingDemo.filter(p => p && p.id !== demoPlayer.id), demoPlayer];
+        localStorage.setItem('demo_registered_players', JSON.stringify(updatedDemo));
+      } catch (e) {
+        console.warn('Failed to save demo player to localStorage:', e);
+      }
+
       setState(prev => {
         const otherPlayers = prev.players.filter(p => p.id !== user.uid);
         return {
@@ -2440,29 +2352,23 @@ export default function App() {
           status: 'completed'
         });
         
-        const refBonusTxnId = Math.random().toString(36).substr(2, 9);
-        batch.set(doc(db, 'transactions', refBonusTxnId), {
-          id: refBonusTxnId,
-          playerId: referrerId,
-          type: 'deposit',
-          amount: state.referralAmount ?? 10,
-          timestamp: Date.now(),
-          status: 'completed'
-        });
-
+        const refBonusAmt = state.referralAmount ?? 10;
+        await walletServiceTS.bonus(
+          referrerId,
+          refBonusAmt,
+          {
+            referrerId,
+            claimedBy: user.uid,
+            description: `Referral Bonus: ₹${refBonusAmt}`
+          },
+          `ref_bonus_${referrerId}_${user.uid}`
+        );
         const referrerRef = doc(db, 'players', referrerId);
         const referrerSnap = await getDoc(referrerRef);
         if (referrerSnap.exists()) {
-          const currentBalance = referrerSnap.data().balance || 0;
           const currentReferralCount = referrerSnap.data().referralCount || 0;
           batch.update(referrerRef, { 
-            balance: (Number.isNaN(currentBalance) ? 0 : currentBalance) + (state.referralAmount ?? 10),
             referralCount: (Number.isNaN(currentReferralCount) ? 0 : currentReferralCount) + 1
-          });
-          batch.update(doc(db, 'users', referrerId), {
-            walletBalance: increment(state.referralAmount ?? 10),
-            balance: increment(state.referralAmount ?? 10),
-            updatedAt: Date.now()
           });
         }
       }
@@ -2707,6 +2613,52 @@ export default function App() {
     if (amt <= 0 || Number.isNaN(amt)) {
       throw new Error("Invalid bet amount.");
     }
+
+    // --- TASK 3: Anti-Fraud Betting Protection ---
+    const uid = user.uid;
+    const now = Date.now();
+
+    // 1. Rapid Click Protection (min 1000ms cooldown)
+    if ((window as any).__lastBetTimeByUser?.[uid] && now - (window as any).__lastBetTimeByUser[uid] < 1000) {
+      throw new Error("Rapid clicking detected. Please wait 1 second between placing bets.");
+    }
+
+    // 2. Maximum bets per minute per user (max 10 bets / 60s)
+    if (!(window as any).__betTimestampsByUser) {
+      (window as any).__betTimestampsByUser = {};
+    }
+    if (!(window as any).__betTimestampsByUser[uid]) {
+      (window as any).__betTimestampsByUser[uid] = [];
+    }
+    (window as any).__betTimestampsByUser[uid] = (window as any).__betTimestampsByUser[uid].filter((t: number) => now - t < 60000);
+    if ((window as any).__betTimestampsByUser[uid].length >= 10) {
+      throw new Error("Maximum betting rate reached (10 bets per minute). Please slow down.");
+    }
+
+    // 3. Maximum Daily Loss Limit Protection
+    const txns = state.transactions || [];
+    const todayBets = txns.filter(t => t.type === 'bet' && t.status === 'completed' && t.timestamp && now - t.timestamp < 24 * 60 * 60 * 1000);
+    const todayWins = txns.filter(t => (t.type === 'win' || (t.type as string) === 'game_win') && t.status === 'completed' && t.timestamp && now - t.timestamp < 24 * 60 * 60 * 1000);
+    const todayBetTotal = todayBets.reduce((s, t) => s + (t.amount || 0), 0);
+    const todayWinTotal = todayWins.reduce((s, t) => s + (t.amount || 0), 0);
+    const todayNetLoss = Math.max(0, todayBetTotal - todayWinTotal);
+    const maxDailyLoss = (state as any).maxDailyLossLimit || 10000;
+    if (todayNetLoss + amt > maxDailyLoss) {
+      throw new Error(`Daily loss limit ($${maxDailyLoss}) reached to protect your account. Please try again tomorrow.`);
+    }
+
+    if (!(window as any).__lastBetTimeByUser) {
+      (window as any).__lastBetTimeByUser = {};
+    }
+    (window as any).__lastBetTimeByUser[uid] = now;
+    (window as any).__betTimestampsByUser[uid].push(now);
+
+    if (state.minBetLimitEnabled && amt < (state.minBetAmount || 0.01)) {
+      throw new Error(`Minimum bet limit is $${state.minBetAmount || 0.01}`);
+    }
+    if (state.isBetLimitEnabled && amt > (state.maxBet || 500)) {
+      throw new Error(`Maximum bet limit is $${state.maxBet || 500}`);
+    }
     if ((currentPlayer.balance || 0) < amt) {
       throw new Error("Insufficient balance to place bet.");
     }
@@ -2719,6 +2671,8 @@ export default function App() {
       const playerRef = doc(db, 'players', user.uid);
       const userRef = doc(db, 'users', user.uid);
       const txnRef = doc(db, 'transactions', txnId);
+      const betDocRef = doc(collection(db, 'bets'));
+      const betId = betDocRef.id;
 
       await runTransaction(db, async (txn) => {
         const playerSnap = await txn.get(playerRef);
@@ -2736,8 +2690,6 @@ export default function App() {
         }
 
         const newBalance = Math.max(0, currentBalance - amt);
-        const existingAmount = playerData.pendingBet?.amount || 0;
-        const newAmount = existingAmount + amt;
 
         txn.set(txnRef, {
           id: txnId,
@@ -2745,13 +2697,24 @@ export default function App() {
           type: 'bet',
           amount: amt,
           timestamp,
-          status: 'pending'
+          status: 'completed'
+        });
+
+        txn.set(betDocRef, {
+          betId,
+          playerId: user.uid,
+          username: currentPlayer.name || user.displayName || user.email || 'Player',
+          amount: amt,
+          multiplier: state.currentMultiplier || 2,
+          game: state.activeGame || 'Double or Donate',
+          status: 'active',
+          isDemo: false,
+          createdAt: timestamp
         });
 
         txn.update(playerRef, {
           balance: newBalance,
           walletBalance: newBalance,
-          pendingBet: { amount: newAmount, timestamp },
           totalWagered: (playerData.totalWagered || 0) + amt,
           totalBetsCount: (playerData.totalBetsCount || 0) + 1,
           biggestBet: Math.max(amt, playerData.biggestBet || 0),
@@ -2775,26 +2738,59 @@ export default function App() {
       if (!state.manualMode) {
         const targetUid = user.uid;
         setTimeout(async () => {
-          let playerOverride = 'none';
-          const playerSnap = await getDoc(doc(db, 'players', targetUid));
-          if (playerSnap.exists()) {
-            playerOverride = playerSnap.data().override || 'none';
-          } else {
-            const userSnap = await getDoc(doc(db, 'users', targetUid));
-            if (userSnap.exists()) {
-              playerOverride = userSnap.data().override || 'none';
+          try {
+            let playerOverride = 'none';
+            const playerSnap = await getDoc(doc(db, 'players', targetUid));
+            if (playerSnap.exists()) {
+              playerOverride = playerSnap.data().override || 'none';
+            } else {
+              const userSnap = await getDoc(doc(db, 'users', targetUid));
+              if (userSnap.exists()) {
+                playerOverride = userSnap.data().override || 'none';
+              }
             }
-          }
-          
-          const configSnap = await getDoc(doc(db, 'config', 'admin'));
-          const config = configSnap.data();
-          const winRate = config?.winRate ?? 0.45;
+            
+            const configSnap = await getDoc(doc(db, 'config', 'admin'));
+            const config = configSnap.data();
+            const winRate = config?.winRate ?? 0.45;
 
-          let win = Math.random() < winRate;
-          if (playerOverride === 'win') win = true;
-          if (playerOverride === 'lose') win = false;
-          
-          resultBet(targetUid, win ? 'win' : 'lose');
+            let win = Math.random() < winRate;
+            if (playerOverride === 'win') win = true;
+            if (playerOverride === 'lose') win = false;
+            
+            let shouldSettle = false;
+            await runTransaction(db, async (txn) => {
+              const betSnap = await txn.get(betDocRef);
+              if (betSnap.exists() && betSnap.data().status === 'active') {
+                txn.update(betDocRef, {
+                  status: win ? 'won' : 'lost',
+                  resolvedAt: Date.now(),
+                  resolvedBy: 'system'
+                });
+                shouldSettle = true;
+              }
+            });
+
+            if (shouldSettle) {
+              if (win) {
+                await walletServiceTS.gameWin(
+                  targetUid, 
+                  amt * (state.currentMultiplier || 2), 
+                  { description: 'Automatic Game Win', referenceId: betId }, 
+                  `settle_win_${betId}`
+                );
+              } else {
+                await walletServiceTS.gameLoss(
+                  targetUid, 
+                  amt, 
+                  { description: 'Automatic Game Loss', referenceId: betId }, 
+                  `settle_loss_${betId}`
+                );
+              }
+            }
+          } catch (autoErr) {
+            console.error("Auto bet resolution error:", autoErr);
+          }
         }, 1500);
       }
     } catch (e) {
@@ -2808,13 +2804,10 @@ export default function App() {
       throw new Error("Betting closed — Please wait for the next round.");
     }
     const currentBalance = activePlayer.balance;
-    const existingAmount = activePlayer.pendingBet?.amount || 0;
-    const newAmount = existingAmount + amt;
     const timestamp = Date.now();
 
     const newBalance = currentBalance - amt;
     setDemoBalance(newBalance);
-    setDemoPendingBet({ amount: newAmount, timestamp });
 
     const betTxn: Transaction = {
       id: 'demo-' + Math.random().toString(36).substr(2, 9),
@@ -2822,9 +2815,25 @@ export default function App() {
       type: 'bet',
       amount: amt,
       timestamp,
-      status: 'pending'
+      status: 'completed'
     };
     setDemoTransactions(prev => [betTxn, ...prev]);
+
+    const betDocRef = doc(collection(db, 'bets'));
+    const betId = betDocRef.id;
+    if (user) {
+      setDoc(betDocRef, {
+        betId,
+        playerId: user.uid,
+        username: currentPlayer?.name || activePlayer?.name || user.displayName || user.email || 'Demo Player',
+        amount: amt,
+        multiplier: state.currentMultiplier || 2,
+        game: state.activeGame || 'Double or Donate',
+        status: 'active',
+        isDemo: true,
+        createdAt: timestamp
+      }).catch(err => console.error("Error creating demo bet doc:", err));
+    }
 
     if (!state.manualMode) {
       setTimeout(() => {
@@ -2833,11 +2842,7 @@ export default function App() {
         if (currentPlayer?.override === 'win') win = true;
         if (currentPlayer?.override === 'lose') win = false;
 
-        const betAmt = newAmount;
-        setDemoPendingBet(null);
-
-        // Update the bet transaction status to completed
-        setDemoTransactions(prev => prev.map(t => t.id === betTxn.id ? { ...t, status: 'completed' as const } : t));
+        const betAmt = amt;
 
         if (win) {
           const winAmount = betAmt * 2;
@@ -2851,9 +2856,15 @@ export default function App() {
             status: 'completed'
           };
           setDemoTransactions(prev => [winTx, ...prev]);
+          if (user) {
+            updateDoc(betDocRef, { status: 'won' }).catch(() => {});
+          }
           playSound('WIN');
           triggerConfetti();
         } else {
+          if (user) {
+            updateDoc(betDocRef, { status: 'lost' }).catch(() => {});
+          }
           playSound('LOSE');
         }
       }, 1500);
@@ -3572,7 +3583,6 @@ export default function App() {
                       onUpdatePlayerOverride={onUpdatePlayerOverride}
                       onSwitchPlayer={(id) => setState(prev => ({ ...prev, currentPlayerId: id }))}
                       onResultBet={resultBet}
-                      onResultAllBets={resultAllBets}
                       onToggleBettingStatus={onToggleBettingStatus}
                       onUpdateCustomTotalBets={onUpdateCustomTotalBets}
                       onToggleWithdrawalsStopped={onToggleWithdrawalsStopped}
@@ -3646,7 +3656,7 @@ NavItem.displayName = 'NavItem';
 
 // Sub-components (Views)
 
-function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, preferredCurrency, rates }: { 
+const GameView = memo(function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, preferredCurrency, rates }: { 
   state: AppState, 
   currentPlayer: Player, 
   onPlaceBet: (amt: number) => Promise<void>, 
@@ -3758,57 +3768,6 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
     return { winStreak: w, lossStreak: l };
   }, [playerTransactions]);
 
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
-
-  // Sync isSpinning when a pending bet exists (e.g. after refresh/login)
-  useEffect(() => {
-    if (currentPlayer?.pendingBet) {
-      setIsSpinning(true);
-    }
-  }, [currentPlayer?.pendingBet]);
-
-  // Handle countdown during God Mode / Manual Mode
-  useEffect(() => {
-    if (state.manualMode && currentPlayer?.pendingBet) {
-      const getRemaining = () => {
-        const diff = Date.now() - currentPlayer.pendingBet!.timestamp;
-        return Math.max(0, 60 - Math.floor(diff / 1000));
-      };
-
-      setTimeLeft(getRemaining());
-
-      const interval = setInterval(() => {
-        const rem = getRemaining();
-        setTimeLeft(rem);
-        if (rem <= 0) {
-          clearInterval(interval);
-        }
-      }, 1000);
-
-      return () => clearInterval(interval);
-    } else {
-      setTimeLeft(null);
-    }
-  }, [currentPlayer?.pendingBet?.timestamp, state.manualMode]);
-
-  // Detect when bet is resolved by admin
-  useEffect(() => {
-     if (isSpinning && currentPlayer && !currentPlayer.pendingBet) {
-       setIsSpinning(false);
-       // The result would be the last transaction
-       const lastTxn = state.transactions.find(t => t.playerId === currentPlayer.id);
-       if (lastTxn && (lastTxn.type === 'win' || (lastTxn.type === 'bet' && lastTxn.status === 'completed'))) {
-         const outcome = lastTxn.type === 'win' ? 'win' : 'lose';
-         setResult(outcome);
-         if (outcome === 'win') {
-           playSound('WIN', lastTxn.amount);
-         } else {
-           playSound('LOSE');
-         }
-       }
-     }
-  }, [currentPlayer?.pendingBet, isSpinning, state.transactions, currentPlayer?.id]);
-
   const handlePlay = async () => {
     if (betAmount > currentPlayer.balance || betAmount <= 0) return;
     
@@ -3834,27 +3793,18 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
     }
   };
 
-  const activePendingBet = currentPlayer?.pendingBet || (
-    state.transactions?.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')
-      ? {
-          amount: state.transactions.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')!.amount,
-          timestamp: state.transactions.find(t => t.playerId === currentPlayer?.id && t.type === 'bet' && t.status === 'pending')!.timestamp
-        }
-      : null
-  );
-
   return (
-    <div className="relative space-y-6 max-w-xl mx-auto z-10 pb-12 select-none">
+    <div className="relative space-y-2 sm:space-y-3 max-w-xl mx-auto z-10 pb-2 sm:pb-4 select-none">
       <MatrixBackground />
 
       {/* Main Game Container */}
-      <div className="relative bg-transparent text-center space-y-6 overflow-visible">
+      <div className="relative bg-transparent text-center space-y-2 sm:space-y-3 overflow-visible">
         {/* Subtle Ambient Light Accents */}
         <div className="absolute -top-24 -left-24 w-64 h-64 bg-red-600/15 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-cyan-500/15 rounded-full blur-2xl pointer-events-none" />
 
         {/* STAT CARDS SECTION */}
-        <div className="space-y-3 mb-8 relative z-20">
+        <div className="space-y-2 relative z-20">
           {/* Card 1: NEXT LOTTERY RESULT */}
           <NextLotteryCard 
             lotteryTargetTimestamp={state.lotteryTargetTimestamp} 
@@ -3862,79 +3812,79 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
             lotteryTimerDuration={state.lotteryTimerDuration} 
           />
 
-          {/* Card 2: TOTAL BETS PLACED */}
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05 }}
-            className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#ff0033] via-[#ff7700] to-[#ffb700] shadow-[0_0_20px_rgba(255,50,0,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,80,0,0.35)]"
-          >
-            <div className="bg-[#0c0816]/98 p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_12px_rgba(255,100,0,0.4)] shrink-0">
-                  <TrendingUp className="w-5 h-5 text-[#ffcc00]" />
-                </div>
-                <div className="text-left">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-[#ffb700] block">TOTAL BETS PLACED</span>
-                  <p className="text-xs font-semibold text-[#8a9cb5]">All Players Pool</p>
-                </div>
-              </div>
-
-              <div className="flex items-center">
-                <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] px-3.5 py-1.5 bg-[#140a02]/90 border border-[#ffb700]/40 rounded-xl shadow-[0_0_12px_rgba(255,180,0,0.25)]">
-                  {formatBalanceLocal(
-                    state.customTotalBets !== undefined && state.customTotalBets !== null && state.customTotalBets > 0
-                      ? state.customTotalBets
-                      : Math.max(
-                          state.players?.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) || 0,
-                          state.transactions?.filter(t => t.type === 'bet' && t.status === 'pending').reduce((sum, t) => sum + (t.amount || 0), 0) || 0
-                        )
-                  )}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* Card 3: PLAYERS WON */}
-          {(state.isPlayersWonShown ?? true) && (
+          {/* Cards 2 & 3 in a 2-Column Grid */}
+          <div className="grid grid-cols-2 gap-2">
+            {/* Card 2: TOTAL BETS PLACED */}
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-              className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff0055] to-[#ffb700] shadow-[0_0_20px_rgba(255,0,68,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,0,68,0.35)]"
+              transition={{ delay: 0.05 }}
+              className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#ff0033] via-[#ff7700] to-[#ffb700] shadow-[0_0_15px_rgba(255,50,0,0.15)] transition-all hover:shadow-[0_0_25px_rgba(255,80,0,0.3)]"
             >
-              <div className="bg-[#0c0816]/98 p-3.5 sm:p-4 rounded-[14px] flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_12px_rgba(255,100,0,0.4)] shrink-0">
-                    <Trophy className="w-5 h-5 text-[#ffcc00]" />
+              <div className="bg-[#0c0816]/98 p-2 sm:p-2.5 rounded-[10px] flex items-center justify-between gap-1.5 h-full">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_8px_rgba(255,100,0,0.3)] shrink-0">
+                    <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#ffcc00]" />
                   </div>
-                  <div className="text-left">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-[#ffb700] block">PLAYERS WON</span>
-                    <p className="text-xs font-semibold text-[#8a9cb5]">Double/Nothing Winners</p>
+                  <div className="text-left min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-[#ffb700] block truncate">TOTAL BETS</span>
+                    <p className="text-[8px] sm:text-[9px] font-semibold text-[#8a9cb5] truncate">All Players</p>
                   </div>
                 </div>
 
-                <div className="flex items-center">
-                  <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] px-4 py-1.5 bg-[#140a02]/90 border border-[#ff2a00]/40 rounded-xl shadow-[0_0_12px_rgba(255,0,68,0.3)]">
-                    {state.playersWonCount ?? 1215}
+                <div className="flex items-center shrink-0">
+                  <span className="text-xs sm:text-sm font-mono font-black text-[#ffc700] px-2 py-1 bg-[#140a02]/90 border border-[#ffb700]/40 rounded-lg shadow-[0_0_8px_rgba(255,180,0,0.2)]">
+                    {formatBalanceLocal(
+                      state.customTotalBets !== undefined && state.customTotalBets !== null && state.customTotalBets > 0
+                        ? state.customTotalBets
+                        : state.transactions?.filter(t => t.type === 'bet').reduce((sum, t) => sum + (t.amount || 0), 0) || 0
+                    )}
                   </span>
                 </div>
               </div>
             </motion.div>
-          )}
+
+            {/* Card 3: PLAYERS WON */}
+            {(state.isPlayersWonShown ?? true) && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#00aaff] via-[#ff0055] to-[#ffb700] shadow-[0_0_15px_rgba(255,0,68,0.15)] transition-all hover:shadow-[0_0_25px_rgba(255,0,68,0.3)]"
+              >
+                <div className="bg-[#0c0816]/98 p-2 sm:p-2.5 rounded-[10px] flex items-center justify-between gap-1.5 h-full">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg border border-[#ff6600]/80 bg-[#210b02]/90 flex items-center justify-center text-[#ffcc00] shadow-[0_0_8px_rgba(255,100,0,0.3)] shrink-0">
+                      <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#ffcc00]" />
+                    </div>
+                    <div className="text-left min-w-0">
+                      <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-[#ffb700] block truncate">PLAYERS WON</span>
+                      <p className="text-[8px] sm:text-[9px] font-semibold text-[#8a9cb5] truncate">Winners</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center shrink-0">
+                    <span className="text-xs sm:text-sm font-mono font-black text-[#ffc700] px-2.5 py-1 bg-[#140a02]/90 border border-[#ff2a00]/40 rounded-lg shadow-[0_0_8px_rgba(255,0,68,0.25)]">
+                      {state.playersWonCount ?? 1215}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </div>
         </div>
 
         {/* HERO TITLE SECTION */}
-        <div className="mb-6 relative z-10">
-          <h2 className="text-3xl sm:text-4xl font-black italic tracking-widest uppercase text-white drop-shadow-[0_0_15px_rgba(0,180,255,0.6)] inline-flex items-center flex-wrap justify-center gap-2">
+        <div className="my-1.5 sm:my-2.5 relative z-10">
+          <h2 className="text-2xl sm:text-3xl font-black italic tracking-wider uppercase text-white drop-shadow-[0_0_12px_rgba(0,180,255,0.5)] inline-flex items-center flex-wrap justify-center gap-1.5">
             <span>DOUBLE YOUR</span>
-            <span className="font-cash text-4xl sm:text-5xl text-[#ffc700] text-glow-gold drop-shadow-[0_0_25px_rgba(255,50,0,0.9)] not-italic tracking-normal">
+            <span className="font-cash text-3xl sm:text-4xl text-[#ffc700] text-glow-gold drop-shadow-[0_0_20px_rgba(255,50,0,0.8)] not-italic tracking-normal">
               CASH
             </span>
           </h2>
-          <div className="mt-1 text-xs sm:text-sm font-semibold text-slate-300/90 space-y-0.5">
-            <p>Enter an amount and try your luck.</p>
-            <p className="text-[#ffcc00] font-bold text-glow-gold">High risk, high reward.</p>
+          <div className="mt-0.5 text-[11px] sm:text-xs font-semibold text-slate-300/90 flex items-center justify-center gap-1.5">
+            <span>Enter amount & try your luck.</span>
+            <span className="text-[#ffcc00] font-bold text-glow-gold">High risk, high reward.</span>
           </div>
         </div>
 
@@ -3943,41 +3893,41 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.12 }}
-          className="w-full p-[1.5px] rounded-2xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_25px_rgba(0,170,255,0.25)] transition-all hover:shadow-[0_0_35px_rgba(255,80,0,0.4)] my-6 relative z-10"
+          className="w-full p-[1.5px] rounded-xl bg-gradient-to-r from-[#00aaff] via-[#ff5500] to-[#ff0033] shadow-[0_0_20px_rgba(0,170,255,0.2)] transition-all hover:shadow-[0_0_30px_rgba(255,80,0,0.35)] my-1.5 sm:my-2.5 relative z-10"
         >
-          <div className="bg-[#080512]/98 p-4 rounded-[14px] flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
+          <div className="bg-[#080512]/98 p-2.5 sm:p-3 rounded-[10px] flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
               {/* 3D Bank Vault Door Graphic */}
-              <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-slate-700 via-slate-900 to-black border-2 border-slate-500/80 shadow-[0_0_20px_rgba(0,170,255,0.4)] flex items-center justify-center shrink-0">
+              <div className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-slate-700 via-slate-900 to-black border-2 border-slate-500/80 shadow-[0_0_15px_rgba(0,170,255,0.35)] flex items-center justify-center shrink-0">
                 {/* Vault Outer Wheel Rim */}
-                <div className="absolute inset-1 rounded-full border border-slate-400/50 bg-gradient-to-tr from-slate-800 to-slate-950 flex items-center justify-center">
+                <div className="absolute inset-0.5 rounded-full border border-slate-400/50 bg-gradient-to-tr from-slate-800 to-slate-950 flex items-center justify-center">
                   {/* Rivets around edge */}
                   {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
                     <div
                       key={deg}
-                      className="absolute w-1.5 h-1.5 rounded-full bg-slate-300 shadow-[0_0_3px_#fff]"
-                      style={{ transform: `rotate(${deg}deg) translate(0, -26px)` }}
+                      className="absolute w-1 h-1 rounded-full bg-slate-300 shadow-[0_0_2px_#fff]"
+                      style={{ transform: `rotate(${deg}deg) translate(0, -17px)` }}
                     />
                   ))}
                   {/* Central Steering Wheel & Locking Bolts */}
-                  <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full border-2 border-cyan-400/80 bg-gradient-to-br from-slate-600 via-slate-800 to-black shadow-[inset_0_0_8px_rgba(0,255,255,0.5)] flex items-center justify-center relative">
+                  <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full border border-cyan-400/80 bg-gradient-to-br from-slate-600 via-slate-800 to-black shadow-[inset_0_0_6px_rgba(0,255,255,0.5)] flex items-center justify-center relative">
                     {/* Spokes */}
                     <div className="absolute w-full h-0.5 bg-cyan-300/80" />
                     <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-45" />
                     <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-90" />
                     <div className="absolute w-full h-0.5 bg-cyan-300/80 rotate-[135deg]" />
                     {/* Center Hub */}
-                    <div className="w-4 h-4 rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 border border-white shadow-[0_0_8px_#00e5ff] relative z-10" />
+                    <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 border border-white shadow-[0_0_6px_#00e5ff] relative z-10" />
                   </div>
                 </div>
               </div>
 
               {/* Vault Balance Text */}
               <div className="text-left">
-                <span className="text-xs sm:text-sm font-mono font-black uppercase tracking-widest text-[#00bfff] block drop-shadow-[0_0_8px_rgba(0,191,255,0.6)]">
+                <span className="text-[10px] sm:text-xs font-mono font-black uppercase tracking-widest text-[#00bfff] block drop-shadow-[0_0_6px_rgba(0,191,255,0.5)]">
                   VAULT BALANCE
                 </span>
-                <span className="text-2xl sm:text-3xl font-black tracking-tight text-white block mt-0.5 drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
+                <span className="text-xl sm:text-2xl font-black tracking-tight text-white block mt-0.5 drop-shadow-[0_0_10px_rgba(255,255,255,0.4)]">
                   {formatBalanceLocal(currentPlayer?.balance ?? 0)}
                 </span>
               </div>
@@ -3990,28 +3940,28 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
           <motion.div 
             initial={{ opacity: 0, y: -5 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-4 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 shadow-[0_0_20px_rgba(244,63,94,0.3)] flex items-center justify-center gap-2 text-xs font-black tracking-wider uppercase text-center relative z-20"
+            className="mb-2 p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.3)] flex items-center justify-center gap-2 text-[10px] sm:text-xs font-black tracking-wider uppercase text-center relative z-20"
           >
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 animate-pulse" />
             <span>Withdrawals are Stopped until Lottery Result</span>
           </motion.div>
         )}
 
-        {/* BET AMOUNT CONTROL ROW & CUSTOM SLIDER (Placed directly under Double Your Cash) */}
-        <div className="mb-6 relative z-10 space-y-3 bg-[#0a0614]/80 border border-amber-500/20 rounded-2xl p-4 sm:p-5 shadow-[0_0_25px_rgba(0,0,0,0.6)]">
+        {/* BET AMOUNT CONTROL ROW & CUSTOM SLIDER */}
+        <div className="my-1.5 sm:my-2.5 relative z-10 space-y-1.5 sm:space-y-2 bg-[#0a0614]/80 border border-amber-500/20 rounded-xl p-2.5 sm:p-3.5 shadow-[0_0_20px_rgba(0,0,0,0.6)]">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-black text-[#00e5ff] uppercase tracking-[0.2em] block drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]">
+            <span className="text-[10px] sm:text-xs font-mono font-black text-[#00e5ff] uppercase tracking-[0.15em] block drop-shadow-[0_0_6px_rgba(0,229,255,0.5)]">
               BET AMOUNT
             </span>
             {state.isBetLimitEnabled && (
-              <span className="text-[10px] font-mono text-amber-400 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
+              <span className="text-[9px] font-mono text-amber-400 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
                 MAX: {formatBalanceLocal(state.maxBet || 500)}
               </span>
             )}
           </div>
 
           {/* Full-width Long Slider */}
-          <div className="relative flex items-center w-full py-2">
+          <div className="relative flex items-center w-full py-1">
             <input 
               type="range" 
               min={minLocalBet} 
@@ -4033,9 +3983,9 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
           </div>
 
           {/* Controls & Display Row Below Slider */}
-          <div className="flex items-center justify-between gap-2 pt-1">
+          <div className="flex items-center justify-between gap-2 pt-0.5">
             {/* Quick Adjustment Pills */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <button
                 onClick={() => {
                   const newAmt = Math.max(minLocalBet / rate, betAmount - 100);
@@ -4043,7 +3993,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
                   playSound('CLICK');
                 }}
                 disabled={isPlacingBet || state.isBettingClosed}
-                className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white font-mono font-bold text-sm hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
+                className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white font-mono font-bold text-xs hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
               >
                 -
               </button>
@@ -4054,7 +4004,7 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
                   playSound('CLICK');
                 }}
                 disabled={isPlacingBet || state.isBettingClosed}
-                className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white font-mono font-bold text-sm hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
+                className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white font-mono font-bold text-xs hover:bg-white/15 transition-all cursor-pointer disabled:opacity-40"
               >
                 +
               </button>
@@ -4064,15 +4014,15 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
                   playSound('CLICK');
                 }}
                 disabled={isPlacingBet || state.isBettingClosed}
-                className="px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-bold text-xs hover:bg-amber-500/30 transition-all cursor-pointer disabled:opacity-40"
+                className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-bold text-[10px] sm:text-xs hover:bg-amber-500/30 transition-all cursor-pointer disabled:opacity-40"
               >
                 MAX
               </button>
             </div>
 
             {/* Golden Value Display Box */}
-            <div className="border-2 border-[#ffb700] bg-[#1a0c02]/95 px-4 py-1.5 rounded-xl shadow-[0_0_18px_rgba(255,183,0,0.5)] shrink-0 min-w-[120px] text-center">
-              <span className="text-lg sm:text-xl font-mono font-black text-[#ffc700] tracking-tight drop-shadow-[0_0_8px_rgba(255,199,0,0.8)]">
+            <div className="border border-[#ffb700] bg-[#1a0c02]/95 px-3 py-1 rounded-lg shadow-[0_0_12px_rgba(255,183,0,0.4)] shrink-0 min-w-[100px] text-center">
+              <span className="text-base sm:text-lg font-mono font-black text-[#ffc700] tracking-tight drop-shadow-[0_0_6px_rgba(255,199,0,0.8)]">
                 {formatBalanceLocal(betAmount)}
               </span>
             </div>
@@ -4080,38 +4030,19 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
         </div>
 
         {/* BET STATUS / LOCK NOTIFICATIONS */}
-        <div className="mb-4 relative z-10 space-y-3">
-          {activePendingBet && (
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 shadow-[0_0_25px_rgba(16,185,129,0.25)] relative overflow-hidden text-center"
-            >
-              <div className="flex flex-col items-center justify-center space-y-1.5">
-                <div className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 animate-pulse">
-                  <CheckCircle2 className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-black tracking-[0.2em] text-emerald-400 uppercase">Bet Placed & Pending</span>
-                <p className="text-base font-black text-white">
-                  {formatBalanceLocal(activePendingBet.amount)} Active Bet
-                </p>
-                <span className="text-[11px] text-slate-300 font-medium">Awaiting Live Settle. Outcome will be displayed shortly.</span>
-              </div>
-            </motion.div>
-          )}
-
+        <div className="my-1.5 sm:my-2 relative z-10 space-y-2">
           {state.isBettingClosed && (
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 shadow-xl relative overflow-hidden text-center"
+              className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 shadow-lg relative overflow-hidden text-center"
             >
-              <div className="flex flex-col items-center justify-center space-y-1.5">
-                <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 animate-pulse">
-                  <Lock className="w-4 h-4" />
+              <div className="flex flex-col items-center justify-center space-y-1">
+                <div className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 animate-pulse">
+                  <Lock className="w-3 h-3" />
                 </div>
-                <span className="text-[10px] font-black tracking-widest text-amber-400 uppercase">Betting Closed</span>
-                <p className="text-xs font-bold text-white">
+                <span className="text-[9px] font-black tracking-widest text-amber-400 uppercase">Betting Closed</span>
+                <p className="text-[10px] font-bold text-white">
                   Betting closed — Please wait for the next round.
                 </p>
               </div>
@@ -4119,15 +4050,15 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
           )}
         </div>
 
-        {/* ACTION MAIN BUTTON: DOUBLE OR DONATE (Placed exactly under Slider) */}
-        <div className="relative z-10 mb-6">
+        {/* ACTION MAIN BUTTON: DOUBLE OR DONATE */}
+        <div className="relative z-10 my-1.5 sm:my-2.5">
           <motion.button 
-            whileHover={{ scale: 1.02 }}
+            whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={handlePlay}
             disabled={isPlacingBet || state.isBettingClosed || (currentPlayer?.balance ?? 0) < betAmount || betAmount <= 0}
             className={`
-              w-full py-4 sm:py-5 rounded-2xl text-2xl sm:text-3xl font-black italic tracking-wider uppercase transition-all duration-300 relative border-0 cursor-pointer shadow-[0_0_35px_rgba(255,50,0,0.8)]
+              w-full py-3 sm:py-3.5 rounded-xl text-xl sm:text-2xl font-black italic tracking-wider uppercase transition-all duration-300 relative border-0 cursor-pointer shadow-[0_0_25px_rgba(255,50,0,0.7)]
               ${isPlacingBet || state.isBettingClosed || (currentPlayer?.balance ?? 0) < betAmount || betAmount <= 0 
                 ? 'bg-gray-800/80 text-slate-500 cursor-not-allowed shadow-none border border-white/5' 
                 : 'bg-gradient-to-r from-[#ffe600] via-[#ff4d00] to-[#e60000] text-black hover:brightness-110 active:brightness-90'
@@ -4138,70 +4069,68 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
               ? 'PLACING BET...' 
               : state.isBettingClosed 
               ? 'BETTING CLOSED' 
-              : currentPlayer?.pendingBet
-              ? 'ADD TO BET'
               : 'DOUBLE OR DONATE'}
           </motion.button>
         </div>
 
         {/* FOOTER CHARITY DISCLOSURE */}
-        <div className="space-y-2 relative z-10 mb-6">
-          <div className="flex items-center justify-center gap-2 text-[10px] font-black tracking-wider text-slate-300 uppercase py-2.5 bg-white/[0.03] border border-white/10 rounded-2xl px-4 select-none shadow-sm">
-            <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
+        <div className="relative z-10 my-1 sm:my-1.5">
+          <div className="flex items-center justify-center gap-1.5 text-[9px] sm:text-[10px] font-black tracking-wider text-slate-300 uppercase py-1.5 bg-white/[0.03] border border-white/10 rounded-xl px-3 select-none shadow-sm">
+            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
             <span>Your Lost Amount Will Be Donated To Poor</span>
           </div>
         </div>
 
         {/* BOTTOM FEATURE BADGES GRID */}
-        <div className="relative z-10 grid grid-cols-4 gap-1 sm:gap-2 bg-[#090514]/90 border border-slate-800 rounded-2xl p-2.5 sm:p-4 text-center shadow-2xl backdrop-blur-md">
+        <div className="relative z-10 grid grid-cols-4 gap-1 bg-[#090514]/90 border border-slate-800 rounded-xl p-1.5 sm:p-2 text-center shadow-xl backdrop-blur-md">
           {/* Item 1: 100% SECURE */}
-          <div className="flex flex-col items-center justify-center p-1 space-y-1">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
-              <Shield className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+          <div className="flex flex-col items-center justify-center p-0.5 space-y-0.5">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)]">
+              <Shield className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />
             </div>
-            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+            <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider text-white block mt-0.5">
               100% SECURE
             </span>
-            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
-              Safe & Protected
+            <span className="text-[7px] sm:text-[8px] font-semibold text-[#8a9cb5] block leading-tight">
+              Protected
             </span>
           </div>
 
           {/* Item 2: INSTANT GAME */}
-          <div className="flex flex-col items-center justify-center p-1 space-y-1 border-l border-slate-800/80">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
-              <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+          <div className="flex flex-col items-center justify-center p-0.5 space-y-0.5 border-l border-slate-800/80">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)]">
+              <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />
             </div>
-            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+            <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider text-white block mt-0.5">
               INSTANT GAME
             </span>
-            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+            <span className="text-[7px] sm:text-[8px] font-semibold text-[#8a9cb5] block leading-tight">
               Fast & Fair
             </span>
           </div>
 
           {/* Item 3: PROVABLY FAIR */}
-          <div className="flex flex-col items-center justify-center p-1 space-y-1 border-l border-slate-800/80">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
-              <Crown className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+          <div className="flex flex-col items-center justify-center p-0.5 space-y-0.5 border-l border-slate-800/80">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)]">
+              <Crown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />
             </div>
-            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+            <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider text-white block mt-0.5">
               PROVABLY FAIR
             </span>
-            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+            <span className="text-[7px] sm:text-[8px] font-semibold text-[#8a9cb5] block leading-tight">
               Transparent
             </span>
           </div>
 
           {/* Item 4: 24/7 SUPPORT */}
-          <div className="flex flex-col items-center justify-center p-1 space-y-1 border-l border-slate-800/80">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.25)]">
-              <Headphones className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
+          <div className="flex flex-col items-center justify-center p-0.5 space-y-0.5 border-l border-slate-800/80">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)]">
+              <Headphones className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />
             </div>
-            <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-white block mt-1">
+            <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider text-white block mt-0.5">
               24/7 SUPPORT
             </span>
-            <span className="text-[8px] sm:text-[10px] font-semibold text-[#8a9cb5] block leading-tight">
+            <span className="text-[7px] sm:text-[8px] font-semibold text-[#8a9cb5] block leading-tight">
               We're Here
             </span>
           </div>
@@ -4214,18 +4143,18 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
               initial={{ opacity: 0, scale: 0.8, y: -20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.8, y: 10 }}
-              className="mt-6 flex flex-col items-center justify-center p-4 rounded-2xl bg-black/90 border border-white/20 shadow-2xl relative z-30"
+              className="mt-4 flex flex-col items-center justify-center p-3 rounded-xl bg-black/90 border border-white/20 shadow-2xl relative z-30"
             >
               {result === 'win' ? (
-                <span className="font-black text-5xl sm:text-6xl italic tracking-tighter text-emerald-400 text-glow-gold animate-pulse">
+                <span className="font-black text-4xl sm:text-5xl italic tracking-tighter text-emerald-400 text-glow-gold animate-pulse">
                   WINNER!
                 </span>
               ) : (
                 <div className="flex flex-col items-center">
-                  <span className="font-black text-6xl sm:text-7xl italic tracking-tighter text-red-600 mb-1 text-glow-red">
+                  <span className="font-black text-5xl sm:text-6xl italic tracking-tighter text-red-600 mb-1 text-glow-red">
                     DONATED
                   </span>
-                  <span className="text-white font-extrabold tracking-wider text-xs uppercase text-center max-w-[260px] leading-relaxed">
+                  <span className="text-white font-extrabold tracking-wider text-[10px] sm:text-xs uppercase text-center max-w-[240px] leading-relaxed">
                     Your Money Has been Donated to The Poor
                   </span>
                 </div>
@@ -4235,15 +4164,15 @@ function GameView({ state, currentPlayer, onPlaceBet, playSound, onResetGraph, p
         </AnimatePresence>
 
         {(currentPlayer?.balance ?? 0) < 1 && (
-          <div className="mt-4 flex items-center justify-center gap-2 text-rose-400 text-xs bg-rose-500/10 py-3 rounded-xl border border-rose-500/20 relative z-10">
-            <AlertCircle className="w-4 h-4" />
+          <div className="mt-2 flex items-center justify-center gap-1.5 text-rose-400 text-[11px] bg-rose-500/10 py-2 rounded-xl border border-rose-500/20 relative z-10">
+            <AlertCircle className="w-3.5 h-3.5" />
             <span>Insufficient balance in vault.</span>
           </div>
         )}
       </div>
     </div>
   );
-}
+});
 
 
 
@@ -4820,7 +4749,7 @@ export function VIPView() {
   return null;
 }
 
-function OldVIPView({ state, currentPlayer, preferredCurrency, rates }: VIPViewProps) {
+const OldVIPView = memo(function OldVIPView({ state, currentPlayer, preferredCurrency, rates }: VIPViewProps) {
   const totalWagered = currentPlayer?.totalWagered || 0;
   const currentVIP = getVIPLevel(totalWagered);
 
@@ -5066,11 +4995,11 @@ function OldVIPView({ state, currentPlayer, preferredCurrency, rates }: VIPViewP
       </div>
     </div>
   );
-}
+});
 
 
 
-function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, onResetGraph, preferredCurrency, rates, onSelectCurrency }: { 
+const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, onResetGraph, preferredCurrency, rates, onSelectCurrency }: { 
   state: AppState, 
   currentPlayer: Player,
   onWithdraw: (
@@ -6073,104 +6002,10 @@ function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, on
       </AnimatePresence>
     </div>
   );
-}
-
-
-const AdminPendingBetRow = memo(({ 
-  player,
-  onResultBet,
-  settlementCurrency,
-  playSound
-}: { 
-  player: Player; 
-  onResultBet?: (playerId: string, outcome: 'win' | 'lose', settlementCurrency: string) => void;
-  settlementCurrency: string;
-  playSound: (key: any) => void;
-}) => {
-  const [timeLeft, setTimeLeft] = useState<number>(0);
-
-  useEffect(() => {
-    if (!player.pendingBet) return;
-    const timestamp = player.pendingBet.timestamp;
-    
-    const getRemaining = () => {
-      const diff = Date.now() - timestamp;
-      return Math.max(0, 60 - Math.floor(diff / 1000));
-    };
-
-    setTimeLeft(getRemaining());
-
-    const interval = setInterval(() => {
-      const rem = getRemaining();
-      setTimeLeft(rem);
-      if (rem <= 0) {
-        clearInterval(interval);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [player.pendingBet?.timestamp]);
-
-  return (
-    <div className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-white/[0.01] transition-colors">
-      <div className="flex items-center gap-5">
-         <div className="w-14 h-14 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex items-center justify-center font-bold text-xl text-emerald-400">
-           {player.name.charAt(0)}
-         </div>
-         <div>
-           <div className="flex flex-wrap items-center gap-3">
-             <p className="font-display font-bold text-lg">{player.name}</p>
-             <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider transition-all duration-300 ${
-               timeLeft > 30 
-                 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                 : timeLeft > 0 
-                 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse' 
-                 : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
-             }`}>
-               <Clock className="w-3 h-3" />
-               {timeLeft > 0 ? `${timeLeft}s Left` : 'TIME OUT / Settle Now'}
-             </span>
-           </div>
-           <div className="flex items-center gap-3 mt-1">
-             <p className="text-emerald-400 font-mono text-xl font-black">
-               ₹{((player.pendingBet?.amount || 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
-             </p>
-             <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest">ID: {player.id}</span>
-           </div>
-         </div>
-      </div>
-      
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => {
-            playSound('CLICK');
-            onResultBet?.(player.id, 'win', settlementCurrency);
-          }}
-          className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer border-0 transition-colors"
-        >
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          Win
-        </button>
-        <button
-          onClick={() => {
-            playSound('CLICK');
-            onResultBet?.(player.id, 'lose', settlementCurrency);
-          }}
-          className="bg-rose-500 hover:bg-rose-400 text-rose-950 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer border-0 transition-colors"
-        >
-          <XCircle className="w-3.5 h-3.5" />
-          Loss
-        </button>
-        <div className="flex items-center gap-2 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-xl font-mono text-[9px]">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-slate-400 font-bold uppercase tracking-wider">In: {settlementCurrency}</span>
-        </div>
-      </div>
-    </div>
-  );
 });
 
-AdminPendingBetRow.displayName = 'AdminPendingBetRow';
+
+
 
 const HouseProfitTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
@@ -6206,7 +6041,226 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdateCustomTotalBets, onToggleWithdrawalsStopped, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onResultAllBets, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
+const PendingBetsCard = memo(function PendingBetsCard({ playSound }: { playSound: (key: any) => void }) {
+  const [activeBets, setActiveBets] = useState<ActiveBet[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'bets'), 
+      where('status', '==', 'active'),
+      limit(100)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const betsList: ActiveBet[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.isDemo === true) return; // Never show demo bets in Admin Pending Bets
+        betsList.push({
+          betId: docSnap.id,
+          playerId: data.playerId || '',
+          username: data.username || 'Player',
+          amount: data.amount || 0,
+          multiplier: data.multiplier || 2,
+          game: data.game || 'Double or Donate',
+          status: data.status || 'active',
+          isDemo: false,
+          createdAt: data.createdAt || Date.now()
+        });
+      });
+      betsList.sort((a, b) => b.createdAt - a.createdAt);
+      setActiveBets(betsList);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'bets');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleWinAll = async () => {
+    if (activeBets.length === 0 || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await Promise.all(activeBets.map(async (bet) => {
+        const betRef = doc(db, 'bets', bet.betId);
+        let wasActive = false;
+
+        await runTransaction(db, async (txn) => {
+          const betSnap = await txn.get(betRef);
+          if (betSnap.exists() && betSnap.data().status === 'active') {
+            txn.update(betRef, {
+              status: 'won',
+              resolvedAt: Date.now(),
+              resolvedBy: 'admin'
+            });
+            wasActive = true;
+          }
+        });
+
+        if (wasActive) {
+          const winAmount = bet.amount * (bet.multiplier || 2);
+          await walletServiceTS.gameWin(
+            bet.playerId,
+            winAmount,
+            { description: `Manual Admin Win (${bet.multiplier || 2}x)`, referenceId: bet.betId },
+            `settle_win_${bet.betId}`
+          );
+        }
+      }));
+      playSound('WIN');
+    } catch (e) {
+      console.error("Error resolving Win All:", e);
+      alert("Failed to resolve some bets as Win.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleLoseAll = async () => {
+    if (activeBets.length === 0 || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await Promise.all(activeBets.map(async (bet) => {
+        const betRef = doc(db, 'bets', bet.betId);
+        let wasActive = false;
+
+        await runTransaction(db, async (txn) => {
+          const betSnap = await txn.get(betRef);
+          if (betSnap.exists() && betSnap.data().status === 'active') {
+            txn.update(betRef, {
+              status: 'lost',
+              resolvedAt: Date.now(),
+              resolvedBy: 'admin'
+            });
+            wasActive = true;
+          }
+        });
+
+        if (wasActive) {
+          await walletServiceTS.gameLoss(
+            bet.playerId,
+            bet.amount,
+            { description: `Manual Admin Loss`, referenceId: bet.betId },
+            `settle_loss_${bet.betId}`
+          );
+        }
+      }));
+      playSound('LOSE');
+    } catch (e) {
+      console.error("Error resolving Lose All:", e);
+      alert("Failed to resolve some bets as Loss.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const inrRate = getCachedRates().rates['INR'] || 83.50;
+
+  return (
+    <div className="glass-card rounded-3xl p-5 sm:p-6 mb-6 border border-amber-500/20 shadow-2xl relative overflow-hidden">
+      {/* Top Header / Toggle Card */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
+        <button 
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-3 text-left focus:outline-none cursor-pointer bg-transparent border-0 p-0"
+        >
+          <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+            <Clock className="w-5 h-5 text-amber-400 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-display font-black text-xl text-white tracking-tight">Pending Bets</h3>
+              <span className="bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-black px-3 py-0.5 rounded-full font-mono">
+                Pending Bets Count: {activeBets.length}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 font-medium">Real-time active player wagers awaiting settlement</p>
+          </div>
+        </button>
+
+        {/* ONLY TWO BUTTONS: 🟢 WIN ALL & 🔴 LOSE ALL */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleWinAll}
+            disabled={activeBets.length === 0 || isProcessing}
+            className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shadow-lg font-sans border-0 ${
+              activeBets.length === 0 || isProcessing
+                ? 'bg-emerald-500/20 text-emerald-500/40 cursor-not-allowed opacity-50'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-emerald-950 shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] cursor-pointer'
+            }`}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>🟢 WIN ALL</span>
+          </button>
+
+          <button
+            onClick={handleLoseAll}
+            disabled={activeBets.length === 0 || isProcessing}
+            className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shadow-lg font-sans border-0 ${
+              activeBets.length === 0 || isProcessing
+                ? 'bg-rose-500/20 text-rose-500/40 cursor-not-allowed opacity-50'
+                : 'bg-rose-500 hover:bg-rose-400 text-rose-950 shadow-rose-500/20 hover:scale-[1.02] active:scale-[0.98] cursor-pointer'
+            }`}
+          >
+            <XCircle className="w-4 h-4" />
+            <span>🔴 LOSE ALL</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Bets List / Table */}
+      {isOpen && (
+        <div className="mt-5">
+          {activeBets.length === 0 ? (
+            <div className="text-center py-8 bg-white/[0.02] border border-white/5 rounded-2xl">
+              <p className="text-slate-500 text-xs font-mono font-bold uppercase tracking-widest">No active pending bets at the moment</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-white/10 text-[10px] text-slate-400 font-mono font-bold uppercase tracking-wider">
+                    <th className="py-3 px-4">Player Name</th>
+                    <th className="py-3 px-4">Game</th>
+                    <th className="py-3 px-4">Bet Amount</th>
+                    <th className="py-3 px-4">Multiplier</th>
+                    <th className="py-3 px-4">Potential Win</th>
+                    <th className="py-3 px-4 text-right">Created Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {activeBets.map((bet) => (
+                    <tr key={bet.betId} className="hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 px-4 font-bold text-white text-sm">{bet.username}</td>
+                      <td className="py-3.5 px-4 text-slate-300 text-xs font-medium">{bet.game || 'Double or Donate'}</td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-white text-sm">
+                        ₹{(bet.amount * inrRate).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-md">
+                          {bet.multiplier}x
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-emerald-400 text-sm">
+                        ₹{(bet.amount * bet.multiplier * inrRate).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono text-slate-400 text-xs">
+                        {new Date(bet.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+const AdminView = memo(function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdateCustomTotalBets, onToggleWithdrawalsStopped, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
   state: AppState, 
   playSound: (key: any) => void,
   onUpdateWinRate: (rate: number) => void,
@@ -6221,7 +6275,6 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   onUpdatePlayerOverride: (id: string, override: 'win' | 'lose' | 'none') => void,
   onSwitchPlayer: (id: string) => void,
   onResultBet: (playerId: string, outcome: 'win' | 'lose', settlementCurrency?: string) => void,
-  onResultAllBets: (outcome: 'win' | 'lose', settlementCurrency?: string) => void,
   onUpdateWithdrawalStatus: (id: string, status: 'completed' | 'rejected') => void,
   onUpdateDepositStatus: (id: string, status: 'completed' | 'rejected') => void,
   onToggleMaintenanceMode: () => void,
@@ -6258,13 +6311,6 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
   const [activeScreenshotUrl, setActiveScreenshotUrl] = useState<string | null>(null);
   const [activeSpreadsheet, setActiveSpreadsheet] = useState<'deposits' | 'withdrawals' | 'blockchain_networks' | 'withdrawal_networks' | 'active_users' | null>(null);
 
-  const [bulkSettleType, setBulkSettleType] = useState<'win' | 'lose' | null>(null);
-  const [settlementCurrency, setSettlementCurrency] = useState<string>('USDT');
-  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
-  const [processingProgress, setProcessingProgress] = useState(0);
-  const [bulkSettleError, setBulkSettleError] = useState<string | null>(null);
-  const [bulkSettleSuccess, setBulkSettleSuccess] = useState<string | null>(null);
-
   const [lotteryHourInput, setLotteryHourInput] = useState<number>(Math.floor((state.lotteryTimerDuration ?? 300) / 3600));
   const [lotteryMinInput, setLotteryMinInput] = useState<number>(Math.floor(((state.lotteryTimerDuration ?? 300) % 3600) / 60));
   const [lotterySecInput, setLotterySecInput] = useState<number>((state.lotteryTimerDuration ?? 300) % 60);
@@ -6280,61 +6326,6 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
     const secs = seconds % 60;
     const pad = (num: number) => num < 10 ? `0${num}` : num;
     return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
-  };
-
-  const handleInitiateBulkSettle = (type: 'win' | 'lose') => {
-    setBulkSettleType(type);
-    setBulkSettleError(null);
-    setBulkSettleSuccess(null);
-    setProcessingProgress(0);
-  };
-
-  const handleExecuteBulkSettle = async () => {
-    if (!bulkSettleType) return;
-    setIsProcessingBulk(true);
-    setBulkSettleError(null);
-    setBulkSettleSuccess(null);
-    setProcessingProgress(15);
-
-    // Dynamic progression simulation
-    const progressInterval = setInterval(() => {
-      setProcessingProgress(prev => {
-        if (prev >= 90) {
-          clearInterval(progressInterval);
-          return 90;
-        }
-        return prev + Math.floor(Math.random() * 15) + 5;
-      });
-    }, 150);
-
-    try {
-      const activeBets = state.players.filter(p => p.pendingBet);
-      const betCount = activeBets.length;
-      const totalSum = activeBets.reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0);
-      const rates = getCachedRates().rates;
-      const inrRate = rates['INR'] || 83.50;
-      const totalSumInr = totalSum * inrRate;
-      
-      await onResultAllBets(bulkSettleType, settlementCurrency);
-
-      // Settle animation to 100%
-      clearInterval(progressInterval);
-      setProcessingProgress(100);
-      setTimeout(() => {
-        setIsProcessingBulk(false);
-        setBulkSettleSuccess(`All ${betCount} pending bets (totaling ₹${totalSumInr.toFixed(2)}) were successfully settled as ${bulkSettleType.toUpperCase()}!`);
-        setBulkSettleType(null);
-
-        // Auto-dismiss after 2.5 seconds
-        setTimeout(() => {
-          setBulkSettleSuccess(null);
-        }, 2500);
-      }, 500);
-    } catch (err: any) {
-      clearInterval(progressInterval);
-      setIsProcessingBulk(false);
-      setBulkSettleError(err?.message || 'Failed to complete bulk settlement.');
-    }
   };
 
   const [paymentEdit, setPaymentEdit] = useState<PaymentSettings>(state.paymentSettings || {});
@@ -6545,138 +6536,57 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
         </div>
       </div>
 
-      {/* Pending Bets */}
-      <div className="glass-card rounded-3xl overflow-hidden mb-6 border border-amber-500/10">
-        <div className="p-5 sm:p-6 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between bg-amber-500/[0.02] gap-4">
-           <div className="flex items-center gap-3">
-             <DollarSign className="w-5 h-5 text-amber-500" />
-             <div>
-               <h4 className="font-display font-bold text-lg text-white animate-fade-in">
-                 Pending Bets
-               </h4>
-               <p className="text-[10px] text-slate-500 font-medium font-sans">Control bet flow and manual settlements</p>
-             </div>
-           </div>
-           
-           <div className="flex flex-wrap items-center gap-3">
-             <span className="bg-amber-500/10 text-amber-500 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest border border-amber-500/20 font-sans">
-               {state.players.filter(p => p.pendingBet).length} Pending
-             </span>
+      {/* Pending Bets Section */}
+      <PendingBetsCard playSound={playSound} />
 
-             {/* Visual Active/Inactive status indicator */}
-             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 font-sans transition-all duration-300 ${
-               state.isBettingClosed 
-                 ? 'bg-rose-500/10 border-rose-500/20 text-rose-500 shadow-[0_0_15px_rgba(239,68,68,0.05)]' 
-                 : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.05)]'
-             }`}>
-               <span className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-                 state.isBettingClosed ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'
-               }`} />
-               <span className="text-[9px] font-black uppercase tracking-wider">
-                 {state.isBettingClosed ? 'Stopped' : 'Collecting'}
-               </span>
-             </div>
-
-             {/* Stop / Resume Action Button */}
-             <motion.button
-               whileHover={{ scale: 1.02 }}
-               whileTap={{ scale: 0.98 }}
-               onClick={() => onToggleBettingStatus()}
-               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm transition-all duration-300 cursor-pointer border-0 font-sans ${
-                 state.isBettingClosed 
-                   ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-emerald-500/10' 
-                   : 'bg-rose-500/15 border border-rose-500/30 text-rose-400 hover:bg-rose-500/25'
-               }`}
-             >
-               {state.isBettingClosed ? (
-                 <>
-                   <LockOpen className="w-3.5 h-3.5" />
-                   Resume Bets
-                 </>
-               ) : (
-                 <>
-                   <Lock className="w-3.5 h-3.5" />
-                   Stop Bets
-                 </>
-               )}
-             </motion.button>
-           </div>
-        </div>
-
-        {/* Bulk Action Controls */}
-        {state.players.filter(p => p.pendingBet).length > 0 && (
-          <div className="p-5 sm:p-6 bg-white/[0.01] border-b border-white/5 flex flex-col lg:flex-row items-center justify-between gap-4">
-            <div className="space-y-1 text-center lg:text-left">
-              <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">BULK SETTLEMENT SUITE</span>
-              <p className="font-display font-bold text-base text-white">Settle Active Round</p>
-              <div className="flex flex-wrap items-center gap-2 mt-1 justify-center lg:justify-start">
-                <span className="text-slate-400 text-xs">Total Pool Accumulation:</span>
-                <span className="text-emerald-400 font-mono text-base font-black">
-                  ₹{(state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}
-                </span>
-                <span className="text-slate-600 font-mono text-xs">|</span>
-                <span className="text-slate-400 text-xs">{state.players.filter(p => p.pendingBet).length} active bets</span>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-end gap-3 w-full lg:w-auto justify-center lg:justify-end">
-              {/* Settlement Currency Selector */}
-              <div className="flex flex-col items-start gap-1 w-full sm:w-auto">
-                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider font-mono">Settle In Currency</span>
-                <select
-                  value={settlementCurrency}
-                  onChange={(e) => {
-                    playSound('CLICK');
-                    setSettlementCurrency(e.target.value);
-                  }}
-                  className="w-full sm:w-auto bg-black/60 text-white border border-white/10 rounded-xl px-3 py-2.5 text-xs font-mono font-bold focus:outline-none focus:border-emerald-500/50 cursor-pointer min-w-[140px]"
-                >
-                  <option value="USDT">USDT (Native)</option>
-                  {Object.values(SUPPORTED_CURRENCIES).map((curr) => (
-                    <option key={curr.code} value={curr.code}>
-                      {curr.flag} {curr.code} ({curr.symbol})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <motion.button 
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => handleInitiateBulkSettle('win')}
-                className="w-full sm:w-auto bg-emerald-500 text-emerald-950 px-5 py-2.5 rounded-xl text-[10px] font-black hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer h-[38px]"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                Settle All as Win
-              </motion.button>
-              
-              <motion.button 
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => handleInitiateBulkSettle('lose')}
-                className="w-full sm:w-auto bg-rose-500 text-rose-950 px-5 py-2.5 rounded-xl text-[10px] font-black hover:bg-rose-400 transition-all shadow-xl shadow-rose-500/10 uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer h-[38px]"
-              >
-                <XCircle className="w-4 h-4" />
-                Settle All as Loss
-              </motion.button>
-            </div>
+      {/* Betting Control Card */}
+      <div className="glass-card rounded-3xl p-5 sm:p-6 mb-6 border border-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <DollarSign className="w-5 h-5 text-amber-500" />
+          <div>
+            <h4 className="font-display font-bold text-lg text-white">
+              Betting Control
+            </h4>
+            <p className="text-[10px] text-slate-500 font-medium font-sans">Control betting status globally across the platform</p>
           </div>
-        )}
+        </div>
+        
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 font-sans transition-all duration-300 ${
+            state.isBettingClosed 
+              ? 'bg-rose-500/10 border-rose-500/20 text-rose-500' 
+              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              state.isBettingClosed ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'
+            }`} />
+            <span className="text-[9px] font-black uppercase tracking-wider">
+              {state.isBettingClosed ? 'Stopped' : 'Collecting'}
+            </span>
+          </div>
 
-        <div className="divide-y divide-white/5">
-          {state.players.filter(p => p.pendingBet).length === 0 ? (
-            <div className="p-20 text-center text-slate-600 font-display italic">No active bets currently awaiting outcome</div>
-          ) : (
-            state.players.filter(p => p.pendingBet).map(player => (
-              <AdminPendingBetRow 
-                key={player.id} 
-                player={player} 
-                onResultBet={onResultBet}
-                settlementCurrency={settlementCurrency}
-                playSound={playSound}
-              />
-            ))
-          )}
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => onToggleBettingStatus()}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm transition-all duration-300 cursor-pointer border-0 font-sans ${
+              state.isBettingClosed 
+                ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400' 
+                : 'bg-rose-500/15 border border-rose-500/30 text-rose-400 hover:bg-rose-500/25'
+            }`}
+          >
+            {state.isBettingClosed ? (
+              <>
+                <LockOpen className="w-3.5 h-3.5" />
+                Resume Bets
+              </>
+            ) : (
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                Stop Bets
+              </>
+            )}
+          </motion.button>
         </div>
       </div>
 
@@ -8364,178 +8274,6 @@ function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdate
         </div>
       </div>
 
-      {/* Bulk Settlement Confirmation/Status Modal */}
-      <AnimatePresence>
-        {(bulkSettleType !== null || isProcessingBulk || bulkSettleSuccess !== null || bulkSettleError !== null) && (
-          <div className="fixed inset-0 flex items-center justify-center p-4 z-[120] overflow-y-auto">
-            {/* Backdrop */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                if (!isProcessingBulk) {
-                  setBulkSettleType(null);
-                  setBulkSettleSuccess(null);
-                  setBulkSettleError(null);
-                }
-              }}
-              className="fixed inset-0 bg-black/80 backdrop-blur-sm"
-            />
-
-            {/* Content Card */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-              className="relative w-full max-w-md bg-[#0b0b0b] border border-white/10 rounded-[2.5rem] p-8 text-center shadow-2xl overflow-hidden z-[130]"
-            >
-              <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-transparent via-amber-500/40 to-transparent" />
-
-              {/* Success View */}
-              {bulkSettleSuccess && (
-                <div className="space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.1)]">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-400" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">Settlement Successful</h3>
-                    <p className="text-slate-400 text-sm leading-relaxed">{bulkSettleSuccess}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Error View */}
-              {bulkSettleError && (
-                <div className="space-y-6">
-                  <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto">
-                    <XCircle className="w-8 h-8 text-rose-500" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">Process Interrupted</h3>
-                    <p className="text-rose-400 text-xs font-mono bg-rose-500/5 border border-rose-500/10 p-4 rounded-xl text-left leading-relaxed overflow-x-auto max-h-[120px]">
-                      {bulkSettleError}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setBulkSettleError(null);
-                      setBulkSettleType(null);
-                    }}
-                    className="w-full py-4 bg-white text-black font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl hover:scale-[1.02] transition-all cursor-pointer border-0 font-sans"
-                  >
-                    Acknowledge
-                  </button>
-                </div>
-              )}
-
-              {/* Processing View */}
-              {isProcessingBulk && (
-                <div className="space-y-8 py-4">
-                  <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
-                    {/* Ring animation */}
-                    <div className="absolute inset-0 border-4 border-white/5 rounded-full" />
-                    <div className="absolute inset-0 border-4 border-amber-500 rounded-full border-t-transparent animate-spin" />
-                    <Clock className="w-8 h-8 text-amber-500 animate-pulse" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">Processing Settlement</h3>
-                    <p className="text-slate-500 text-xs uppercase tracking-[0.2em] font-mono">Executing Firebase Transaction Batch</p>
-                  </div>
-                  
-                  {/* Progress feedback bar */}
-                  <div className="space-y-2 max-w-xs mx-auto">
-                    <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
-                      <motion.div 
-                        className="h-full bg-gradient-to-r from-amber-500 to-yellow-400"
-                        animate={{ width: `${processingProgress}%` }}
-                        transition={{ duration: 0.1 }}
-                      />
-                    </div>
-                    <p className="text-slate-400 font-mono text-[10px] font-bold">{processingProgress}% Complete</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Confirmation View */}
-              {bulkSettleType && !isProcessingBulk && !bulkSettleSuccess && !bulkSettleError && (() => {
-                const currentRates = getCachedRates().rates;
-                const exRate = currentRates[settlementCurrency] || 1.0;
-                const isUsdt = settlementCurrency === 'USDT';
-                const symbol = isUsdt ? 'USDT' : (SUPPORTED_CURRENCIES[settlementCurrency]?.symbol || '$');
-                const flag = isUsdt ? '🪙' : (SUPPORTED_CURRENCIES[settlementCurrency]?.flag || '💵');
-                return (
-                  <div className="space-y-6">
-                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-xl ${
-                      bulkSettleType === 'win' 
-                        ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
-                        : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
-                    }`}>
-                      {bulkSettleType === 'win' ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
-                    </div>
-
-                    <div className="space-y-2">
-                      <h3 className="font-display font-black text-2xl text-white uppercase tracking-tight">
-                        Confirm Bulk {bulkSettleType === 'win' ? 'Win' : 'Loss'}?
-                      </h3>
-                      <p className="text-slate-400 text-sm leading-relaxed">
-                        You are about to resolve <strong className="text-white">{state.players.filter(p => p.pendingBet).length} active bets</strong> totaling <span className="text-emerald-400 font-mono font-bold">₹{(state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) * (getCachedRates().rates['INR'] || 83.50)).toFixed(2)}</span> at once.
-                      </p>
-
-                      {bulkSettleType === 'win' && (
-                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-2 text-left max-w-xs mx-auto">
-                          <div className="flex justify-between text-xs font-mono">
-                            <span className="text-slate-500">Settle In:</span>
-                            <span className="text-white font-bold">{flag} {settlementCurrency}</span>
-                          </div>
-                          <div className="flex justify-between text-xs font-mono">
-                            <span className="text-slate-500">Exchange Rate:</span>
-                            <span className="text-white">1 USDT = {exRate.toFixed(4)} {settlementCurrency}</span>
-                          </div>
-                          <div className="border-t border-white/5 my-1" />
-                          <div className="flex justify-between text-xs font-mono">
-                            <span className="text-emerald-400 font-bold">Est. Total Payout:</span>
-                            <span className="text-emerald-400 font-bold">
-                              {isUsdt ? '' : symbol}
-                              {((state.players.filter(p => p.pendingBet).reduce((sum, p) => sum + (p.pendingBet?.amount || 0), 0) * 2) * exRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              {isUsdt ? ' USDT' : ''}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest bg-white/5 py-1.5 px-3 rounded-lg max-w-xs mx-auto font-mono">
-                        THIS SHALL MUTATE ALL ACTIVE RUNNING ACCOUNTS INDELIBLY
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                      <button
-                        onClick={() => setBulkSettleType(null)}
-                        className="w-full sm:w-1/2 py-4 bg-white/5 border border-white/5 text-slate-400 font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white/10 hover:text-white transition-all cursor-pointer font-sans"
-                      >
-                        Refuse / Back
-                      </button>
-                      <button
-                        onClick={handleExecuteBulkSettle}
-                        className={`w-full sm:w-1/2 py-4 font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl transition-all cursor-pointer border-0 font-sans ${
-                          bulkSettleType === 'win'
-                            ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-emerald-500/15 hover:scale-[1.02]'
-                            : 'bg-rose-500 text-rose-950 hover:bg-rose-400 shadow-rose-500/15 hover:scale-[1.02]'
-                        }`}
-                      >
-                        Authorize Settle
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
     </div>
   );
-}
+});

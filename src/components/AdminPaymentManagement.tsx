@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, ToggleLeft, ToggleRight, Key, Globe, FileText, Settings, 
@@ -18,7 +18,7 @@ interface AdminPaymentManagementProps {
   adminRole: 'Super Admin' | 'Support' | 'Admin';
 }
 
-export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymentManagementProps) {
+export const AdminPaymentManagement = memo(function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymentManagementProps) {
   const isReadOnly = adminRole === 'Support';
 
   // State
@@ -988,4 +988,4 @@ export function AdminPaymentManagement({ db, playSound, adminRole }: AdminPaymen
 
     </div>
   );
-}
+});

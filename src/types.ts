@@ -1,3 +1,17 @@
+export interface ActiveBet {
+  betId: string;
+  playerId: string;
+  username: string;
+  amount: number;
+  multiplier: number;
+  game?: string;
+  status: 'active' | 'won' | 'lost';
+  isDemo?: boolean;
+  createdAt: number;
+  resolvedAt?: number;
+  resolvedBy?: string;
+}
+
 export interface Transaction {
   id: string;
   playerId: string;
@@ -117,10 +131,6 @@ export interface Player {
   email?: string;
   override: 'win' | 'lose' | 'none';
   balance: number;
-  pendingBet?: {
-    amount: number;
-    timestamp: number;
-  };
   referralCode: string;
   referredBy?: string;
   referralCount: number;
@@ -133,6 +143,8 @@ export interface Player {
   biggestBet?: number;
   totalBetsCount?: number;
   lastActive?: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface FAQItem {

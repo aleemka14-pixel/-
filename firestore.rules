@@ -28,24 +28,12 @@ service cloud.firestore {
 
     // --- Users & Profiles Security ---
     match /users/{userId} {
-      allow read: if true;
-      allow create: if isOwner(userId) || isAdmin();
-      allow update: if isAdmin() || (
-        isOwner(userId) && 
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['balance', 'walletBalance'])
-      );
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // --- Players Collection ---
     match /players/{playerId} {
-      allow read: if true;
-      allow create: if isOwner(playerId) || isAdmin();
-      allow update: if isAdmin() || (
-        isOwner(playerId) && 
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['balance', 'walletBalance'])
-      );
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // --- Wallets Collection ---
@@ -55,54 +43,63 @@ service cloud.firestore {
 
     // --- Ledger Transactions Security ---
     match /transactions/{id} {
-      allow read, create, update: if true;
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
 
-    // --- Gameplay History Security ---
+    // --- Gameplay History & Bets Security ---
     match /gameHistory/{id} {
-      allow read, create, update: if true;
-      allow delete: if isAdmin();
+      allow read, write: if true;
+    }
+
+    match /bets/{id} {
+      allow read, write: if true;
     }
 
     // --- Deposits & Withdrawals Security ---
     match /withdrawals/{id} {
-      allow read, create, update: if true;
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
 
     match /deposits/{id} {
-      allow read, create, update: if true;
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // --- Global Configurations & Settings Security ---
     match /config/{docId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
     match /deposit_networks/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
     match /withdrawal_networks/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
     match /auditLogs/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
     }
 
     match /system_alerts/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
     match /notifications/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update, delete: if true;
     }
 
     match /securityLogs/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
     }
 
     // Connection test

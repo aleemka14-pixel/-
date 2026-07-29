@@ -8,6 +8,7 @@ import {
   addPaymentLog
 } from './_services/payment-service.js';
 import { doc, getDoc, runTransaction, collection, query, where, getDocs } from 'firebase/firestore';
+import walletService from '../services/wallet-service.js';
 
 /**
  * Vercel Serverless Function: payment-webhook
@@ -168,87 +169,38 @@ export default async function handler(req, res) {
     const timestampNow = Date.now();
     let updatedBalance = 0;
 
+    // First mark deposit as confirmed
     await runTransaction(db, async (transaction) => {
-      const freshPlayerSnap = await transaction.get(playerRef);
       const freshDepositSnap = await transaction.get(depositRef);
-
-      if (!freshPlayerSnap.exists()) {
-        throw new Error(`Player document with ID '${playerId}' does not exist.`);
-      }
-
       if (!freshDepositSnap.exists()) {
         throw new Error(`Deposit document with ID '${depositId}' does not exist.`);
       }
-
       const freshDepositData = freshDepositSnap.data();
       if (freshDepositData.status === 'confirmed' || freshDepositData.status === 'completed') {
         throw new Error("Concurrency Conflict: Deposit is already confirmed in a parallel thread.");
       }
-
-      const playerData = freshPlayerSnap.data();
-      let balanceBefore = playerData.balance || 0;
-
-      const freshUserSnap = await transaction.get(userRef);
-      if (freshUserSnap.exists()) {
-        balanceBefore = freshUserSnap.data().balance ?? freshUserSnap.data().walletBalance ?? balanceBefore;
-      }
-
-      updatedBalance = balanceBefore + dbAmount;
-
-      // Update Player Balance
-      transaction.update(playerRef, { balance: updatedBalance });
-
-      // Update User Balance
-      if (freshUserSnap.exists()) {
-        transaction.update(userRef, {
-          balance: updatedBalance,
-          walletBalance: updatedBalance,
-          updatedAt: timestampNow
-        });
-      } else {
-        transaction.set(userRef, {
-          userId: playerId,
-          username: playerData.name || 'Player',
-          email: playerData.email || '',
-          balance: updatedBalance,
-          walletBalance: updatedBalance,
-          createdAt: timestampNow,
-          updatedAt: timestampNow,
-          status: 'active'
-        });
-      }
-
-      // Update Deposit request status
       transaction.update(depositRef, {
         status: 'confirmed',
         transactionHash: transactionHash.trim(),
         confirmedAt: timestampNow,
         updatedAt: timestampNow
       });
-
-      // Create transaction history document deterministically to prevent duplicate rows
-      const txnId = `TXN-CONF-${transactionHash.trim()}`;
-      const txnRef = doc(db, 'transactions', txnId);
-      
-      const transactionDoc = {
-        id: txnId,
-        transactionId: txnId,
-        playerId: playerId,
-        userId: playerId,
-        type: 'deposit',
-        amount: dbAmount,
-        balanceBefore: balanceBefore,
-        balanceAfter: updatedBalance,
-        referenceId: depositId,
-        network: netUpper,
-        status: 'completed',
-        transactionHash: transactionHash.trim(),
-        timestamp: timestampNow,
-        createdAt: timestampNow
-      };
-
-      transaction.set(txnRef, transactionDoc);
     });
+
+    // Execute wallet deposit via Wallet Service
+    const walletRes = await walletService.deposit(
+      playerId,
+      dbAmount,
+      {
+        depositId,
+        network: netUpper,
+        transactionHash: transactionHash.trim(),
+        description: `Crypto Deposit: ${dbAmount} USDT via ${netUpper}`
+      },
+      `dep_${depositId}`,
+      db
+    );
+    updatedBalance = walletRes.balanceAfter;
 
     await recordProviderSuccess('cryptodirect');
 

@@ -3,6 +3,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { reliabilityManager } from "./backend/services/reliability-manager.js";
+import { rateLimiter, webhookRateLimit, depositRateLimit, withdrawRateLimit, adminRateLimit } from "./middleware/rate-limit.js";
 
 async function startServer() {
   const app = express();
@@ -11,6 +12,14 @@ async function startServer() {
   // Body parsers
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+
+  // Apply API Rate Limiting Middleware
+  app.use("/api/webhook*", webhookRateLimit);
+  app.use("/api/payment-webhook*", webhookRateLimit);
+  app.use("/api/create-deposit*", depositRateLimit);
+  app.use("/api/create-upi-deposit*", depositRateLimit);
+  app.use("/api/create-withdraw*", withdrawRateLimit);
+  app.use("/api/admin/*", adminRateLimit);
 
   // Dynamic router for Vercel handlers in /api
   app.all("/api/*", async (req, res) => {

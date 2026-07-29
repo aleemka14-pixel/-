@@ -104,7 +104,6 @@ export const MatrixBackground = memo(function MatrixBackground() {
           continue;
         }
 
-        ctx.save();
         ctx.beginPath();
         ctx.strokeStyle = bolt.color;
         ctx.lineWidth = bolt.width;
@@ -116,7 +115,6 @@ export const MatrixBackground = memo(function MatrixBackground() {
           else ctx.lineTo(p.x, p.y);
         }
         ctx.stroke();
-        ctx.restore();
       }
 
       // Draw floating sparks smoothly
@@ -136,6 +134,8 @@ export const MatrixBackground = memo(function MatrixBackground() {
         ctx.fill();
       });
 
+      ctx.globalAlpha = 1;
+
       animationFrameId = requestAnimationFrame(render);
     };
 
@@ -149,14 +149,14 @@ export const MatrixBackground = memo(function MatrixBackground() {
   }, []);
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none">
+    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none content-contain gpu-layer">
       {/* Deep Background Base Radial Glows */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[350px] bg-gradient-radial from-red-600/10 via-amber-600/5 to-transparent blur-3xl pointer-events-none" />
-      <div className="absolute top-1/3 left-0 w-[350px] h-[350px] bg-gradient-radial from-blue-600/10 via-cyan-500/5 to-transparent blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-gradient-radial from-red-600/15 via-amber-500/5 to-transparent blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[350px] bg-gradient-radial from-red-600/10 via-amber-600/5 to-transparent blur-3xl pointer-events-none gpu-layer" />
+      <div className="absolute top-1/3 left-0 w-[350px] h-[350px] bg-gradient-radial from-blue-600/10 via-cyan-500/5 to-transparent blur-3xl pointer-events-none gpu-layer" />
+      <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-gradient-radial from-red-600/15 via-amber-500/5 to-transparent blur-3xl pointer-events-none gpu-layer" />
 
       {/* Lightning & Particle Canvas */}
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none gpu-layer" />
 
       {/* 1. TOP-LEFT ROTATING CASINO ROULETTE WHEEL */}
       <div className="absolute -top-16 -left-20 w-80 h-80 sm:w-96 sm:h-96 opacity-25 pointer-events-none animate-[spin_50s_linear_infinite]">

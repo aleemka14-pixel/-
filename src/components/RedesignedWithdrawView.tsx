@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, 
@@ -119,7 +119,7 @@ interface RedesignedWithdrawViewProps {
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
 }
 
-export function RedesignedWithdrawView({
+export const RedesignedWithdrawView = memo(function RedesignedWithdrawView({
   withdrawalNetworks,
   withdrawalSettings,
   currentPlayer,
@@ -1442,4 +1442,4 @@ export function RedesignedWithdrawView({
       </div>
     </div>
   );
-}
+});

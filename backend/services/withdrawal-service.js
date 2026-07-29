@@ -9,7 +9,7 @@ import {
   getDocs, 
   runTransaction 
 } from 'firebase/firestore';
-import { walletService } from '../../wallet/wallet-service.js';
+import { walletService } from '../../services/wallet-service.js';
 import { validateDestinationAddress, evaluateWithdrawalRisk } from './withdrawal-validator.js';
 import { checkWithdrawalRateLimit } from '../utils/rate-limiter.js';
 import { logSecurityEvent } from '../utils/security-logger.js';
@@ -185,111 +185,85 @@ export const withdrawalService = {
     let transactionDocData = null;
     let userProfileData = {};
 
-    // 7. Atomic Balance Check & Deduction inside Firestore Transaction
+    // 7. Atomic Balance Check & Deduction via Wallet Service
     try {
-      await runTransaction(db, async (transaction) => {
-        // Enforce idempotency: withdrawal document must NOT already exist
-        const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
-        const existingSnap = await transaction.get(withdrawalRef);
-        if (existingSnap.exists()) {
-          throw new Error(`IDEMPOTENCY_EXISTS: Withdrawal with ID '${withdrawalId}' has already been created.`);
-        }
-
-        // Fetch Player Document
-        const playerRef = doc(db, 'players', resolvedUserId);
-        const userRef = doc(db, 'users', resolvedUserId);
-
-        const playerSnap = await transaction.get(playerRef);
-        if (!playerSnap.exists()) {
-          throw new Error(`USER_NOT_FOUND: Player profile for ID '${resolvedUserId}' does not exist.`);
-        }
-
-        const playerData = playerSnap.data();
-        userProfileData = playerData;
-        const currentBalance = Number(playerData.balance || 0);
-
-        // Balance Check & Prevent Negative Balance
-        if (currentBalance < numAmount) {
-          throw new Error(`INSUFFICIENT_FUNDS: Available balance (${currentBalance.toFixed(2)} USDT) is less than requested amount (${numAmount.toFixed(2)} USDT).`);
-        }
-
-        const updatedBalance = currentBalance - numAmount;
-        if (updatedBalance < 0) {
-          throw new Error("NEGATIVE_BALANCE_PREVENTED: Deduction would result in a negative balance. Transaction aborted.");
-        }
-
-        // Risk Score Evaluation
-        const riskEvaluation = evaluateWithdrawalRisk({
-          amount: numAmount,
-          currentBalance,
-          userCreatedAt: playerData.createdAt || timestampNow
-        });
-
-        // Fee calculations
-        let networkFee = 1.0;
-        if (netUpper.includes('BEP20')) networkFee = 0.5;
-        if (netUpper.includes('ERC20')) networkFee = 5.0;
-        const finalAmount = Math.max(0, numAmount - networkFee);
-
-        // Deduct balance from player profile
-        transaction.update(playerRef, {
-          balance: updatedBalance,
-          updatedAt: timestampNow
-        });
-
-        // Deduct balance from user profile if exists
-        const userSnap = await transaction.get(userRef);
-        if (userSnap.exists()) {
-          transaction.update(userRef, {
-            balance: updatedBalance,
-            walletBalance: updatedBalance,
-            updatedAt: timestampNow
-          });
-        }
-
-        // Initial workflow state
-        const initialStatus = 'pending';
-
-        // Construct Withdrawal Document
-        withdrawalDocData = {
-          id: withdrawalId,
-          withdrawalId: withdrawalId,
-          userId: resolvedUserId,
-          playerId: resolvedUserId,
-          playerName: playerData.name || playerData.username || resolvedUserId,
-          amount: numAmount,
+      const walletRes = await walletService.withdraw(
+        resolvedUserId,
+        numAmount,
+        {
+          withdrawalId,
           network: netUpper,
-          blockchain: netUpper,
-          method: netUpper,
-          details: `USDT Withdrawal to ${resolvedAddress}`,
-          walletAddress: resolvedAddress,
-          withdrawalAddress: resolvedAddress,
           destinationAddress: resolvedAddress,
-          status: initialStatus,
-          createdAt: timestampNow,
-          updatedAt: timestampNow,
-          timestamp: timestampNow,
-          processedAt: null,
-          playerBalanceAtRequest: currentBalance,
-          balanceBefore: currentBalance,
-          balanceAfter: updatedBalance,
-          fee: networkFee,
-          finalAmount: finalAmount,
-          transactionHash: '',
-          blockchainTxHash: '',
-          riskScore: riskEvaluation.riskScore,
-          riskFlags: riskEvaluation.flags,
-          requiresManualApproval: riskEvaluation.requiresManualApproval,
-          idempotencyKey: idempotencyKey || withdrawalId,
-          preferredCurrency: preferredCurrency || 'USD',
-          exchangeRate: exchangeRate ? Number(exchangeRate) : 1.0,
-          preferredAmount: preferredAmount ? Number(preferredAmount) : numAmount,
-          settlementCurrency: settlementCurrency || 'USDT'
-        };
+          description: `Withdrawal Request: ${numAmount} USDT to ${resolvedAddress}`
+        },
+        idempotencyKey || `wd_${withdrawalId}`,
+        db
+      );
 
-        transaction.set(withdrawalRef, withdrawalDocData);
+      const currentBalance = walletRes.balanceBefore;
+      const updatedBalance = walletRes.balanceAfter;
 
-        // Construct Transaction Ledger Document with ALL 12 REQUIRED FIELDS
+      const playerRef = doc(db, 'players', resolvedUserId);
+      const playerSnap = await getDoc(playerRef);
+      const playerData = playerSnap.exists() ? playerSnap.data() : {};
+      userProfileData = playerData;
+
+      // Risk Score Evaluation
+      const riskEvaluation = evaluateWithdrawalRisk({
+        amount: numAmount,
+        currentBalance,
+        userCreatedAt: playerData.createdAt || timestampNow
+      });
+
+      // Fee calculations
+      let networkFee = 1.0;
+      if (netUpper.includes('BEP20')) networkFee = 0.5;
+      if (netUpper.includes('ERC20')) networkFee = 5.0;
+      const finalAmount = Math.max(0, numAmount - networkFee);
+
+      const initialStatus = 'pending';
+
+      // Construct Withdrawal Document
+      withdrawalDocData = {
+        id: withdrawalId,
+        withdrawalId: withdrawalId,
+        userId: resolvedUserId,
+        playerId: resolvedUserId,
+        playerName: playerData.name || playerData.username || resolvedUserId,
+        amount: numAmount,
+        network: netUpper,
+        blockchain: netUpper,
+        method: netUpper,
+        details: `USDT Withdrawal to ${resolvedAddress}`,
+        walletAddress: resolvedAddress,
+        withdrawalAddress: resolvedAddress,
+        destinationAddress: resolvedAddress,
+        status: initialStatus,
+        createdAt: timestampNow,
+        updatedAt: timestampNow,
+        timestamp: timestampNow,
+        processedAt: null,
+        playerBalanceAtRequest: currentBalance,
+        balanceBefore: currentBalance,
+        balanceAfter: updatedBalance,
+        fee: networkFee,
+        finalAmount: finalAmount,
+        transactionHash: '',
+        blockchainTxHash: '',
+        riskScore: riskEvaluation.riskScore,
+        riskFlags: riskEvaluation.flags,
+        requiresManualApproval: riskEvaluation.requiresManualApproval,
+        idempotencyKey: idempotencyKey || withdrawalId,
+        preferredCurrency: preferredCurrency || 'USD',
+        exchangeRate: exchangeRate ? Number(exchangeRate) : 1.0,
+        preferredAmount: preferredAmount ? Number(preferredAmount) : numAmount,
+        settlementCurrency: settlementCurrency || 'USDT'
+      };
+
+      const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
+      await setDoc(withdrawalRef, withdrawalDocData);
+
+        // Construct Transaction Ledger Document
         transactionDocData = {
           id: txnId,
           transactionId: txnId,
@@ -311,12 +285,12 @@ export const withdrawalService = {
         };
 
         const txnDocRef = doc(db, 'transactions', txnId);
-        transaction.set(txnDocRef, transactionDocData);
+        await setDoc(txnDocRef, transactionDocData);
 
         // Record Audit Log Entry
         const auditLogId = `AUD-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
         const auditDocRef = doc(db, 'auditLogs', auditLogId);
-        transaction.set(auditDocRef, {
+        await setDoc(auditDocRef, {
           logId: auditLogId,
           transactionId: txnId,
           withdrawalId: withdrawalId,
@@ -329,7 +303,6 @@ export const withdrawalService = {
           ipAddress: ip,
           timestamp: timestampNow
         });
-      });
 
     } catch (txError) {
       const errMsg = txError.message || String(txError);
@@ -430,48 +403,48 @@ export const withdrawalService = {
 
         // Auto refund on failure
         const nowFailed = Date.now();
-        await runTransaction(db, async (txn) => {
-          const playerRef = doc(db, 'players', resolvedUserId);
-          const userRef = doc(db, 'users', resolvedUserId);
+        await walletService.deposit(
+          resolvedUserId,
+          numAmount,
+          {
+            withdrawalId,
+            reason: `Auto transfer failed: ${broadcastErr.message || 'Network error'}`,
+            source: 'withdrawal_auto_refund',
+            description: `Withdrawal Refund: ${numAmount} USDT (Auto Transfer Failed)`
+          },
+          `wd_auto_refund_${withdrawalId}`,
+          db
+        );
 
-          const playerSnap = await txn.get(playerRef);
-          const currentBal = playerSnap.exists() ? (Number(playerSnap.data().balance) || 0) : 0;
-          const refundedBal = currentBal + numAmount;
+        await updateDoc(withdrawalRef, {
+          status: 'failed',
+          adminNotes: `Auto transfer failed: ${broadcastErr.message || 'Network error'}. Balance refunded.`,
+          processedAt: nowFailed,
+          updatedAt: nowFailed
+        });
 
-          txn.update(playerRef, { balance: refundedBal, updatedAt: nowFailed });
-
-          const userSnap = await txn.get(userRef);
-          if (userSnap.exists()) {
-            txn.update(userRef, { balance: refundedBal, walletBalance: refundedBal, updatedAt: nowFailed });
-          }
-
-          txn.update(withdrawalRef, {
-            status: 'failed',
-            adminNotes: `Auto transfer failed: ${broadcastErr.message || 'Network error'}. Balance refunded.`,
-            processedAt: nowFailed,
-            updatedAt: nowFailed
-          });
-
-          const txnRef = doc(db, 'transactions', txnId);
-          txn.update(txnRef, {
+        const txnRef = doc(db, 'transactions', txnId);
+        const txnSnap = await getDoc(txnRef);
+        if (txnSnap.exists()) {
+          await updateDoc(txnRef, {
             status: 'failed',
             processedAt: nowFailed
           });
+        }
 
-          const failAuditId = `AUD-FAIL-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-          txn.set(doc(db, 'auditLogs', failAuditId), {
-            logId: failAuditId,
-            transactionId: txnId,
-            withdrawalId: withdrawalId,
-            userId: resolvedUserId,
-            adminId: 'system_auto',
-            action: 'withdrawal_failed_refund',
-            module: 'withdrawal',
-            oldValue: 'processing',
-            newValue: 'failed',
-            ipAddress: ip,
-            timestamp: nowFailed
-          });
+        const failAuditId = `AUD-FAIL-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+        await setDoc(doc(db, 'auditLogs', failAuditId), {
+          logId: failAuditId,
+          transactionId: txnId,
+          withdrawalId: withdrawalId,
+          userId: resolvedUserId,
+          adminId: 'system_auto',
+          action: 'withdrawal_failed_refund',
+          module: 'withdrawal',
+          oldValue: 'processing',
+          newValue: 'failed',
+          ipAddress: ip,
+          timestamp: nowFailed
         });
 
         await notifyUser(db, resolvedUserId, 'Withdrawal Failed & Refunded', `Your withdrawal of ${numAmount} USDT failed: ${broadcastErr.message || 'Network error'}. Balance refunded.`);
@@ -568,65 +541,77 @@ export const withdrawalService = {
     if (action === 'reject' || action === 'cancel') {
       const newStatus = action === 'reject' ? 'rejected' : 'cancelled';
       const nowTs = Date.now();
+      let prevStatus = 'pending';
 
-      await runTransaction(db, async (txn) => {
-        const currentW = (await txn.get(withdrawalRef)).data();
-        if (currentW.status === 'rejected' || currentW.status === 'cancelled') {
-          return; // Idempotent exit
-        }
+      try {
+        await runTransaction(db, async (txn) => {
+          const freshSnap = await txn.get(withdrawalRef);
+          if (!freshSnap.exists()) {
+            throw new Error('WITHDRAWAL_NOT_FOUND');
+          }
+          const freshData = freshSnap.data();
+          prevStatus = freshData.status || 'pending';
 
-        const playerRef = doc(db, 'players', resolvedUserId);
-        const userRef = doc(db, 'users', resolvedUserId);
+          if (['rejected', 'cancelled', 'completed'].includes(freshData.status)) {
+            throw new Error(`ALREADY_TERMINAL_${freshData.status}`);
+          }
 
-        const playerSnap = await txn.get(playerRef);
-        const currentBal = playerSnap.exists() ? (Number(playerSnap.data().balance) || 0) : 0;
-        const refundedBal = currentBal + Number(withdrawal.amount);
-
-        // Refund Player
-        txn.update(playerRef, {
-          balance: refundedBal,
-          updatedAt: nowTs
-        });
-
-        // Refund User if exists
-        const userSnap = await txn.get(userRef);
-        if (userSnap.exists()) {
-          txn.update(userRef, {
-            balance: refundedBal,
-            walletBalance: refundedBal,
+          txn.update(withdrawalRef, {
+            status: newStatus,
+            adminNotes: notes || `Withdrawal ${newStatus} by ${adminId}. Balance refunded.`,
+            processedAt: nowTs,
             updatedAt: nowTs
           });
+
+          const txnSnap = await txn.get(txnRef);
+          if (txnSnap.exists()) {
+            txn.update(txnRef, {
+              status: newStatus,
+              processedAt: nowTs
+            });
+          }
+        });
+      } catch (txErr) {
+        const errStr = txErr.message || '';
+        if (errStr.startsWith('ALREADY_TERMINAL_')) {
+          const existingStatus = errStr.replace('ALREADY_TERMINAL_', '');
+          return {
+            statusCode: 200,
+            body: { success: true, message: `Withdrawal is already in terminal state '${existingStatus}'. No action taken.`, alreadyProcessed: true }
+          };
         }
+        throw txErr;
+      }
 
-        // Update Withdrawal Doc
-        txn.update(withdrawalRef, {
-          status: newStatus,
-          adminNotes: notes || `Withdrawal ${newStatus} by ${adminId}. Balance refunded.`,
-          processedAt: nowTs,
-          updatedAt: nowTs
-        });
+      // Execute refund through walletService ONLY after status update was locked in transaction
+      const refundAttemptId = `wd_refund_${withdrawalId}_${nowTs}`;
+      await walletService.deposit(
+        resolvedUserId,
+        Number(withdrawal.amount),
+        {
+          withdrawalId,
+          reason: notes || `Withdrawal ${newStatus} by admin ${adminId}`,
+          source: 'withdrawal_refund',
+          description: `Withdrawal Refund: ${withdrawal.amount} USDT (${newStatus})`
+        },
+        refundAttemptId,
+        db
+      );
 
-        // Update Transaction Ledger Doc
-        txn.update(txnRef, {
-          status: newStatus,
-          processedAt: nowTs
-        });
-
-        // Record Audit Log
-        const auditLogId = `AUD-${newStatus.toUpperCase()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-        txn.set(doc(db, 'auditLogs', auditLogId), {
-          logId: auditLogId,
-          transactionId: txnId,
-          withdrawalId: withdrawalId,
-          userId: resolvedUserId,
-          adminId,
-          action: `withdrawal_${newStatus}`,
-          module: 'admin_withdrawal',
-          oldValue: currentW.status,
-          newValue: newStatus,
-          ipAddress: ip,
-          timestamp: nowTs
-        });
+      // Record Audit Log
+      const auditLogId = `AUD-${newStatus.toUpperCase()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+      await setDoc(doc(db, 'auditLogs', auditLogId), {
+        logId: auditLogId,
+        transactionId: txnId,
+        withdrawalId: withdrawalId,
+        userId: resolvedUserId,
+        adminId,
+        action: `withdrawal_${newStatus}`,
+        module: 'admin_withdrawal',
+        oldValue: prevStatus,
+        newValue: newStatus,
+        ipAddress: ip,
+        timestamp: nowTs
       });
 
       await notifyUser(db, resolvedUserId, `Withdrawal Request ${newStatus === 'rejected' ? 'Rejected' : 'Cancelled'}`, `Your withdrawal request of ${withdrawal.amount} USDT was ${newStatus}. Balance refunded.`);
@@ -776,47 +761,47 @@ export const withdrawalService = {
         console.error(`[WithdrawalService] Hot wallet transfer failed:`, broadcastErr.message);
 
         const nowFail = Date.now();
-        await runTransaction(db, async (txn) => {
-          const playerRef = doc(db, 'players', resolvedUserId);
-          const userRef = doc(db, 'users', resolvedUserId);
+        await walletService.deposit(
+          resolvedUserId,
+          Number(withdrawal.amount),
+          {
+            withdrawalId,
+            reason: `Hot wallet transfer failed: ${broadcastErr.message || 'Node error'}`,
+            source: 'withdrawal_auto_refund',
+            description: `Withdrawal Refund: ${withdrawal.amount} USDT (Transfer Failed)`
+          },
+          `wd_auto_refund_${withdrawalId}`,
+          db
+        );
 
-          const playerSnap = await txn.get(playerRef);
-          const currentBal = playerSnap.exists() ? (Number(playerSnap.data().balance) || 0) : 0;
-          const refundedBal = currentBal + Number(withdrawal.amount);
+        await updateDoc(withdrawalRef, {
+          status: 'failed',
+          adminNotes: `Hot wallet transfer failed: ${broadcastErr.message || 'Node error'}. Balance refunded.`,
+          processedAt: nowFail,
+          updatedAt: nowFail
+        });
 
-          txn.update(playerRef, { balance: refundedBal, updatedAt: nowFail });
-
-          const userSnap = await txn.get(userRef);
-          if (userSnap.exists()) {
-            txn.update(userRef, { balance: refundedBal, walletBalance: refundedBal, updatedAt: nowFail });
-          }
-
-          txn.update(withdrawalRef, {
-            status: 'failed',
-            adminNotes: `Hot wallet transfer failed: ${broadcastErr.message || 'Node error'}. Balance refunded.`,
-            processedAt: nowFail,
-            updatedAt: nowFail
-          });
-
-          txn.update(txnRef, {
+        const txnSnap = await getDoc(txnRef);
+        if (txnSnap.exists()) {
+          await updateDoc(txnRef, {
             status: 'failed',
             processedAt: nowFail
           });
+        }
 
-          const auditLogId = `AUD-FAIL-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-          txn.set(doc(db, 'auditLogs', auditLogId), {
-            logId: auditLogId,
-            transactionId: txnId,
-            withdrawalId: withdrawalId,
-            userId: resolvedUserId,
-            adminId,
-            action: 'withdrawal_transfer_failed',
-            module: 'admin_withdrawal',
-            oldValue: 'processing',
-            newValue: 'failed',
-            ipAddress: ip,
-            timestamp: nowFail
-          });
+        const auditLogId = `AUD-FAIL-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+        await setDoc(doc(db, 'auditLogs', auditLogId), {
+          logId: auditLogId,
+          transactionId: txnId,
+          withdrawalId: withdrawalId,
+          userId: resolvedUserId,
+          adminId,
+          action: 'withdrawal_transfer_failed',
+          module: 'admin_withdrawal',
+          oldValue: 'processing',
+          newValue: 'failed',
+          ipAddress: ip,
+          timestamp: nowFail
         });
 
         await notifyUser(db, resolvedUserId, 'Withdrawal Failed & Refunded', `Your withdrawal of ${withdrawal.amount} USDT failed: ${broadcastErr.message || 'Network error'}. Balance refunded.`);

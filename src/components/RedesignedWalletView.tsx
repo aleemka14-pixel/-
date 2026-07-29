@@ -190,7 +190,7 @@ const Toast = memo(({ message, type, onClose }: ToastProps) => {
 Toast.displayName = 'Toast';
 
 // Main RedesignedWalletView Component
-export function RedesignedWalletView({ 
+export const RedesignedWalletView = memo(function RedesignedWalletView({ 
   state, 
   currentPlayer, 
   onWithdraw, 
@@ -1118,4 +1118,4 @@ export function RedesignedWalletView({
 
     </div>
   );
-}
+});

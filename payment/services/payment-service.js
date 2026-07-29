@@ -115,13 +115,27 @@ export class PaymentService {
     // Instantiate core operational logger
     this.logger = new PaymentLogger(this.db);
     this.defaultConfig = DEFAULT_PAYMENT_CONFIG;
+    this._cachedSettings = null;
+    this._lastSettingsFetch = 0;
+    this._settingsCacheTtlMs = 60000; // 1 minute in-memory cache
+  }
+
+  isQuotaError(err) {
+    if (!err) return false;
+    const msg = (err.message || String(err)).toLowerCase();
+    return msg.includes('quota') || msg.includes('resource-exhausted') || msg.includes('free daily read units');
   }
 
   /**
    * Retrieves current configurations from Firestore and merges with defaults.
-   * If document does not exist, initializes it.
+   * Uses 60-second in-memory caching to minimize Firestore read quota consumption.
    */
   async getSettings() {
+    const now = Date.now();
+    if (this._cachedSettings && (now - this._lastSettingsFetch < this._settingsCacheTtlMs)) {
+      return this._cachedSettings;
+    }
+
     try {
       const configRef = doc(this.db, 'config', 'payment_settings');
       const snap = await getDoc(configRef);
@@ -181,7 +195,7 @@ export class PaymentService {
         }
       }
 
-      // Sync layer: load legay admin settings from config/admin to map changes made via existing admin panel UI
+      // Sync layer: load legacy admin settings from config/admin to map changes made via existing admin panel UI
       try {
         const adminRef = doc(this.db, 'config', 'admin');
         const adminSnap = await getDoc(adminRef);
@@ -206,13 +220,21 @@ export class PaymentService {
           }
         }
       } catch (adminErr) {
-        console.warn('[PaymentService] Legacy admin settings sync bypassed:', adminErr.message);
+        if (!this.isQuotaError(adminErr)) {
+          console.warn('[PaymentService] Legacy admin settings sync bypassed:', adminErr.message);
+        }
       }
 
+      this._cachedSettings = mergedConfig;
+      this._lastSettingsFetch = Date.now();
       return mergedConfig;
     } catch (error) {
-      console.error('[PaymentService] Failed to retrieve settings, using memory fallback:', error);
-      return this.defaultConfig;
+      if (this.isQuotaError(error)) {
+        console.warn('[PaymentService] Firestore Quota Limit Exceeded when fetching settings. Serving in-memory fallback.');
+      } else {
+        console.warn('[PaymentService] Failed to retrieve settings, using memory fallback:', error.message || error);
+      }
+      return this._cachedSettings || this.defaultConfig;
     }
   }
 

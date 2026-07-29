@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, SlidersHorizontal, Plus, ArrowUp, ArrowDown, 
@@ -17,7 +17,7 @@ interface AdminDepositManagerProps {
   playSound: (key: any) => void;
 }
 
-export function AdminDepositManager({ networks = [], playSound }: AdminDepositManagerProps) {
+export const AdminDepositManager = memo(function AdminDepositManager({ networks = [], playSound }: AdminDepositManagerProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled' | 'maintenance'>('all');
   const [selectedNetworkForContent, setSelectedNetworkForContent] = useState<DepositNetwork | null>(null);
@@ -949,4 +949,4 @@ export function AdminDepositManager({ networks = [], playSound }: AdminDepositMa
       )}
     </div>
   );
-}
+});

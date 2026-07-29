@@ -80,7 +80,7 @@ service cloud.firestore {
       allow update: if (isAdmin() && isValidPlayer(incoming())) || (
         isOwner(playerId) && 
         isValidPlayer(incoming()) && 
-        incoming().diff(existing()).affectedKeys().hasOnly(['pendingBet', 'name', 'email'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email'])
       );
       allow delete: if isAdmin();
     }

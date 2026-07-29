@@ -34,8 +34,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { userId, playerId, amount } = req.body;
+    const { userId, playerId, amount, utr, transactionHash } = req.body;
     const resolvedUserId = userId || playerId;
+    const providedUtr = (utr || transactionHash || '').trim();
 
     if (!resolvedUserId) {
       return res.status(400).json({
@@ -49,6 +50,34 @@ export default async function handler(req, res) {
         success: false,
         error: "Missing or invalid deposit amount in INR."
       });
+    }
+
+    // UTR / Reference ID Format Validation (if provided)
+    if (providedUtr) {
+      if (!/^[a-zA-Z0-9]{6,20}$/.test(providedUtr)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid UPI UTR / Transaction Reference format. Must be 6-20 alphanumeric characters."
+        });
+      }
+
+      // Check for duplicate UTR across existing deposits
+      try {
+        const depositsRef = collection(db, 'deposits');
+        const utrQuery = query(
+          depositsRef,
+          where('transactionHash', '==', providedUtr)
+        );
+        const utrSnap = await getDocs(utrQuery);
+        if (!utrSnap.empty) {
+          return res.status(400).json({
+            success: false,
+            error: `Duplicate UTR detected. UTR '${providedUtr}' has already been submitted for processing.`
+          });
+        }
+      } catch (e) {
+        console.warn("[API Info] UTR duplicate check warning:", e.message);
+      }
     }
 
     const numAmount = Number(amount);

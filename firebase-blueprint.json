@@ -28,14 +28,7 @@
         "override": { "type": "string", "enum": ["win", "lose", "none"] },
         "referralCode": { "type": "string" },
         "referredBy": { "type": "string" },
-        "referralCount": { "type": "number" },
-        "pendingBet": {
-          "type": "object",
-          "properties": {
-            "amount": { "type": "number" },
-            "timestamp": { "type": "number" }
-          }
-        }
+        "referralCount": { "type": "number" }
       },
       "required": ["id", "name", "balance", "override", "referralCode", "referralCount"]
     },
@@ -262,9 +255,32 @@
         "resolvedAt": { "type": "number" }
       },
       "required": ["id", "title", "message", "severity", "timestamp", "resolved"]
+    },
+    "ActiveBet": {
+      "title": "ActiveBet",
+      "description": "Represents an active or resolved bet document.",
+      "type": "object",
+      "properties": {
+        "betId": { "type": "string" },
+        "playerId": { "type": "string" },
+        "username": { "type": "string" },
+        "amount": { "type": "number" },
+        "multiplier": { "type": "number" },
+        "game": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "won", "lost"] },
+        "isDemo": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "resolvedAt": { "type": "number" },
+        "resolvedBy": { "type": "string" }
+      },
+      "required": ["betId", "playerId", "username", "amount", "multiplier", "status", "createdAt"]
     }
   },
   "firestore": {
+    "bets": {
+      "schema": "ActiveBet",
+      "description": "Active pending bets collection."
+    },
     "system_alerts": {
       "schema": "SystemAlert",
       "description": "System-wide automated security alerts and failure alarms."

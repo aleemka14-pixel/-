@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { 
   Users, 
@@ -26,7 +26,7 @@ interface AdminActiveUsersViewProps {
   playSound: (sound: string) => void;
 }
 
-export function AdminActiveUsersView({ players, preferredCurrency, playSound }: AdminActiveUsersViewProps) {
+export const AdminActiveUsersView = memo(function AdminActiveUsersView({ players, preferredCurrency, playSound }: AdminActiveUsersViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   
   const currentRates = useMemo(() => getCachedRates().rates, [preferredCurrency]);
@@ -262,4 +262,4 @@ export function AdminActiveUsersView({ players, preferredCurrency, playSound }: 
       </div>
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Copy, Check, AlertTriangle, Clock, Sparkles, 
@@ -37,7 +37,7 @@ interface ToastNotification {
   message: string;
 }
 
-export function RedesignedDepositView({
+export const RedesignedDepositView = memo(function RedesignedDepositView({
   depositNetworks = [],
   currentPlayer,
   deposits = [],
@@ -1556,4 +1556,4 @@ export function RedesignedDepositView({
 
     </div>
   );
-}
+});

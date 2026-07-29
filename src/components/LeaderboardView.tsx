@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Trophy, 
@@ -24,7 +24,7 @@ import { getVIPLevel } from '../App.tsx';
 
 type RankCriteria = 'totalWinnings' | 'balance' | 'biggestBet' | 'totalBetsCount';
 
-export function LeaderboardView({ preferredCurrency }: { preferredCurrency: string }) {
+export const LeaderboardView = memo(function LeaderboardView({ preferredCurrency }: { preferredCurrency: string }) {
   const [criteria, setCriteria] = useState<RankCriteria>('totalWinnings');
   const [rawPlayers, setRawPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -422,4 +422,4 @@ export function LeaderboardView({ preferredCurrency }: { preferredCurrency: stri
       )}
     </div>
   );
-}
+});

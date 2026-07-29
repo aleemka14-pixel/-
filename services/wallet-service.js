@@ -3,10 +3,9 @@ import {
   doc, 
   runTransaction, 
   collection, 
-  getDoc, 
-  getApps, 
-  getApp 
+  getDoc 
 } from 'firebase/firestore';
+import { getApps, getApp } from 'firebase/app';
 import fs from 'fs';
 import path from 'path';
 
@@ -154,16 +153,23 @@ export class WalletService {
         }, { merge: true });
       }
 
-      // 6. Record transaction in ledger
+      // 6. Record transaction in ledger with standardized currency fields
+      const currency = metadata.currency || 'USDT';
+      const baseCurrency = metadata.baseCurrency || 'USDT';
+      const baseAmount = metadata.baseAmount !== undefined ? Number(metadata.baseAmount) : numAmount;
+
       const ledgerEntry = {
         transactionId: txnId,
         userId,
         type,
         amount: numAmount,
+        currency,
+        baseAmount,
+        baseCurrency,
         balanceBefore,
         balanceAfter,
         status: 'completed',
-        description: metadata.description || `Wallet ${type} of ₹${numAmount}`,
+        description: metadata.description || `Wallet ${type} of ${currency === 'INR' ? '₹' : ''}${numAmount}`,
         createdAt: now,
         idempotencyKey: externalTxId || null,
         metadata: {
