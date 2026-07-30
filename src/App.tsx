@@ -5871,130 +5871,18 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
                         exit={{ opacity: 0, x: -20 }}
                         className="space-y-6"
                       >
-                        {modalType === 'deposit' && step === 1 ? (
-                          <div className="space-y-6">
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
-                              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Select Deposit Amount ({currentCurrency})</label>
-                              <div className="grid grid-cols-2 gap-3 mb-6">
-                                {currentPresets.map(val => (
-                                  <button 
-                                    key={val}
-                                    onClick={() => setAmount(val)}
-                                    className={`py-3 rounded-xl border font-bold transition-all text-sm cursor-pointer ${amount === val ? 'bg-emerald-500 border-emerald-500 text-black shadow-lg shadow-emerald-500/20' : 'bg-white/5 border-white/5 hover:border-white/10 text-white'}`}
-                                  >
-                                    {getCurrencySymbol(currentCurrency)}{val.toLocaleString()}
-                                  </button>
-                                ))}
-                              </div>
-                              <div className="relative">
-                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">{getCurrencySymbol(currentCurrency)}</span>
-                                <input 
-                                  type="number" 
-                                  value={amount || ''} 
-                                  onChange={(e) => setAmount(Number(e.target.value))}
-                                  className="w-full bg-white/5 border border-white/5 rounded-xl pl-8 pr-4 py-4 focus:outline-none focus:border-emerald-500/50 transition-all font-mono text-lg"
-                                  placeholder="Custom Amount"
-                                />
-                              </div>
-                              {amount > 0 && amount < minDepositLocal && (
-                                <p className="text-[10px] text-rose-400 mt-2 italic px-1">Min deposit is {getCurrencySymbol(currentCurrency)}{minDepositLocal.toFixed(2)}</p>
-                              )}
-                            </div>
-                            <button 
-                              disabled={amount < minDepositLocal}
-                              onClick={() => setStep(2)}
-                              className="w-full py-5 bg-emerald-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 translate-y-0 cursor-pointer"
+                        {modalType === 'deposit' ? (
+                          <div className="text-center py-6">
+                            <p className="text-slate-400 text-xs mb-4">Redirecting to Redesigned Deposit Gateway...</p>
+                            <button
+                              onClick={() => {
+                                setShowDepositView(true);
+                                setModalType(null);
+                              }}
+                              className="px-6 py-3 bg-emerald-500 text-black font-bold text-xs uppercase rounded-xl cursor-pointer"
                             >
-                              Next: Payment Details
+                              Open Deposit Gateway
                             </button>
-                          </div>
-                        ) : modalType === 'deposit' && step === 2 ? (
-                          <div className="space-y-6">
-                            {state.paymentSettings && (
-                              <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-3xl p-6 space-y-6">
-                                <div className="text-center space-y-2">
-                                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Pay to Admin</p>
-                                  <p className="text-4xl font-display font-black text-white">{getCurrencySymbol(currentCurrency)}{amount.toFixed(2)}</p>
-                                </div>
-                                
-                                {state.paymentSettings.qrCodeUrl && (
-                                   <div className="bg-white p-3 rounded-2xl shadow-2xl mx-auto w-48 h-48">
-                                     <img src={state.paymentSettings.qrCodeUrl} alt="QR" className="w-full h-full object-contain" />
-                                   </div>
-                                )}
-
-                                <div className="space-y-3">
-                                  {state.paymentSettings.upiId && (
-                                    <div className="bg-black/20 p-4 rounded-xl border border-white/5 flex items-center justify-between">
-                                      <div className="truncate pr-4">
-                                        <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Our UPI ID</p>
-                                        <p className="text-xs font-mono text-emerald-400 truncate">{state.paymentSettings.upiId}</p>
-                                      </div>
-                                      <button 
-                                        onClick={() => { navigator.clipboard.writeText(state.paymentSettings?.upiId || ''); playSound('CLICK'); }}
-                                        className="p-2.5 bg-white/5 hover:bg-white/10 rounded-lg cursor-pointer"
-                                      >
-                                        <Copy className="w-4 h-4 text-emerald-400" />
-                                      </button>
-                                    </div>
-                                  )}
-                                  <div className="bg-amber-500/5 border border-amber-500/10 p-3 rounded-xl flex gap-3">
-                                    <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                                    <p className="text-[10px] text-amber-200/60 leading-relaxed italic">
-                                      Pay the amount above and enter your Binance ID below.
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                            
-                            <div className="space-y-4">
-                              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Binance ID</label>
-                              <input 
-                                type="text"
-                                value={details}
-                                onChange={(e) => setDetails(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-white/30 hover:border-white/20 transition-all text-white font-mono text-xs placeholder:text-slate-600"
-                                placeholder="Enter your transaction transaction ID or wallet address"
-                              />
-                            </div>
-
-                            <div className="space-y-4">
-                              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Verification Screenshot</label>
-                              <div className="relative border-2 border-dashed border-white/10 rounded-2xl h-36 flex items-center justify-center hover:border-emerald-500/20 transition-all overflow-hidden group">
-                                {screenshot ? (
-                                  <>
-                                    <img src={screenshot} alt="Payment verification screenshot" className="w-full h-full object-cover" />
-                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-2 transition-all">
-                                      <ImageIcon className="w-8 h-8 text-white" />
-                                      <span className="text-[9px] font-black uppercase text-white">Change Photo</span>
-                                    </div>
-                                  </>
-                                ) : (
-                                  <div className="flex flex-col items-center gap-3 text-slate-500">
-                                    <ImageIcon className="w-10 h-10 opacity-20" />
-                                    <span className="text-[9px] font-black uppercase tracking-widest">Attach Screenshot</span>
-                                  </div>
-                                )}
-                                <input 
-                                  type="file" 
-                                  accept="image/*"
-                                  onChange={handleScreenshotUpload}
-                                  className="absolute inset-0 opacity-0 cursor-pointer"
-                                />
-                              </div>
-                              <p className="text-[9px] text-slate-500 italic text-center">Attach a clear screenshot of your payment for faster approval.</p>
-                            </div>
-                            <div className="flex gap-3">
-                              <button onClick={() => setStep(1)} className="flex-1 py-5 bg-white/5 text-slate-400 rounded-2xl font-black uppercase tracking-widest text-[9px] cursor-pointer border-0">Back</button>
-                              <button 
-                                disabled={!screenshot}
-                                onClick={handleConfirm}
-                                className="flex-[2] py-5 bg-emerald-500 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:scale-[1.02] active:scale-95 transition-all cursor-pointer border-0"
-                              >
-                                Submit Deposit
-                              </button>
-                            </div>
                           </div>
                         ) : (
                           /* Withdrawal UI remains simple but polished */
