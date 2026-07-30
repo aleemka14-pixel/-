@@ -59,10 +59,12 @@ import {
   Smartphone,
   Coins,
   Shield,
-  Headphones
+  Headphones,
+  Plane
 } from 'lucide-react';
 import { AppState, Transaction, WithdrawalRequest, DepositRequest, Player, PaymentSettings, DepositNetwork, WithdrawalNetwork, WithdrawalSettings, ActiveBet } from './types.ts';
 import { auth, db, loginWithGoogle, logout, OperationType, handleFirestoreError } from './lib/firebase.ts';
+import { AviatorGameView } from './components/AviatorGameView.tsx';
 import { RedesignedDepositView } from './components/RedesignedDepositView.tsx';
 import { RedesignedWithdrawView } from './components/RedesignedWithdrawView.tsx';
 import { RedesignedWalletView } from './components/RedesignedWalletView.tsx';
@@ -1565,7 +1567,7 @@ export default function App() {
     lastStateRef.current = state;
   }, [state]);
 
-  const [activeTab, setActiveTab] = useState<'play' | 'wallet' | 'admin' | 'announcement' | 'leaderboard'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'aviator' | 'wallet' | 'admin' | 'announcement' | 'leaderboard'>('play');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmailInput, setAdminEmailInput] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -2707,7 +2709,7 @@ export default function App() {
           amount: amt,
           multiplier: state.currentMultiplier || 2,
           game: state.activeGame || 'Double or Donate',
-          status: 'active',
+          status: 'pending',
           isDemo: false,
           createdAt: timestamp
         });
@@ -2761,7 +2763,7 @@ export default function App() {
             let shouldSettle = false;
             await runTransaction(db, async (txn) => {
               const betSnap = await txn.get(betDocRef);
-              if (betSnap.exists() && betSnap.data().status === 'active') {
+              if (betSnap.exists() && (betSnap.data().status === 'active' || betSnap.data().status === 'pending')) {
                 txn.update(betDocRef, {
                   status: win ? 'won' : 'lost',
                   resolvedAt: Date.now(),
@@ -2829,7 +2831,7 @@ export default function App() {
         amount: amt,
         multiplier: state.currentMultiplier || 2,
         game: state.activeGame || 'Double or Donate',
-        status: 'active',
+        status: 'pending',
         isDemo: true,
         createdAt: timestamp
       }).catch(err => console.error("Error creating demo bet doc:", err));
@@ -3091,6 +3093,12 @@ export default function App() {
             </div>
 
             <nav className="space-y-1.5 flex-1">
+              <NavItem 
+                active={activeTab === 'aviator'} 
+                onClick={() => { setActiveTab('aviator'); setIsSidebarOpen(false); playSound('CLICK'); }}
+                icon={<Plane className="w-5 h-5 text-rose-400" />}
+                label="AVIATOR CRASH"
+              />
               <NavItem 
                 active={activeTab === 'play'} 
                 onClick={() => { setActiveTab('play'); setIsSidebarOpen(false); playSound('CLICK'); }}
@@ -3493,6 +3501,30 @@ export default function App() {
                 </motion.div>
               )}
 
+              {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'aviator' && (
+                <motion.div
+                  key="aviator"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                >
+                  <AviatorGameView
+                    state={activeState}
+                    currentPlayer={activePlayer}
+                    playSound={playSound}
+                    demoMode={demoMode}
+                    preferredCurrency={preferredCurrency}
+                    rates={exchangeRates}
+                    onBalanceUpdate={(newBal) => {
+                      if (activePlayer) {
+                        activePlayer.balance = newBal;
+                      }
+                    }}
+                  />
+                </motion.div>
+              )}
+
               {(!state.maintenanceMode && !state.teaBreakMode || activeTab === 'admin') && activeTab === 'play' && (
                 <motion.div
                   key="play"
@@ -3574,6 +3606,7 @@ export default function App() {
                     <AdminView 
                       state={state} 
                       playSound={playSound}
+                      demoMode={demoMode}
                       onUpdateWinRate={onUpdateWinRate}
                       onUpdateMaxBet={onUpdateMaxBet}
                       onUpdateMinLimits={onUpdateMinLimits}
@@ -5078,6 +5111,16 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
   const [modalType, setModalType] = useState<'deposit' | 'withdraw' | null>(null);
   const [showDepositView, setShowDepositView] = useState(false);
   const [showWithdrawView, setShowWithdrawView] = useState(false);
+
+  useEffect(() => {
+    if (modalType === 'deposit') {
+      setShowDepositView(true);
+      setModalType(null);
+    } else if (modalType === 'withdraw') {
+      setShowWithdrawView(true);
+      setModalType(null);
+    }
+  }, [modalType]);
   const [amount, setAmount] = useState(0);
   const [method, setMethod] = useState('');
   const [details, setDetails] = useState('');
@@ -6095,42 +6138,63 @@ const HouseProfitTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-const PendingBetsCard = memo(function PendingBetsCard({ playSound }: { playSound: (key: any) => void }) {
+const PendingBetsCard = memo(function PendingBetsCard({ playSound, demoMode }: { playSound: (key: any) => void; demoMode?: boolean }) {
   const [activeBets, setActiveBets] = useState<ActiveBet[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isOpen, setIsOpen] = useState(true);
 
   useEffect(() => {
+    console.log('[PENDING BETS DIAGNOSTICS] Initializing listener for bets collection. Current demoMode:', demoMode);
+    
+    // Support both 'active' and 'pending' statuses
     const q = query(
       collection(db, 'bets'), 
-      where('status', '==', 'active'),
+      where('status', 'in', ['active', 'pending']),
       limit(100)
     );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const betsList: ActiveBet[] = [];
+      console.log('[PENDING BETS DIAGNOSTICS] Firestore snapshot received. Raw documents count:', snapshot.docs.length);
+
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        if (data.isDemo === true) return; // Never show demo bets in Admin Pending Bets
+        console.log('[PENDING BETS DIAGNOSTICS] Doc ID:', docSnap.id, 'Data:', data);
+
+        // Demo vs Real filtering
+        const isDemo = data.isDemo === true;
+        if (demoMode ? !isDemo : isDemo) {
+          console.log('[PENDING BETS DIAGNOSTICS] Filtered out document due to mode mismatch (demoMode=' + demoMode + ', isDemo=' + isDemo + '):', docSnap.id);
+          return;
+        }
+
         betsList.push({
           betId: docSnap.id,
           playerId: data.playerId || '',
-          username: data.username || 'Player',
+          username: data.username || data.playerName || 'Player',
           amount: data.amount || 0,
           multiplier: data.multiplier || 2,
           game: data.game || 'Double or Donate',
-          status: data.status || 'active',
-          isDemo: false,
+          status: data.status || 'pending',
+          isDemo: isDemo,
           createdAt: data.createdAt || Date.now()
         });
       });
+
       betsList.sort((a, b) => b.createdAt - a.createdAt);
+      console.log('[PENDING BETS DIAGNOSTICS] Documents after filtering:', betsList.length);
+      console.log('[PENDING BETS DIAGNOSTICS] Updating activeBets state with count:', betsList.length);
       setActiveBets(betsList);
     }, (error) => {
+      console.error('[PENDING BETS DIAGNOSTICS] Error listening to bets collection:', error);
       handleFirestoreError(error, OperationType.GET, 'bets');
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      console.log('[PENDING BETS DIAGNOSTICS] Unsubscribing bets listener');
+      unsubscribe();
+    };
+  }, [demoMode]);
 
   const handleWinAll = async () => {
     if (activeBets.length === 0 || isProcessing) return;
@@ -6142,7 +6206,7 @@ const PendingBetsCard = memo(function PendingBetsCard({ playSound }: { playSound
 
         await runTransaction(db, async (txn) => {
           const betSnap = await txn.get(betRef);
-          if (betSnap.exists() && betSnap.data().status === 'active') {
+          if (betSnap.exists() && (betSnap.data().status === 'active' || betSnap.data().status === 'pending')) {
             txn.update(betRef, {
               status: 'won',
               resolvedAt: Date.now(),
@@ -6181,7 +6245,7 @@ const PendingBetsCard = memo(function PendingBetsCard({ playSound }: { playSound
 
         await runTransaction(db, async (txn) => {
           const betSnap = await txn.get(betRef);
-          if (betSnap.exists() && betSnap.data().status === 'active') {
+          if (betSnap.exists() && (betSnap.data().status === 'active' || betSnap.data().status === 'pending')) {
             txn.update(betRef, {
               status: 'lost',
               resolvedAt: Date.now(),
@@ -6314,9 +6378,10 @@ const PendingBetsCard = memo(function PendingBetsCard({ playSound }: { playSound
   );
 });
 
-const AdminView = memo(function AdminView({ state, playSound, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdateCustomTotalBets, onToggleWithdrawalsStopped, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
+const AdminView = memo(function AdminView({ state, playSound, demoMode, onUpdateWinRate, onUpdateMaxBet, onUpdateMinLimits, onUpdatePlayersWonCount, onToggleBetLimit, onToggleManualMode, onToggleBettingStatus, onUpdateCustomTotalBets, onToggleWithdrawalsStopped, onUpdatePlayerOverride, onSwitchPlayer, onResultBet, onUpdateWithdrawalStatus, onUpdateDepositStatus, onToggleMaintenanceMode, onToggleTeaBreakMode, onTogglePlayersWonShown, onUpdateLotteryTimer, onUpdatePaymentSettings, onTogglePaymentLock, onReset, onResetHouseStats, onUpdateReferralAmount, onToggleReferralEnabled, onToggleWithdrawLimit24h, onToggleWinRateLock, onToggleTransferLimitsLock, onUpdateAnnouncementText, onToggleAnnouncementEnabled, onSafeMigrate, preferredCurrency }: { 
   state: AppState, 
   playSound: (key: any) => void,
+  demoMode?: boolean,
   onUpdateWinRate: (rate: number) => void,
   onUpdateMaxBet: (max: number) => void,
   onUpdateMinLimits: (minDeposit: number, minWithdraw: number) => void,
@@ -6591,7 +6656,7 @@ const AdminView = memo(function AdminView({ state, playSound, onUpdateWinRate, o
       </div>
 
       {/* Pending Bets Section */}
-      <PendingBetsCard playSound={playSound} />
+      <PendingBetsCard playSound={playSound} demoMode={demoMode} />
 
       {/* Betting Control Card */}
       <div className="glass-card rounded-3xl p-5 sm:p-6 mb-6 border border-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

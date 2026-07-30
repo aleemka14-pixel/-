@@ -9,6 +9,37 @@ import {
 import { doc, getDoc, runTransaction, updateDoc } from 'firebase/firestore';
 import walletService from '../../../services/wallet-service.js';
 
+/**
+ * Helper to verify HMAC-SHA256 signature
+ */
+function verifyHmacSignature(payload, secretKey, receivedSignature) {
+  if (!receivedSignature || !secretKey) return false;
+
+  let payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const hmac = crypto.createHmac('sha256', secretKey).update(payloadStr).digest('hex');
+
+  const { orderId, depositId, amount, status } = payload || {};
+  const resId = orderId || depositId || '';
+  const fieldsStr = `${resId}:${amount}:${status}`;
+  const fieldsHmac = crypto.createHmac('sha256', secretKey).update(fieldsStr).digest('hex');
+
+  try {
+    const bufReceived = Buffer.from(receivedSignature.toLowerCase());
+    const bufHmac = Buffer.from(hmac.toLowerCase());
+    const bufFieldsHmac = Buffer.from(fieldsHmac.toLowerCase());
+
+    if (bufReceived.length === bufHmac.length && crypto.timingSafeEqual(bufReceived, bufHmac)) {
+      return true;
+    }
+    if (bufReceived.length === bufFieldsHmac.length && crypto.timingSafeEqual(bufReceived, bufFieldsHmac)) {
+      return true;
+    }
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -54,19 +85,45 @@ export default async function handler(req, res) {
       });
     }
 
-    const expectedSecret = process.env.UPI_WEBHOOK_SECRET;
+    // Load payment settings or environment secret for security validation
+    const envSecret = process.env.UPI_WEBHOOK_SECRET || process.env.UPI_SECRET;
+    let expectedSecret = envSecret;
+    if (!expectedSecret) {
+      try {
+        const settings = await getPaymentSettings();
+        expectedSecret = settings?.upiSettings?.webhookSecret || settings?.upiSettings?.secret;
+      } catch (e) {
+        // Safe fallback if Firestore config is unreachable
+      }
+    }
+
+    // TASK 2: Webhook Security (x-upi-secret validation & HMAC SHA-256 signature verification)
     if (expectedSecret) {
       const headerSecret = req.headers['x-upi-secret'] || secret;
-      if (headerSecret !== expectedSecret) {
-        console.error('[UPI Webhook Security Error]: Invalid webhook secret token.');
-        await recordProviderFailure('upi', 'Invalid UPI webhook secret token.');
+      const headerSignature = req.headers['x-signature'] || signature;
+
+      let isSecretValid = false;
+      let isSignatureValid = false;
+
+      if (headerSecret && headerSecret === expectedSecret) {
+        isSecretValid = true;
+      }
+
+      if (headerSignature && verifyHmacSignature(payload, expectedSecret, headerSignature)) {
+        isSignatureValid = true;
+      }
+
+      if (!isSecretValid && !isSignatureValid) {
+        console.error('[UPI Webhook Security Error]: Invalid or missing webhook secret/signature.');
+        await recordProviderFailure('upi', 'Invalid UPI webhook secret or signature.').catch(() => {});
         return res.status(401).json({
           success: false,
-          error: 'Unauthorized: Invalid webhook secret token.'
+          error: 'Unauthorized: Invalid webhook secret token or HMAC signature.'
         });
       }
     }
 
+    // TASK 4: Deposit Validation
     const depositRef = doc(db, 'deposits', resolvedOrderId);
     const depositSnap = await getDoc(depositRef);
 
@@ -79,18 +136,39 @@ export default async function handler(req, res) {
     }
 
     const depositData = depositSnap.data();
-    const resolvedUserId = userId || depositData.userId || depositData.playerId;
-    const expectedAmount = Number(depositData.amount);
-    const receivedAmount = amount ? Number(amount) : expectedAmount;
 
-    if (Math.abs(expectedAmount - receivedAmount) > 0.01) {
-      console.error(`[UPI Webhook Error]: Amount mismatch. Expected: ${expectedAmount}, Received: ${receivedAmount}`);
+    // Verify Currency is INR
+    if (depositData.currency && depositData.currency.toUpperCase() !== 'INR') {
+      console.error(`[UPI Webhook Error]: Currency mismatch for order '${resolvedOrderId}'. Deposit currency: ${depositData.currency}`);
+      return res.status(400).json({
+        success: false,
+        error: `Invalid deposit currency '${depositData.currency}'. Only INR is supported for UPI deposits.`
+      });
+    }
+
+    // Verify User ID exists
+    const resolvedUserId = depositData.userId || depositData.playerId || userId;
+    if (!resolvedUserId) {
+      console.error(`[UPI Webhook Error]: User ID not found for deposit order '${resolvedOrderId}'.`);
+      return res.status(400).json({
+        success: false,
+        error: 'User ID not associated with this deposit order.'
+      });
+    }
+
+    // Verify Amount matches order amount
+    const expectedAmount = Number(depositData.amount);
+    const receivedAmount = amount !== undefined && amount !== null ? Number(amount) : expectedAmount;
+
+    if (isNaN(receivedAmount) || Math.abs(expectedAmount - receivedAmount) > 0.01) {
+      console.error(`[UPI Webhook Error]: Amount mismatch. Expected ₹${expectedAmount}, Received ₹${receivedAmount}`);
       return res.status(400).json({
         success: false,
         error: `Amount mismatch. Expected ₹${expectedAmount}, received ₹${receivedAmount}.`
       });
     }
 
+    // TASK 3: Idempotency Protection for completed deposits
     if (depositData.status === 'completed' || depositData.status === 'confirmed' || depositData.credited === true) {
       console.log(`[Duplicate UPI Webhook Ignored]: Order '${resolvedOrderId}' is already credited.`);
       return res.status(200).json({
@@ -107,6 +185,7 @@ export default async function handler(req, res) {
     if (isSuccess) {
       const timestampNow = Date.now();
 
+      // Atomically update deposit record state in Firestore
       await runTransaction(db, async (txn) => {
         const freshSnap = await txn.get(depositRef);
         if (!freshSnap.exists()) throw new Error('Deposit order missing.');
@@ -127,6 +206,8 @@ export default async function handler(req, res) {
         });
       });
 
+      // TASK 3: Atomic Wallet Credit via walletService.deposit with idempotency key `upi_${depositId}`
+      const idempotencyKey = `upi_${resolvedOrderId}`;
       const walletRes = await walletService.deposit(
         resolvedUserId,
         expectedAmount,
@@ -136,20 +217,21 @@ export default async function handler(req, res) {
           utr: utr || '',
           method: 'UPI',
           source: 'upi_webhook',
+          currency: 'INR',
           description: `UPI Deposit Credited: ₹${expectedAmount} (UTR: ${utr || paymentId || 'N/A'})`
         },
-        `upi_dep_${resolvedOrderId}`,
+        idempotencyKey,
         db
       );
 
-      await recordProviderSuccess('upi');
+      await recordProviderSuccess('upi').catch(() => {});
 
       await addPaymentLog(
         'success',
         'upi',
         `UPI Deposit ${resolvedOrderId} verified and credited: ₹${expectedAmount} to user ${resolvedUserId}.`,
         `PaymentId: ${paymentId || 'N/A'} | UTR: ${utr || 'N/A'}`
-      );
+      ).catch(() => {});
 
       return res.status(200).json({
         success: true,
@@ -158,6 +240,7 @@ export default async function handler(req, res) {
         userId: resolvedUserId,
         creditedAmount: expectedAmount,
         newBalance: walletRes.balanceAfter,
+        duplicate: !!walletRes.duplicate,
         status: 'completed'
       });
     } else {
@@ -173,7 +256,7 @@ export default async function handler(req, res) {
         'upi',
         `UPI Deposit ${resolvedOrderId} failed/cancelled with status '${status}'.`,
         `Order: ${resolvedOrderId}`
-      );
+      ).catch(() => {});
 
       return res.status(200).json({
         success: true,
@@ -198,3 +281,4 @@ export default async function handler(req, res) {
     });
   }
 }
+

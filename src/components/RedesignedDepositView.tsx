@@ -259,44 +259,85 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
     playSound('CLICK');
 
     try {
-      const response = await fetch('/api/create-upi-deposit', {
+      // Primary Endpoint: /api/upi/create-order
+      const response = await fetch('/api/upi/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: currentPlayer?.id || 'guest',
           playerId: currentPlayer?.id || 'guest',
-          amount: numAmt
+          amount: numAmt,
+          currency: 'INR'
         })
       });
 
       if (response.ok) {
         const data = await response.json();
-        if (data.success && data.depositId) {
+        if (data.success && (data.orderId || data.depositId)) {
+          const depId = data.orderId || data.depositId;
+          const upiVpa = data.merchantUpi || data.upiVpa || paymentSettings?.upiId || 'merchant@upi';
+          const qrCode = data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.upiString || data.qrData || '')}`;
+          
           setActiveUpiOrder({
-            depositId: data.depositId,
-            amount: data.amount,
-            upiVpa: data.upiVpa || 'matrixpay@upi',
-            qrCode: data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.qrData)}`,
+            depositId: depId,
+            amount: data.amount || numAmt,
+            upiVpa,
+            qrCode,
             status: data.status || 'pending',
-            createdAt: new Date().toISOString(),
-            transactionId: data.transactionId
+            createdAt: new Date(data.createdAt || Date.now()).toISOString(),
+            transactionId: depId
           });
           setCurrentStep('instructions');
-          showToast("UPI Order & Payment QR generated!", "success");
+          showToast("UPI Payment Order & QR generated successfully!", "success");
+          return;
         } else {
-          throw new Error(data.error || "Failed to create UPI deposit");
+          throw new Error(data.error || "Failed to create UPI deposit order");
         }
       } else {
         const errData = await response.json().catch(() => ({}));
         throw new Error(errData.error || `HTTP error ${response.status}`);
       }
     } catch (err: any) {
-      console.warn("API create-upi-deposit fallback activated:", err);
-      // Fallback UPI Order Generation
+      console.warn("[UPI Order API] Primary endpoint error, trying fallback:", err.message);
+
+      // Secondary Endpoint Fallback: /api/create-upi-deposit
+      try {
+        const fallbackResp = await fetch('/api/create-upi-deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: currentPlayer?.id || 'guest',
+            playerId: currentPlayer?.id || 'guest',
+            amount: numAmt
+          })
+        });
+
+        if (fallbackResp.ok) {
+          const data = await fallbackResp.json();
+          if (data.success && data.depositId) {
+            setActiveUpiOrder({
+              depositId: data.depositId,
+              amount: data.amount || numAmt,
+              upiVpa: data.upiVpa || paymentSettings?.upiId || 'merchant@upi',
+              qrCode: data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.qrData || '')}`,
+              status: data.status || 'pending',
+              createdAt: new Date().toISOString(),
+              transactionId: data.transactionId || data.depositId
+            });
+            setCurrentStep('instructions');
+            showToast("UPI Order & Payment QR generated!", "success");
+            return;
+          }
+        }
+      } catch (fbErr: any) {
+        console.warn("[UPI Order API] Fallback endpoint error:", fbErr.message);
+      }
+
+      // Local Client-side Dynamic Order Generation (offline resilience)
       const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const depositId = `DEP-UPI-${randomHex}`;
-      const upiVpa = 'matrixpay@upi';
-      const qrData = `upi://pay?pa=${upiVpa}&pn=MatrixCasino&am=${numAmt}&tr=${depositId}&cu=INR`;
+      const depositId = `upi_ord_${Date.now()}_${randomHex.toLowerCase()}`;
+      const upiVpa = paymentSettings?.upiId || 'merchant@upi';
+      const qrData = `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${numAmt}&tr=${depositId}&tn=${encodeURIComponent(`Deposit Ref ${depositId}`)}&cu=INR`;
       const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
 
       setActiveUpiOrder({

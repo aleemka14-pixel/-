@@ -63,17 +63,25 @@ export default async function handler(req, res) {
       });
     }
 
+    if (currency && currency.toUpperCase() !== 'INR') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid currency. Only INR is supported for UPI deposits.'
+      });
+    }
+
     const timestamp = Date.now();
     const orderId = `upi_ord_${timestamp}_${Math.random().toString(36).substring(2, 7)}`;
     const selectedProvider = provider || 'upi_gateway';
-    const merchantUpi = upiId || process.env.UPI_ID || settings.providers?.upi?.credentials?.upiId || 'merchant@upi';
-    const selectedCurrency = currency || 'INR';
+    const merchantUpi = upiId || process.env.UPI_ID || settings.providers?.upi?.credentials?.upiId || settings.upiSettings?.vpa || settings.upiVpa || 'merchant@upi';
+    const selectedCurrency = 'INR';
 
-    const upiString = `upi://pay?pa=${encodeURIComponent(merchantUpi)}&pn=${encodeURIComponent('Casino App')}&am=${numAmount}&tr=${orderId}&tn=${encodeURIComponent(`Deposit Ref ${orderId}`)}&cu=${selectedCurrency}`;
+    const upiString = `upi://pay?pa=${encodeURIComponent(merchantUpi)}&pn=${encodeURIComponent('Matrix Casino')}&am=${numAmount}&tr=${orderId}&tn=${encodeURIComponent(`Deposit Ref ${orderId}`)}&cu=${selectedCurrency}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiString)}`;
 
     const depositDoc = {
       depositId: orderId,
+      id: orderId,
       userId: resolvedUserId,
       playerId: resolvedUserId,
       amount: numAmount,
@@ -87,8 +95,10 @@ export default async function handler(req, res) {
       updatedAt: timestamp,
       timestamp: timestamp,
       upiString,
+      qrData: upiString,
       qrCodeUrl,
       merchantUpi,
+      upiVpa: merchantUpi,
       gatewayPayload: {}
     };
 

@@ -213,7 +213,7 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
     fee?: number,
     finalAmount?: number
   ) => void;
-  onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string) => void;
+  onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string, existingId?: string, txHash?: string) => void;
   playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void;
   onResetGraph: () => Promise<void>;
   preferredCurrency?: string;
@@ -443,10 +443,10 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
         depositNetworks={state.depositNetworks || []}
         currentPlayer={currentPlayer}
         deposits={state.deposits || []}
+        paymentSettings={state.paymentSettings}
         onBack={() => setShowDepositView(false)}
-        onDeposit={(amt, depMethod, depDetails, screenshotUrl) => {
-          onDeposit(amt, depMethod, depDetails, screenshotUrl);
-          setShowDepositView(false);
+        onDeposit={(amt, depMethod, depDetails, screenshotUrl, existingId, txHash) => {
+          onDeposit(amt, depMethod, depDetails, screenshotUrl, existingId, txHash);
           addToast('Deposit Request submitted successfully! Awaiting validation.', 'success');
         }}
         preferredCurrency={currentCurrency}

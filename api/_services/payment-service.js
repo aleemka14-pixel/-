@@ -1,6 +1,6 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { paymentServiceInstance } from '../payment/services/payment-service.js';
-import { getPaymentProviderAdapter } from '../payment/providers/index.js';
+import { paymentServiceInstance } from '../../payment/services/payment-service.js';
+import { getPaymentProviderAdapter } from '../../payment/providers/index.js';
 
 export const db = paymentServiceInstance.db;
 

@@ -5,7 +5,7 @@ export interface ActiveBet {
   amount: number;
   multiplier: number;
   game?: string;
-  status: 'active' | 'won' | 'lost';
+  status: 'active' | 'pending' | 'won' | 'lost';
   isDemo?: boolean;
   createdAt: number;
   resolvedAt?: number;
