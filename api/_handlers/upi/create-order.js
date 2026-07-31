@@ -73,7 +73,7 @@ export default async function handler(req, res) {
     const timestamp = Date.now();
     const orderId = `upi_ord_${timestamp}_${Math.random().toString(36).substring(2, 7)}`;
     const selectedProvider = provider || 'upi_gateway';
-    const merchantUpi = upiId || process.env.UPI_ID || settings.providers?.upi?.credentials?.upiId || settings.upiSettings?.vpa || settings.upiVpa || 'merchant@upi';
+    const merchantUpi = upiId || settings.providers?.upi?.credentials?.upiId || settings.upiSettings?.vpa || settings.upiVpa || 'merchant@upi';
     const selectedCurrency = 'INR';
 
     const upiString = `upi://pay?pa=${encodeURIComponent(merchantUpi)}&pn=${encodeURIComponent('Matrix Casino')}&am=${numAmount}&tr=${orderId}&tn=${encodeURIComponent(`Deposit Ref ${orderId}`)}&cu=${selectedCurrency}`;
@@ -95,6 +95,7 @@ export default async function handler(req, res) {
       updatedAt: timestamp,
       timestamp: timestamp,
       upiString,
+      upiLink: upiString,
       qrData: upiString,
       qrCodeUrl,
       merchantUpi,
@@ -121,8 +122,11 @@ export default async function handler(req, res) {
       currency: selectedCurrency,
       status: 'pending',
       upiString,
+      upiLink: upiString,
+      qrData: upiString,
       qrCodeUrl,
       merchantUpi,
+      upiVpa: merchantUpi,
       provider: selectedProvider,
       createdAt: timestamp
     });

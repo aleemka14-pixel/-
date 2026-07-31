@@ -25,8 +25,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 10,
     maxDepositUsd: 50000,
-    depositAddress: 'TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 1,
     featured: true
   },
@@ -53,8 +53,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 10,
     maxDepositUsd: 25000,
-    depositAddress: '0x3f5CE0D2189dfa8df9e87fbC180b7Bd4E12e0388',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x3f5CE0D2189dfa8df9e87fbC180b7Bd4E12e0388',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 2,
     featured: false
   },
@@ -81,8 +81,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 20,
     maxDepositUsd: 100000,
-    depositAddress: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 3,
     featured: false
   },
@@ -109,8 +109,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 15,
     maxDepositUsd: 250000,
-    depositAddress: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 4,
     featured: false
   },
@@ -137,8 +137,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 5,
     maxDepositUsd: 50000,
-    depositAddress: 'A7K9mXNoS4hTYb3jV2kR7K3XvSNoK83A7NnBkWqE',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=A7K9mXNoS4hTYb3jV2kR7K3XvSNoK83A7NnBkWqE',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 5,
     featured: true
   },
@@ -165,8 +165,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 10,
     maxDepositUsd: 15000,
-    depositAddress: '0x996556EC7ab88b098defB751B7401B5f6d8976F',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x996556EC7ab88b098defB751B7401B5f6d8976F',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 6,
     featured: false
   },
@@ -193,8 +193,8 @@ export const DEFAULT_NETWORKS: DepositNetwork[] = [
     enabled: true,
     minDepositUsd: 5,
     maxDepositUsd: 30000,
-    depositAddress: 'Lge7b3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=Lge7b3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h',
+    depositAddress: '',
+    qrCodeUrl: '',
     priority: 7,
     featured: false
   }

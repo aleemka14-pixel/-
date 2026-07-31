@@ -174,7 +174,7 @@ export interface DepositNetwork {
   minDepositUsd: number;
   maxDepositUsd: number;
   depositAddress: string;
-  qrCodeUrl: string;
+  qrCodeUrl?: string;
   priority: number;
   featured: boolean;
   supportedCoins?: string;

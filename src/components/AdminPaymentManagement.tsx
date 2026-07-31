@@ -654,30 +654,9 @@ export const AdminPaymentManagement = memo(function AdminPaymentManagement({ db,
                       )}
 
                       {prov.id === 'upi' && (
-                        <>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold font-mono text-slate-500 uppercase">Static merchant UPI ID</label>
-                            <input
-                              type="text"
-                              disabled={!isEditing}
-                              value={isEditing ? (editingCredentials.upiId || '') : (prov.credentials.upiId || '')}
-                              onChange={(e) => setEditingCredentials({ ...editingCredentials, upiId: e.target.value })}
-                              className="w-full bg-black/20 border border-white/5 rounded-xl px-4 py-2.5 text-xs font-mono focus:border-emerald-500/30 focus:outline-none disabled:opacity-50"
-                              placeholder="e.g. business@upi"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold font-mono text-slate-500 uppercase">Custom Static QR Image URL (Optional)</label>
-                            <input
-                              type="text"
-                              disabled={!isEditing}
-                              value={isEditing ? (editingCredentials.qrCodeUrl || '') : (prov.credentials.qrCodeUrl || '')}
-                              onChange={(e) => setEditingCredentials({ ...editingCredentials, qrCodeUrl: e.target.value })}
-                              className="w-full bg-black/20 border border-white/5 rounded-xl px-4 py-2.5 text-xs font-mono focus:border-emerald-500/30 focus:outline-none disabled:opacity-50"
-                              placeholder="Paste custom QR link"
-                            />
-                          </div>
-                        </>
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-xs">
+                          Payment Gateway mode active. Automated UPI payments will connect directly via payment gateway credentials.
+                        </div>
                       )}
                     </div>
                   </div>

@@ -50,7 +50,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
 }: RedesignedDepositViewProps) {
 
   // Top-Level Payment Method Mode: 'upi' | 'crypto'
-  const [paymentMethodTab, setPaymentMethodTab] = useState<'upi' | 'crypto'>('upi');
+  const [paymentMethodTab, setPaymentMethodTab] = useState<'upi' | 'crypto'>('crypto');
 
   // Network filter list (USDT networks: TRC20, BEP20, ERC20 + general)
   const networks = useMemo(() => {
@@ -275,8 +275,9 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         const data = await response.json();
         if (data.success && (data.orderId || data.depositId)) {
           const depId = data.orderId || data.depositId;
-          const upiVpa = data.merchantUpi || data.upiVpa || paymentSettings?.upiId || 'merchant@upi';
-          const qrCode = data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.upiString || data.qrData || '')}`;
+          const upiVpa = data.merchantUpi || data.upiVpa || 'merchant@upi';
+          const upiString = data.qrData || data.upiLink || data.upiString || `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${numAmt}&tr=${depId}&tn=${encodeURIComponent(`Deposit Ref ${depId}`)}&cu=INR`;
+          const qrCode = data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiString)}`;
           
           setActiveUpiOrder({
             depositId: depId,
@@ -315,11 +316,15 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         if (fallbackResp.ok) {
           const data = await fallbackResp.json();
           if (data.success && data.depositId) {
+            const upiVpa = data.upiVpa || data.merchantUpi || 'merchant@upi';
+            const upiString = data.qrData || data.upiLink || data.upiString || `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${numAmt}&tr=${data.depositId}&cu=INR`;
+            const qrCode = data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiString)}`;
+
             setActiveUpiOrder({
               depositId: data.depositId,
               amount: data.amount || numAmt,
-              upiVpa: data.upiVpa || paymentSettings?.upiId || 'merchant@upi',
-              qrCode: data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.qrData || '')}`,
+              upiVpa,
+              qrCode,
               status: data.status || 'pending',
               createdAt: new Date().toISOString(),
               transactionId: data.transactionId || data.depositId
@@ -336,7 +341,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
       // Local Client-side Dynamic Order Generation (offline resilience)
       const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
       const depositId = `upi_ord_${Date.now()}_${randomHex.toLowerCase()}`;
-      const upiVpa = paymentSettings?.upiId || 'merchant@upi';
+      const upiVpa = 'merchant@upi';
       const qrData = `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${numAmt}&tr=${depositId}&tn=${encodeURIComponent(`Deposit Ref ${depositId}`)}&cu=INR`;
       const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
 
@@ -692,29 +697,29 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
           <AnimatePresence mode="wait">
             
             {/* ======================================================== */}
-            {/* A) UPI DEPOSIT FLOW                                      */}
+            {/* A) UPI AUTOMATED PAYMENT GATEWAY FLOW                   */}
             {/* ======================================================== */}
             {paymentMethodTab === 'upi' && (
               <motion.div
-                key="upi-flow"
+                key="upi-gateway-flow"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
-                {/* STEP 1: Enter UPI Amount */}
+                {/* STEP 1: Amount Selection & Order Creation */}
                 {currentStep === 'selection' && (
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
                     <div className="flex items-center justify-between pb-4 border-b border-slate-800">
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest font-mono block">INSTANT INR TRANSFER</span>
+                        <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono block">AUTOMATED INR GATEWAY</span>
                         <h3 className="text-lg font-display font-black text-white tracking-tight flex items-center gap-2">
                           <Smartphone className="w-5 h-5 text-emerald-400" />
                           UPI Payment Gateway
                         </h3>
                       </div>
                       <span className="text-[9px] font-mono font-black text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 uppercase">
-                        ZERO FEE
+                        ZERO FEE • INSTANT
                       </span>
                     </div>
 
@@ -723,7 +728,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                         <Wrench className="w-5 h-5 text-rose-400 shrink-0" />
                         <div className="text-xs font-medium">
                           <strong className="block font-bold text-rose-200">UPI Payment Gateway Under Maintenance</strong>
-                          UPI deposits are temporarily offline for scheduled system updates. Please use Crypto (USDT) deposit or try again later.
+                          UPI deposits are temporarily offline for scheduled gateway maintenance. Please use Crypto (USDT) deposit.
                         </div>
                       </div>
                     )}
@@ -740,7 +745,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                       </div>
                       <div className="col-span-2 sm:col-span-1">
                         <p className="text-[8px] text-slate-500 uppercase tracking-widest block font-sans font-bold">Processing</p>
-                        <span className="font-bold text-cyan-400">Instant / Auto-credit</span>
+                        <span className="font-bold text-cyan-400">Automated Instant</span>
                       </div>
                     </div>
 
@@ -789,7 +794,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                     {/* Supported Apps Badges */}
                     <div className="pt-2 border-t border-slate-800/80 space-y-2">
                       <span className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-widest block">
-                        Supported UPI Payment Apps
+                        Supported Gateway UPI Apps
                       </span>
                       <div className="flex flex-wrap items-center gap-2">
                         {['PhonePe', 'Google Pay', 'Paytm', 'CRED', 'BHIM UPI'].map((app) => (
@@ -810,7 +815,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                       {isCreatingUpi ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          Generating UPI Payment Order...
+                          Creating Dynamic UPI Gateway Session...
                         </>
                       ) : paymentSettings?.upiMaintenanceMode ? (
                         <>
@@ -820,21 +825,21 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                       ) : (
                         <>
                           <QrCode className="w-4 h-4" />
-                          Generate UPI QR & Pay Instructions
+                          Generate Automated UPI Dynamic QR & Pay
                         </>
                       )}
                     </button>
                   </div>
                 )}
 
-                {/* STEP 2: UPI Instructions & QR Code */}
+                {/* STEP 2: UPI Gateway Dynamic QR & Live Payment Instructions */}
                 {currentStep === 'instructions' && activeUpiOrder && (
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
                     <div className="flex items-center justify-between pb-4 border-b border-slate-800">
                       <div>
-                        <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono block">STEP 2: SCAN & PAY</span>
+                        <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono block">STEP 2: SCAN OR TAP TO PAY</span>
                         <h3 className="text-lg font-display font-black text-white tracking-tight">
-                          UPI Payment Instructions
+                          Automated UPI Gateway Payment
                         </h3>
                       </div>
                       <button
@@ -842,66 +847,123 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                         onClick={() => { setCurrentStep('selection'); playSound('CLICK'); }}
                         className="text-[10px] font-mono font-black text-slate-400 hover:text-white bg-slate-800 px-3 py-1.5 rounded-lg transition-all"
                       >
-                        Edit Amount
+                        Change Amount
                       </button>
                     </div>
 
-                    {/* QR Code and VPA Card */}
+                    {/* Live Auto-Polling Status Bar */}
+                    <div className="bg-slate-950 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between gap-3 text-xs font-mono">
+                      <div className="flex items-center gap-2 text-emerald-400">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                        <span className="font-bold text-[11px]">Listening for automated gateway confirmation...</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase animate-pulse">
+                        PENDING PAYMENT
+                      </span>
+                    </div>
+
+                    {/* QR Code and Payment Card */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-slate-950 border border-slate-800/80 p-5 rounded-2xl">
-                      {/* QR Display */}
+                      {/* Dynamic Gateway QR Display */}
                       <div className="flex flex-col items-center space-y-3">
                         <div className="bg-white p-3 rounded-2xl shadow-xl relative group cursor-pointer" onClick={() => setZoomQr(true)}>
                           <img
                             src={activeUpiOrder.qrCode}
-                            alt="UPI QR Code"
-                            className="w-44 h-44 object-contain rounded-xl"
+                            alt="Dynamic Gateway UPI QR"
+                            className="w-48 h-48 object-contain rounded-xl"
                           />
                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl flex items-center justify-center text-white text-xs font-mono font-bold">
                             Click to Zoom
                           </div>
                         </div>
-                        <span className="text-[10px] text-slate-400 font-mono">Scan using PhonePe, Paytm, or GPay</span>
+                        <span className="text-[10px] text-slate-400 font-mono text-center">
+                          Scan using PhonePe, Paytm, GPay, or any UPI App
+                        </span>
                       </div>
 
-                      {/* Payment VPA & Details */}
+                      {/* Payment Session Details & Direct App Launchers */}
                       <div className="space-y-4">
-                        <div>
-                          <label className="text-[9px] font-mono font-bold text-slate-500 uppercase block mb-1">UPI VPA / Merchant ID</label>
-                          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-3 rounded-xl">
-                            <span className="font-mono font-extrabold text-sm text-emerald-400 truncate flex-1">
-                              {activeUpiOrder.upiVpa}
+                        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3">
+                          <div className="flex justify-between items-center text-xs font-mono border-b border-slate-800/80 pb-2">
+                            <span className="text-slate-400">Deposit Amount:</span>
+                            <span className="text-emerald-400 font-black text-base">₹{activeUpiOrder.amount.toLocaleString()} INR</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs font-mono border-b border-slate-800/80 pb-2">
+                            <span className="text-slate-400">Order Reference:</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-white font-bold text-xs font-mono">{activeUpiOrder.depositId}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(activeUpiOrder.depositId, 'Order Reference')}
+                                className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition-all cursor-pointer"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center text-xs font-mono">
+                            <span className="text-slate-400">Session Status:</span>
+                            <span className="text-amber-400 font-bold uppercase text-[10px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              Active / Awaiting Payment
                             </span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(activeUpiOrder.upiVpa, 'UPI VPA')}
-                              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-all cursor-pointer shrink-0"
-                            >
-                              <Copy className="w-4 h-4" />
-                            </button>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900 p-3 rounded-xl border border-slate-800">
-                          <div>
-                            <span className="text-[8px] text-slate-500 uppercase block font-sans font-bold">Deposit Amount</span>
-                            <span className="text-white font-black text-sm">₹{activeUpiOrder.amount.toLocaleString()} INR</span>
-                          </div>
-                          <div>
-                            <span className="text-[8px] text-slate-500 uppercase block font-sans font-bold">Order Reference</span>
-                            <span className="text-emerald-400 font-black text-xs truncate block">{activeUpiOrder.depositId}</span>
+                        {/* One-Tap Mobile App Launchers */}
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-mono font-bold text-slate-400 uppercase block">
+                            Tap to Pay Directly on Mobile
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <a
+                              href={`phonepe://pay?pa=${encodeURIComponent(activeUpiOrder.upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${activeUpiOrder.amount}&tr=${activeUpiOrder.depositId}&cu=INR`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="py-2.5 px-3 bg-purple-950/60 hover:bg-purple-900/60 border border-purple-500/30 rounded-xl text-center font-mono text-[11px] font-bold text-purple-300 transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <Smartphone className="w-3.5 h-3.5 text-purple-400" />
+                              PhonePe
+                            </a>
+                            <a
+                              href={`gpay://upi/pay?pa=${encodeURIComponent(activeUpiOrder.upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${activeUpiOrder.amount}&tr=${activeUpiOrder.depositId}&cu=INR`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="py-2.5 px-3 bg-blue-950/60 hover:bg-blue-900/60 border border-blue-500/30 rounded-xl text-center font-mono text-[11px] font-bold text-blue-300 transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <Smartphone className="w-3.5 h-3.5 text-blue-400" />
+                              Google Pay
+                            </a>
+                            <a
+                              href={`paytmmp://pay?pa=${encodeURIComponent(activeUpiOrder.upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${activeUpiOrder.amount}&tr=${activeUpiOrder.depositId}&cu=INR`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="py-2.5 px-3 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/30 rounded-xl text-center font-mono text-[11px] font-bold text-cyan-300 transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+                              Paytm
+                            </a>
+                            <a
+                              href={`upi://pay?pa=${encodeURIComponent(activeUpiOrder.upiVpa)}&pn=${encodeURIComponent('Matrix Casino')}&am=${activeUpiOrder.amount}&tr=${activeUpiOrder.depositId}&cu=INR`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="py-2.5 px-3 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 rounded-xl text-center font-mono text-[11px] font-bold text-emerald-300 transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                              Other UPI App
+                            </a>
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Step 3: Enter UTR Number */}
+                    {/* Step 3: Optional UTR Reference Entry for Fast Sync */}
                     <div className="space-y-4 pt-4 border-t border-slate-800">
                       <div className="space-y-1">
                         <label className="block text-[10px] font-black text-white uppercase tracking-widest font-mono">
-                          Enter 12-Digit UPI UTR / Transaction Reference ID
+                          Enter 12-Digit UPI UTR / Transaction Reference ID (Optional)
                         </label>
                         <p className="text-xs text-slate-400">
-                          After completing payment in your UPI app, copy the 12-digit UTR/Ref No. from the transaction receipt.
+                          Automated gateway detection runs automatically. You may also enter your 12-digit UPI UTR from your bank app for instant verification.
                         </p>
                       </div>
 
@@ -913,48 +975,6 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                         className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 rounded-xl px-4 py-3.5 text-sm font-mono font-bold text-white focus:outline-none transition-all"
                       />
 
-                      {/* Screenshot upload drop zone */}
-                      <div
-                        onDragEnter={handleDrag}
-                        onDragOver={handleDrag}
-                        onDragLeave={handleDrag}
-                        onDrop={(e) => handleDrop(e, 'upi')}
-                        className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${
-                          dragActive ? 'border-emerald-500 bg-emerald-500/10' : 'border-slate-800 bg-slate-950/60'
-                        }`}
-                      >
-                        {upiScreenshot ? (
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3">
-                              <img src={upiScreenshot} alt="Proof" className="w-12 h-12 object-cover rounded-lg border border-slate-700" />
-                              <span className="text-xs font-mono text-emerald-400 font-bold">Screenshot Attached</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setUpiScreenshot(undefined)}
-                              className="text-xs font-mono text-rose-400 hover:underline"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ) : (
-                          <label className="cursor-pointer space-y-1 block">
-                            <Upload className="w-5 h-5 mx-auto text-slate-500" />
-                            <span className="text-xs font-mono text-slate-400 block">
-                              Upload Payment Proof Screenshot (Optional)
-                            </span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => {
-                                if (e.target.files?.[0]) processFile(e.target.files[0], 'upi');
-                              }}
-                              className="hidden"
-                            />
-                          </label>
-                        )}
-                      </div>
-
                       {/* Submit button */}
                       <button
                         type="button"
@@ -965,12 +985,12 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                         {isSubmitting ? (
                           <>
                             <RefreshCw className="w-4 h-4 animate-spin" />
-                            Verifying UPI Payment...
+                            Verifying Gateway Payment...
                           </>
                         ) : (
                           <>
                             <CheckCheck className="w-4 h-4" />
-                            Submit UPI Deposit Verification
+                            Submit UPI Verification Request
                           </>
                         )}
                       </button>
@@ -982,7 +1002,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 {currentStep === 'status' && activeUpiOrder && (
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
                     <div className="text-center space-y-3 py-4">
-                      {trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed' ? (
+                      {trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed' || activeUpiOrder.status === 'completed' ? (
                         <div className="w-16 h-16 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/20">
                           <CheckCircle className="w-8 h-8" />
                         </div>
@@ -997,38 +1017,38 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                       )}
 
                       <h3 className="text-xl font-display font-black text-white">
-                        {trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed'
+                        {trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed' || activeUpiOrder.status === 'completed'
                           ? 'UPI Deposit Confirmed & Credited!'
                           : trackedDeposit?.status === 'failed' || trackedDeposit?.status === 'rejected'
                           ? 'UPI Deposit Rejected'
                           : 'UPI Deposit Under Verification'}
                       </h3>
                       <p className="text-xs text-slate-400 max-w-md mx-auto">
-                        Deposit Reference: <strong className="text-white font-mono">{activeUpiOrder.depositId}</strong>
+                        Deposit Order Reference: <strong className="text-white font-mono">{activeUpiOrder.depositId}</strong>
                       </p>
                     </div>
 
                     <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl space-y-3 text-xs font-mono">
                       <div className="flex justify-between py-1.5 border-b border-slate-800/80">
                         <span className="text-slate-500">Method:</span>
-                        <span className="text-white font-bold">UPI Payment</span>
+                        <span className="text-white font-bold">Automated UPI Gateway</span>
                       </div>
                       <div className="flex justify-between py-1.5 border-b border-slate-800/80">
-                        <span className="text-slate-500">Amount:</span>
+                        <span className="text-slate-500">Amount Credited:</span>
                         <span className="text-emerald-400 font-bold">₹{activeUpiOrder.amount.toLocaleString()} INR</span>
                       </div>
                       <div className="flex justify-between py-1.5 border-b border-slate-800/80">
-                        <span className="text-slate-500">UTR Reference:</span>
-                        <span className="text-white font-bold">{upiUtr || 'Submitted'}</span>
+                        <span className="text-slate-500">Order Reference:</span>
+                        <span className="text-white font-bold">{activeUpiOrder.depositId}</span>
                       </div>
                       <div className="flex justify-between py-1.5">
                         <span className="text-slate-500">Live Status:</span>
                         <span className={`font-black uppercase px-2 py-0.5 rounded text-[10px] ${
-                          trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed'
+                          trackedDeposit?.status === 'confirmed' || trackedDeposit?.status === 'completed' || activeUpiOrder.status === 'completed'
                             ? 'bg-emerald-500/20 text-emerald-400'
                             : 'bg-amber-500/20 text-amber-400'
                         }`}>
-                          {trackedDeposit?.status || 'Processing'}
+                          {trackedDeposit?.status || activeUpiOrder.status || 'Processing'}
                         </span>
                       </div>
                     </div>
@@ -1044,6 +1064,8 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 )}
               </motion.div>
             )}
+
+
 
             {/* ======================================================== */}
             {/* B) CRYPTO DEPOSIT FLOW                                   */}
@@ -1222,52 +1244,34 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                       </div>
                     </div>
 
-                    {/* Address & QR Container */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-slate-950 border border-slate-800/80 p-5 rounded-2xl">
-                      {/* QR Display */}
-                      <div className="flex flex-col items-center space-y-3">
-                        <div className="bg-white p-3 rounded-2xl shadow-xl relative group cursor-pointer" onClick={() => setZoomQr(true)}>
-                          <img
-                            src={activeCryptoOrder.qrCode}
-                            alt="Crypto Deposit QR"
-                            className="w-44 h-44 object-contain rounded-xl"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl flex items-center justify-center text-white text-xs font-mono font-bold">
-                            Click to Zoom
-                          </div>
+                    {/* Wallet Address & Order Details Card */}
+                    <div className="bg-slate-950 border border-slate-800/80 p-5 rounded-2xl space-y-4">
+                      <div>
+                        <label className="text-[9px] font-mono font-bold text-slate-400 uppercase block mb-1.5">
+                          Official {activeCryptoOrder.network} Deposit Wallet Address
+                        </label>
+                        <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
+                          <span className="font-mono font-black text-xs sm:text-sm text-emerald-400 break-all flex-1">
+                            {activeCryptoOrder.walletAddress}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(activeCryptoOrder.walletAddress, 'Wallet Address')}
+                            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-all cursor-pointer shrink-0"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
                         </div>
-                        <span className="text-[10px] text-slate-400 font-mono">Scan via Binance, TrustWallet, or MetaMask</span>
                       </div>
 
-                      {/* Wallet Address */}
-                      <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3 text-xs font-mono bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/80">
                         <div>
-                          <label className="text-[9px] font-mono font-bold text-slate-500 uppercase block mb-1">
-                            {activeCryptoOrder.network} Deposit Wallet Address
-                          </label>
-                          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-3 rounded-xl">
-                            <span className="font-mono font-extrabold text-xs text-emerald-400 break-all flex-1">
-                              {activeCryptoOrder.walletAddress}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(activeCryptoOrder.walletAddress, 'Wallet Address')}
-                              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-all cursor-pointer shrink-0"
-                            >
-                              <Copy className="w-4 h-4" />
-                            </button>
-                          </div>
+                          <span className="text-[8px] text-slate-500 uppercase block font-sans font-bold mb-0.5">Deposit Amount</span>
+                          <span className="text-white font-black text-sm">${activeCryptoOrder.amount} USDT</span>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900 p-3 rounded-xl border border-slate-800">
-                          <div>
-                            <span className="text-[8px] text-slate-500 uppercase block font-sans font-bold">Deposit Amount</span>
-                            <span className="text-white font-black text-sm">${activeCryptoOrder.amount} USDT</span>
-                          </div>
-                          <div>
-                            <span className="text-[8px] text-slate-500 uppercase block font-sans font-bold">Deposit ID</span>
-                            <span className="text-emerald-400 font-black text-xs truncate block">{activeCryptoOrder.depositId}</span>
-                          </div>
+                        <div>
+                          <span className="text-[8px] text-slate-500 uppercase block font-sans font-bold mb-0.5">Order Reference</span>
+                          <span className="text-emerald-400 font-black text-xs truncate block">{activeCryptoOrder.depositId}</span>
                         </div>
                       </div>
                     </div>

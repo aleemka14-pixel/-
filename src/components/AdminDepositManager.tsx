@@ -130,7 +130,7 @@ export const AdminDepositManager = memo(function AdminDepositManager({ networks 
       minDepositUsd: 10,
       maxDepositUsd: 50000,
       depositAddress: newNetAddress,
-      qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${newNetAddress}`,
+      qrCodeUrl: '',
       priority,
       featured: false,
       supportedCoins: 'USDT, USDC'
@@ -503,8 +503,6 @@ export const AdminDepositManager = memo(function AdminDepositManager({ networks 
                             onChange={(e) => {
                               const addr = e.target.value;
                               handleCellUpdate(net.id, 'depositAddress', addr);
-                              // Auto regenerate standard QR code API
-                              handleCellUpdate(net.id, 'qrCodeUrl', `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${addr}`);
                             }}
                             className="bg-transparent border-0 focus:ring-1 focus:ring-emerald-500/50 hover:bg-white/5 rounded px-1.5 py-1 text-xs text-emerald-400 font-bold font-mono w-full truncate"
                           />
@@ -643,65 +641,6 @@ export const AdminDepositManager = memo(function AdminDepositManager({ networks 
                       <Trash2 className="w-3 h-3" /> Remove banner
                     </button>
                   )}
-                </div>
-
-                {/* QR Code Image management */}
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest font-mono">
-                    Payment QR Code Image
-                  </label>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 bg-white/[0.02] border border-white/5 p-4 rounded-2xl">
-                    <div className="relative h-24 w-24 bg-slate-900 rounded-2xl overflow-hidden border border-white/5 group shrink-0 flex items-center justify-center">
-                      {selectedNetworkForContent.qrCodeUrl ? (
-                        <img src={selectedNetworkForContent.qrCodeUrl} alt="QR Code" className="w-full h-full object-contain p-2" />
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 gap-1">
-                          <QrCode className="w-6 h-6 opacity-30" />
-                          <span className="text-[8px] font-black uppercase">No QR Code</span>
-                        </div>
-                      )}
-                      <label className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity text-white gap-1 text-center p-1">
-                        <Upload className="w-4 h-4" />
-                        <span className="text-[8px] font-black uppercase">Upload QR</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleImageFileChange(e, 'qrCodeUrl', selectedNetworkForContent.id)}
-                        />
-                      </label>
-                    </div>
-                    <div className="space-y-1.5 flex-1">
-                      <p className="text-[10px] text-slate-400 leading-relaxed">
-                        Upload a custom payment QR code image or reset to the default auto-generated QR code (which encodes the deposit address below).
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedNetworkForContent.qrCodeUrl && (
-                          <button
-                            onClick={async () => {
-                              await handleCellUpdate(selectedNetworkForContent.id, 'qrCodeUrl', '');
-                              setSelectedNetworkForContent(prev => prev ? { ...prev, qrCodeUrl: '' } : null);
-                              playSound('CLICK');
-                            }}
-                            className="text-[9px] text-rose-400 hover:text-rose-300 font-mono flex items-center gap-1 cursor-pointer bg-transparent border-0"
-                          >
-                            <Trash2 className="w-3 h-3" /> Remove QR Code
-                          </button>
-                        )}
-                        <button
-                          onClick={async () => {
-                            const autoUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${selectedNetworkForContent.depositAddress || ''}`;
-                            await handleCellUpdate(selectedNetworkForContent.id, 'qrCodeUrl', autoUrl);
-                            setSelectedNetworkForContent(prev => prev ? { ...prev, qrCodeUrl: autoUrl } : null);
-                            playSound('WIN');
-                          }}
-                          className="text-[9px] text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-1 cursor-pointer bg-transparent border-0"
-                        >
-                          <RefreshCw className="w-3 h-3" /> Reset to Auto-QR
-                        </button>
-                      </div>
-                    </div>
-                  </div>
                 </div>
 
                 {/* Basic descriptive texts */}

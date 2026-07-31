@@ -46,17 +46,17 @@ export class CryptoDirectAdapter implements PaymentAdapter {
     // Sourced dynamically from configuration database, with safe system default addresses
     let walletAddress = '';
     if (netUpper === 'TRC20') {
-      walletAddress = credentials.usdtTrc20Address || 'TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h';
+      walletAddress = credentials.usdtTrc20Address || '';
     } else if (netUpper === 'BEP20') {
-      walletAddress = credentials.usdtBep20Address || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
+      walletAddress = credentials.usdtBep20Address || '';
     } else if (netUpper === 'ERC20') {
-      walletAddress = credentials.usdtErc20Address || '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+      walletAddress = credentials.usdtErc20Address || '';
     } else {
-      walletAddress = credentials.usdtTrc20Address || 'TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h';
+      walletAddress = credentials.usdtTrc20Address || '';
     }
 
-    const qrData = `usdt:${walletAddress}?amount=${req.amount}&network=${netUpper.toLowerCase()}`;
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+    const qrData = walletAddress;
+    const qrCodeUrl = '';
     const paymentId = `DEP-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
     return {
@@ -117,39 +117,32 @@ export class NowPaymentsAdapter implements PaymentAdapter {
 
     // Map selected network to respective pay currency
     let payCurrency = 'usdt';
-    let baseAddress = '0x71C7656EC7ab88b098defB751B7401B5f6d8976F';
+    let baseAddress = '';
 
     switch (req.network.toLowerCase()) {
       case 'bitcoin':
       case 'btc':
         payCurrency = 'btc';
-        baseAddress = 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh';
         break;
       case 'ethereum':
       case 'erc20':
         payCurrency = 'eth';
-        baseAddress = '0x71C7656EC7ab88b098defB751B7401B5f6d8976F';
         break;
       case 'bsc':
       case 'bep20':
         payCurrency = 'bnb';
-        baseAddress = '0x3f5CE0D2189dfa8df9e87fbC180b7Bd4E12e0388';
         break;
       case 'polygon':
         payCurrency = 'pol';
-        baseAddress = '0x996556EC7ab88b098defB751B7401B5f6d8976F';
         break;
       case 'solana':
         payCurrency = 'sol';
-        baseAddress = 'A7K9mXNoS4hTYb3jV2kR7K3XvSNoK83A7NnBkWqE';
         break;
       case 'litecoin':
         payCurrency = 'ltc';
-        baseAddress = 'Lge7b3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h';
         break;
       default:
         payCurrency = 'usdt';
-        baseAddress = 'TYb3jV2kR7K3XvSNoK83A7NnBkWqE9M2S4h';
     }
 
     // Try live gateway API call if credentials exist
@@ -176,9 +169,9 @@ export class NowPaymentsAdapter implements PaymentAdapter {
 
         if (response.ok) {
           const data = await response.json();
-          const walletAddress = data.pay_address;
-          const qrData = `${payCurrency}:${walletAddress}?amount=${data.pay_amount || req.amount}`;
-          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+          const walletAddress = data.pay_address || '';
+          const qrData = walletAddress;
+          const qrCodeUrl = '';
 
           return {
             success: true,
@@ -201,8 +194,8 @@ export class NowPaymentsAdapter implements PaymentAdapter {
     // fallback simulation
     const randomBytes = crypto.randomBytes(8).toString('hex');
     const paymentId = `PAY-${randomBytes.toUpperCase()}`;
-    const qrData = `${payCurrency}:${baseAddress}?amount=${req.amount}`;
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+    const qrData = baseAddress;
+    const qrCodeUrl = '';
 
     return {
       success: true,
@@ -240,7 +233,7 @@ export class NowPaymentsAdapter implements PaymentAdapter {
 }
 
 /**
- * 3. Adapter for UPI / Local Static QR Payments
+ * 3. Adapter for Payment Gateway Integration
  */
 export class UpiStaticAdapter implements PaymentAdapter {
   config: PaymentProviderConfig;
@@ -250,21 +243,15 @@ export class UpiStaticAdapter implements PaymentAdapter {
   }
 
   async createPayment(req: CreatePaymentRequest): Promise<CreatePaymentResponse> {
-    const credentials = this.config.credentials;
-    const upiId = credentials.upiId || 'merchant@upi';
-    const qrCodeUrl = credentials.qrCodeUrl || '';
-
-    const qrData = `upi://pay?pa=${upiId}&pn=EnterpriseStore&am=${req.amount}&cu=INR`;
-    const finalQrCodeUrl = qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
-    const paymentId = `UPI-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const paymentId = `PAY-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
     return {
       success: true,
       paymentId,
-      walletAddress: upiId,
+      walletAddress: '',
       amount: req.amount,
-      qrData,
-      qrCodeUrl: finalQrCodeUrl,
+      qrData: '',
+      qrCodeUrl: '',
       status: 'pending',
       isMock: true
     };
