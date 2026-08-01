@@ -231,35 +231,3 @@ export class NowPaymentsAdapter implements PaymentAdapter {
     }
   }
 }
-
-/**
- * 3. Adapter for Payment Gateway Integration
- */
-export class UpiStaticAdapter implements PaymentAdapter {
-  config: PaymentProviderConfig;
-
-  constructor(config: PaymentProviderConfig) {
-    this.config = config;
-  }
-
-  async createPayment(req: CreatePaymentRequest): Promise<CreatePaymentResponse> {
-    const paymentId = `PAY-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-
-    return {
-      success: true,
-      paymentId,
-      walletAddress: '',
-      amount: req.amount,
-      qrData: '',
-      qrCodeUrl: '',
-      status: 'pending',
-      isMock: true
-    };
-  }
-
-  verifyWebhook(_headers: Record<string, string>, _body: any): boolean {
-    // UPI dynamic callback isn't supported for static QRs without banks/aggregators.
-    // Manual approval ledger manages this securely.
-    return true;
-  }
-}

@@ -10,6 +10,23 @@ const DEFAULT_PAYMENT_CONFIG = {
   maintenanceMode: false,
   globalTestMode: true,
   providers: {
+    sunpay: {
+      id: 'sunpay',
+      name: 'Sunpay Gateway',
+      enabled: true,
+      mode: 'live',
+      credentials: {
+        apiKey: process.env.SUNPAY_API_KEY || '',
+        secret: process.env.SUNPAY_SECRET || '',
+        merchantId: process.env.SUNPAY_MERCHANT_ID || '',
+        baseUrl: process.env.SUNPAY_BASE_URL || 'https://cashier.sunpaytm.quest'
+      },
+      failureCount: 0,
+      lastFailureTime: null,
+      status: 'Online',
+      minDeposit: 100,
+      maxDeposit: 100000
+    },
     cryptodirect: {
       id: 'cryptodirect',
       name: 'Direct Crypto Transfers',
@@ -171,6 +188,16 @@ export class PaymentService {
 
       // Explicitly override database credentials with environment variables if set (Environment-first priority)
       if (mergedConfig.providers) {
+        if (mergedConfig.providers.sunpay && mergedConfig.providers.sunpay.credentials) {
+          mergedConfig.providers.sunpay.credentials.apiKey = 
+            process.env.SUNPAY_API_KEY || mergedConfig.providers.sunpay.credentials.apiKey;
+          mergedConfig.providers.sunpay.credentials.secret = 
+            process.env.SUNPAY_SECRET || mergedConfig.providers.sunpay.credentials.secret;
+          mergedConfig.providers.sunpay.credentials.merchantId = 
+            process.env.SUNPAY_MERCHANT_ID || mergedConfig.providers.sunpay.credentials.merchantId;
+          mergedConfig.providers.sunpay.credentials.baseUrl = 
+            process.env.SUNPAY_BASE_URL || mergedConfig.providers.sunpay.credentials.baseUrl;
+        }
         if (mergedConfig.providers.cryptodirect && mergedConfig.providers.cryptodirect.credentials) {
           mergedConfig.providers.cryptodirect.credentials.usdtTrc20Address = 
             process.env.DIRECT_CRYPTO_USDT_TRC20_ADDRESS || mergedConfig.providers.cryptodirect.credentials.usdtTrc20Address;

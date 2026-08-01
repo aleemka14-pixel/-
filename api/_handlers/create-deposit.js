@@ -9,6 +9,7 @@ import { doc, setDoc, collection, query, where, getDocs } from 'firebase/firesto
 
 /**
  * Vercel Serverless Function Handler: create-deposit
+ * Integrates Sunpay as the deposit payment gateway.
  */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -59,30 +60,47 @@ export default async function handler(req, res) {
       });
     }
 
-    const selectedNetwork = (network || 'TRC20').toUpperCase();
-    const selectedProviderKey = provider || 'nowpayments';
+    const selectedNetwork = (network || 'UPI').toUpperCase();
+    const selectedProviderKey = provider || 'sunpay';
 
-    const providerConfig = settings.providers[selectedProviderKey];
+    let providerConfig = settings.providers[selectedProviderKey];
     if (!providerConfig || !providerConfig.enabled) {
-      return res.status(400).json({
-        success: false,
-        error: `Selected payment provider '${selectedProviderKey}' is currently unavailable.`
-      });
+      if (selectedProviderKey === 'sunpay') {
+        providerConfig = {
+          id: 'sunpay',
+          name: 'Sunpay Gateway',
+          enabled: true,
+          credentials: {
+            apiKey: process.env.SUNPAY_API_KEY || '',
+            secret: process.env.SUNPAY_SECRET || '',
+            merchantId: process.env.SUNPAY_MERCHANT_ID || '',
+            baseUrl: process.env.SUNPAY_BASE_URL || 'https://cashier.sunpaytm.quest'
+          },
+          minDeposit: 100,
+          maxDeposit: 100000
+        };
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: `Selected payment provider '${selectedProviderKey}' is currently unavailable.`
+        });
+      }
     }
 
     const adapter = getProviderAdapter(providerConfig);
 
-    const minRequired = providerConfig.minDeposit || 10;
-    const maxRequired = providerConfig.maxDeposit || 50000;
-    const cooldownSeconds = providerConfig.depositCooldown || 30;
+    const minRequired = providerConfig.minDeposit || 100;
+    const maxRequired = providerConfig.maxDeposit || 100000;
+    const cooldownSeconds = providerConfig.depositCooldown || 15;
 
     if (numAmount < minRequired || numAmount > maxRequired) {
       return res.status(400).json({
         success: false,
-        error: `Deposit amount of $${numAmount} is outside allowed limits [Min: $${minRequired}, Max: $${maxRequired}].`
+        error: `Deposit amount of ₹${numAmount} is outside allowed limits [Min: ₹${minRequired}, Max: ₹${maxRequired}].`
       });
     }
 
+    // Cooldown check for duplicate requests
     try {
       const depositsRef = collection(db, 'deposits');
       const cooldownThreshold = Date.now() - cooldownSeconds * 1000;
@@ -90,7 +108,6 @@ export default async function handler(req, res) {
         depositsRef,
         where('playerId', '==', resolvedUserId),
         where('amount', '==', numAmount),
-        where('network', '==', selectedNetwork),
         where('timestamp', '>', cooldownThreshold)
       );
       const querySnap = await getDocs(q);
@@ -105,12 +122,22 @@ export default async function handler(req, res) {
       console.warn("[API Info] Cooldown check skipped or index building:", e.message);
     }
 
+    let origin = 'https://' + (req.headers.host || 'localhost:3000');
+    if (req.headers.origin) {
+      origin = req.headers.origin;
+    }
+
+    const returnUrl = `${origin}/deposit`;
+    const notifyUrl = `${origin}/api/payment-webhook`;
+
     const gatewayResponse = await adapter.createPayment({
       amount: numAmount,
-      currency: currency || 'USDT',
+      currency: currency || 'INR',
       network: selectedNetwork,
-      orderId: `dep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      userId: resolvedUserId
+      orderId: `sun_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      userId: resolvedUserId,
+      returnUrl,
+      notifyUrl
     });
 
     if (!gatewayResponse || !gatewayResponse.success) {
@@ -122,7 +149,8 @@ export default async function handler(req, res) {
     }
 
     const timestamp = Date.now();
-    const paymentId = gatewayResponse.paymentId;
+    const paymentId = gatewayResponse.paymentId || gatewayResponse.depositId;
+    const paymentUrl = gatewayResponse.paymentUrl;
 
     const depositDoc = {
       depositId: paymentId,
@@ -130,18 +158,17 @@ export default async function handler(req, res) {
       userId: resolvedUserId,
       playerId: resolvedUserId,
       amount: numAmount,
+      currency: currency || 'INR',
       network: selectedNetwork,
-      method: selectedNetwork,
-      provider: selectedProviderKey,
+      method: 'Sunpay Gateway',
+      provider: 'sunpay',
       status: 'pending',
+      paymentUrl: paymentUrl,
       walletAddress: gatewayResponse.walletAddress || '',
-      qrData: gatewayResponse.qrData || gatewayResponse.walletAddress || '',
-      payAmount: gatewayResponse.payAmount || numAmount,
-      payCurrency: gatewayResponse.payCurrency || selectedNetwork,
       createdAt: timestamp,
       updatedAt: timestamp,
       timestamp: timestamp,
-      details: `USDT Deposit via ${selectedNetwork} (${selectedProviderKey})`
+      details: `Sunpay Deposit: ₹${numAmount}`
     };
 
     const depositRef = doc(db, 'deposits', paymentId);
@@ -149,8 +176,8 @@ export default async function handler(req, res) {
 
     await addPaymentLog(
       'info',
-      selectedProviderKey,
-      `Deposit request generated: ${paymentId} for $${numAmount} USDT (${selectedNetwork})`,
+      'sunpay',
+      `Deposit request generated: ${paymentId} for ₹${numAmount} via Sunpay`,
       `Player: ${resolvedUserId}`
     );
 
@@ -160,13 +187,9 @@ export default async function handler(req, res) {
       paymentId: paymentId,
       userId: resolvedUserId,
       amount: numAmount,
-      network: selectedNetwork,
+      currency: currency || 'INR',
       status: 'pending',
-      walletAddress: gatewayResponse.walletAddress,
-      qrData: gatewayResponse.qrData,
-      payAmount: gatewayResponse.payAmount,
-      payCurrency: gatewayResponse.payCurrency,
-      expiresAt: gatewayResponse.expiresAt || timestamp + 3600000,
+      paymentUrl: paymentUrl,
       createdAt: timestamp,
       updatedAt: timestamp
     });

@@ -7865,47 +7865,12 @@ const AdminView = memo(function AdminView({ state, playSound, demoMode, onUpdate
                 </div>
                 <div>
                   <h4 className="text-xl font-bold text-white">Payment Method Maintenance Modes</h4>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mt-0.5">Individually toggle maintenance status for UPI and Crypto deposit gateways</p>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mt-0.5">Toggle maintenance status for Crypto deposit gateway</p>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* UPI Maintenance Toggle */}
-              <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className={`p-3 rounded-xl border ${state.paymentSettings?.upiMaintenanceMode ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
-                    <Smartphone className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h5 className="text-sm font-bold text-white">UPI Payment Gateway</h5>
-                    <p className="text-[10px] text-slate-500">
-                      {state.paymentSettings?.upiMaintenanceMode ? 'Currently Under Maintenance' : 'Operational & Active'}
-                    </p>
-                  </div>
-                </div>
-
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => {
-                    playSound('CLICK');
-                    onUpdatePaymentSettings({
-                      ...state.paymentSettings,
-                      upiMaintenanceMode: !(state.paymentSettings?.upiMaintenanceMode ?? false)
-                    });
-                  }}
-                  className={`px-5 py-2.5 rounded-xl border font-black uppercase text-[10px] tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer ${
-                    state.paymentSettings?.upiMaintenanceMode
-                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-lg shadow-rose-500/10'
-                      : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-lg shadow-emerald-500/10'
-                  }`}
-                >
-                  <div className={`w-2 h-2 rounded-full ${state.paymentSettings?.upiMaintenanceMode ? 'bg-rose-400 animate-pulse' : 'bg-emerald-400'}`} />
-                  {state.paymentSettings?.upiMaintenanceMode ? 'Maintenance ON' : 'Maintenance OFF'}
-                </motion.button>
-              </div>
-
+            <div className="grid grid-cols-1 gap-6">
               {/* Crypto Maintenance Toggle */}
               <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">

@@ -1,6 +1,4 @@
-import { cashfreeService } from './cashfree.js';
-import { nowPaymentsService } from './nowpayments.js';
-import { futureGatewayService, FutureGatewayService } from './futureGateway.js';
+import { sunpayService } from './sunpay.js';
 
 /**
  * Payment Gateway Manager Factory
@@ -10,12 +8,8 @@ class PaymentGatewayRegistry {
   constructor() {
     this.services = new Map();
     
-    // Register built-in providers
-    this.register('cashfree', cashfreeService);
-    this.register('cashfree_upi', cashfreeService);
-    this.register('nowpayments', nowPaymentsService);
-    this.register('nowpayments_crypto', nowPaymentsService);
-    this.register('future_gateway', futureGatewayService);
+    // Register Sunpay as the primary gateway
+    this.register('sunpay', sunpayService);
   }
 
   /**
@@ -34,7 +28,7 @@ class PaymentGatewayRegistry {
    * @param {string} identifier 
    */
   getService(identifier) {
-    if (!identifier) return futureGatewayService;
+    if (!identifier) return sunpayService;
 
     const key = String(identifier).toLowerCase();
 
@@ -42,13 +36,7 @@ class PaymentGatewayRegistry {
       return this.services.get(key);
     }
 
-    if (key.includes('cashfree')) return cashfreeService;
-    if (key.includes('nowpayment')) return nowPaymentsService;
-
-    // Dynamically instantiate a new FutureGateway instance if custom driver requested
-    const customService = new FutureGatewayService(identifier);
-    this.register(key, customService);
-    return customService;
+    return sunpayService;
   }
 
   /**
@@ -77,4 +65,4 @@ class PaymentGatewayRegistry {
 }
 
 export const paymentGatewayRegistry = new PaymentGatewayRegistry();
-export { cashfreeService, nowPaymentsService, futureGatewayService };
+export { sunpayService };

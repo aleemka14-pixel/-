@@ -1,6 +1,5 @@
 import createDepositHandler from './_handlers/create-deposit.js';
 import createPaymentHandler from './_handlers/create-payment.js';
-import createUpiDepositHandler from './_handlers/create-upi-deposit.js';
 import createWithdrawHandler from './_handlers/create-withdraw.js';
 import healthHandler from './_handlers/health.js';
 import paymentWebhookHandler from './_handlers/payment-webhook.js';
@@ -17,10 +16,6 @@ import adminWalletAdjustHandler from './_handlers/admin/wallet/adjust.js';
 import adminWalletDepositHandler from './_handlers/admin/wallet/deposit.js';
 import adminWalletWithdrawHandler from './_handlers/admin/wallet/withdraw.js';
 
-import upiCreateOrderHandler from './_handlers/upi/create-order.js';
-import upiStatusHandler from './_handlers/upi/status.js';
-import upiWebhookHandler from './_handlers/upi/webhook.js';
-
 import walletDepositHandler from './_handlers/wallet/deposit.js';
 import walletTransactionHandler from './_handlers/wallet/transaction.js';
 import walletWithdrawHandler from './_handlers/wallet/withdraw.js';
@@ -33,7 +28,6 @@ import aviatorStateHandler from './_handlers/aviator/state.js';
 const routes = {
   '/api/create-deposit': createDepositHandler,
   '/api/create-payment': createPaymentHandler,
-  '/api/create-upi-deposit': createUpiDepositHandler,
   '/api/create-withdraw': createWithdrawHandler,
   '/api/create-withdrawal': createWithdrawHandler,
   '/api/health': healthHandler,
@@ -50,10 +44,6 @@ const routes = {
   '/api/admin/wallet/adjust': adminWalletAdjustHandler,
   '/api/admin/wallet/deposit': adminWalletDepositHandler,
   '/api/admin/wallet/withdraw': adminWalletWithdrawHandler,
-
-  '/api/upi/create-order': upiCreateOrderHandler,
-  '/api/upi/status': upiStatusHandler,
-  '/api/upi/webhook': upiWebhookHandler,
 
   '/api/wallet/deposit': walletDepositHandler,
   '/api/wallet/transaction': walletTransactionHandler,

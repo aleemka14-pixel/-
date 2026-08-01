@@ -17,7 +17,6 @@ async function startServer() {
   app.use("/api/webhook*", webhookRateLimit);
   app.use("/api/payment-webhook*", webhookRateLimit);
   app.use("/api/create-deposit*", depositRateLimit);
-  app.use("/api/create-upi-deposit*", depositRateLimit);
   app.use("/api/create-withdraw*", withdrawRateLimit);
   app.use("/api/admin/*", adminRateLimit);
 
