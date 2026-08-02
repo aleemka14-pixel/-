@@ -103,7 +103,7 @@ const CustomAnimatedBalance = memo(({ balance, preferredCurrency, rates, isLoadi
       <AnimatePresence>
         {particles.map((p) => (
           <motion.div
-            key={p.id}
+            key={`particle-${p.id}`}
             initial={{ opacity: 1, scale: 1, x: 0, y: 0 }}
             animate={{ opacity: 0, scale: 0.2, x: p.tx, y: p.ty }}
             exit={{ opacity: 0 }}
@@ -348,8 +348,8 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
   // Search and Filter logic for transactions
   const filteredHistory = useMemo(() => {
     return unifiedHistory.filter(tx => {
-      const matchesSearch = tx.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            (tx.blockchain || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = (tx.id || '').toLowerCase().includes((searchQuery || '').toLowerCase()) || 
+                            (tx.blockchain || '').toLowerCase().includes((searchQuery || '').toLowerCase());
       
       const matchesType = txTypeFilter === 'all' || tx.type === txTypeFilter;
       return matchesSearch && matchesType;
@@ -373,7 +373,7 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
 
   // Helper to generate explorers links
   const getExplorerUrl = (blockchain: string, hash: string) => {
-    const chain = blockchain.toLowerCase();
+    const chain = (blockchain || '').toLowerCase();
     if (chain.includes('tron') || chain.includes('trc')) return `https://tronscan.org/#/transaction/${hash}`;
     if (chain.includes('bsc') || chain.includes('bep') || chain.includes('binance')) return `https://bscscan.com/tx/${hash}`;
     if (chain.includes('ethereum') || chain.includes('erc') || chain.includes('eth')) return `https://etherscan.io/tx/${hash}`;
@@ -415,16 +415,18 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
   const filteredAssets = useMemo(() => {
     return assetList.filter(asset => {
       if (hideZeroBalances && asset.balanceUsd <= 0) return false;
-      return asset.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-             asset.symbol.toLowerCase().includes(searchQuery.toLowerCase());
+      const term = (searchQuery || '').toLowerCase();
+      return (asset.name || '').toLowerCase().includes(term) || 
+             (asset.symbol || '').toLowerCase().includes(term);
     });
   }, [assetList, hideZeroBalances, searchQuery]);
 
   // Filter currencies based on settings search
   const filteredCurrencies = useMemo(() => {
+    const term = (currencySearch || '').toLowerCase();
     return Object.values(SUPPORTED_CURRENCIES).filter(curr => 
-      curr.code.toLowerCase().includes(currencySearch.toLowerCase()) ||
-      curr.name.toLowerCase().includes(currencySearch.toLowerCase())
+      (curr.code || '').toLowerCase().includes(term) ||
+      (curr.name || '').toLowerCase().includes(term)
     );
   }, [currencySearch]);
 
@@ -491,8 +493,8 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
       {/* Toast Render stack */}
       <div className="fixed bottom-6 right-6 z-[110] flex flex-col gap-3">
         <AnimatePresence>
-          {toasts.map((toast) => (
-            <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
+          {toasts.map((toast, idx) => (
+            <Toast key={toast.id || `toast-${idx}`} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
           ))}
         </AnimatePresence>
       </div>
@@ -766,7 +768,7 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
 
                           return (
                             <tr 
-                              key={tx.id} 
+                              key={`${tx.type}-${tx.id || idx}-${idx}`} 
                               className="hover:bg-white/[0.01] transition-colors"
                             >
                               <td className="px-8 py-4.5 text-slate-400 text-xs font-mono">
@@ -774,9 +776,9 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
                               </td>
                               <td className="px-8 py-4.5">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-mono text-[11px] text-slate-400 tracking-tight select-all">{tx.id.substring(0, 10)}...</span>
+                                  <span className="font-mono text-[11px] text-slate-400 tracking-tight select-all">{(tx.id || '').substring(0, 10)}...</span>
                                   <button
-                                    onClick={() => { navigator.clipboard.writeText(tx.id); addToast('Transaction ID copied!', 'success'); playSound('CLICK'); }}
+                                    onClick={() => { navigator.clipboard.writeText(tx.id || ''); addToast('Transaction ID copied!', 'success'); playSound('CLICK'); }}
                                     className="p-1 hover:bg-white/5 rounded text-slate-500 hover:text-slate-300 cursor-pointer"
                                   >
                                     <Copy className="w-3.5 h-3.5" />
@@ -832,7 +834,7 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
                   {paginatedHistory.length === 0 ? (
                     <p className="p-8 text-center text-slate-500 text-xs italic">No matching transactions found.</p>
                   ) : (
-                    paginatedHistory.map((tx) => {
+                    paginatedHistory.map((tx, idx) => {
                       const isDeposit = tx.type === 'deposit';
                       const status = tx.status;
                       
@@ -850,7 +852,7 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
                       }
 
                       return (
-                        <div key={tx.id} className="p-5 space-y-4">
+                        <div key={`${tx.type}-${tx.id || idx}-${idx}`} className="p-5 space-y-4">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-mono text-slate-500">
                               {new Date(tx.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
@@ -869,7 +871,7 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
                                 </span>
                                 <span className="text-[10px] text-slate-500 font-mono">({tx.blockchain})</span>
                               </div>
-                              <span className="text-[9px] font-mono text-slate-500 mt-1 block select-all">TXID: {tx.id.substring(0, 16)}...</span>
+                              <span className="text-[9px] font-mono text-slate-500 mt-1 block select-all">TXID: {(tx.id || '').substring(0, 16)}...</span>
                             </div>
 
                             <p className={`text-lg font-mono font-black ${isDeposit ? 'text-emerald-400' : 'text-slate-300'}`}>
@@ -1079,11 +1081,11 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
 
                 {/* Grid list of fiat options */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
-                  {filteredCurrencies.map((curr) => {
+                  {filteredCurrencies.map((curr, idx) => {
                     const isSelected = curr.code === currentCurrency;
                     return (
                       <button
-                        key={curr.code}
+                        key={curr.code || `curr-${idx}`}
                         type="button"
                         onClick={() => { onSelectCurrency(curr.code); playSound('CLICK'); addToast(`Currency set to ${curr.code} (${curr.symbol}).`, 'success'); }}
                         className={`flex items-center gap-3 py-3 px-4 rounded-2xl transition-all text-left cursor-pointer border group hover:bg-white/[0.02] ${

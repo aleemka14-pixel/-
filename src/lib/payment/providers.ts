@@ -119,7 +119,7 @@ export class NowPaymentsAdapter implements PaymentAdapter {
     let payCurrency = 'usdt';
     let baseAddress = '';
 
-    switch (req.network.toLowerCase()) {
+    switch ((req.network || '').toLowerCase()) {
       case 'bitcoin':
       case 'btc':
         payCurrency = 'btc';

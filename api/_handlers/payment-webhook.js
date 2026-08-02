@@ -15,6 +15,7 @@ import { sunpayService } from '../../services/payment/sunpay.js';
  * Processes incoming webhook notifications from Sunpay payment gateway.
  */
 export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -37,13 +38,15 @@ export default async function handler(req, res) {
 
   try {
     const payload = req.body || {};
+    const rawBodyString = typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(payload);
+    console.log("[Sunpay Webhook Received] Headers:", JSON.stringify(req.headers));
     console.log("[Sunpay Webhook Received] Payload:", JSON.stringify(payload, null, 2));
 
-    const webhookResult = sunpayService.processWebhook(req.headers, payload);
+    const webhookResult = sunpayService.processWebhook(req.headers, payload, rawBodyString);
 
-    const depositId = webhookResult.orderId || payload.out_trade_no || payload.depositId || payload.orderId;
-    const rawStatus = String(webhookResult.status || payload.status || payload.trade_status || '').toLowerCase();
-    const rawAmount = Number(webhookResult.amount || payload.amount || payload.pay_amount || 0);
+    const depositId = webhookResult.orderId || payload.order_id || payload.depositId || payload.orderId || payload.out_trade_no;
+    const rawStatus = String(webhookResult.status || payload.status || '').toLowerCase();
+    const rawAmount = Number(webhookResult.amount || payload.amount || 0);
 
     if (!depositId) {
       return res.status(400).json({

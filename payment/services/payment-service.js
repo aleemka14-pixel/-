@@ -16,10 +16,9 @@ const DEFAULT_PAYMENT_CONFIG = {
       enabled: true,
       mode: 'live',
       credentials: {
-        apiKey: process.env.SUNPAY_API_KEY || '',
-        secret: process.env.SUNPAY_SECRET || '',
-        merchantId: process.env.SUNPAY_MERCHANT_ID || '',
-        baseUrl: process.env.SUNPAY_BASE_URL || 'https://cashier.sunpaytm.quest'
+        apiKey: process.env.PAYIN_API_KEY || '',
+        secret: process.env.PAYIN_API_SECRET || '',
+        baseUrl: process.env.SUNPAY_BASE_URL || 'https://sunpaytm.quest'
       },
       failureCount: 0,
       lastFailureTime: null,
@@ -190,13 +189,11 @@ export class PaymentService {
       if (mergedConfig.providers) {
         if (mergedConfig.providers.sunpay && mergedConfig.providers.sunpay.credentials) {
           mergedConfig.providers.sunpay.credentials.apiKey = 
-            process.env.SUNPAY_API_KEY || mergedConfig.providers.sunpay.credentials.apiKey;
+            process.env.PAYIN_API_KEY || mergedConfig.providers.sunpay.credentials.apiKey;
           mergedConfig.providers.sunpay.credentials.secret = 
-            process.env.SUNPAY_SECRET || mergedConfig.providers.sunpay.credentials.secret;
-          mergedConfig.providers.sunpay.credentials.merchantId = 
-            process.env.SUNPAY_MERCHANT_ID || mergedConfig.providers.sunpay.credentials.merchantId;
+            process.env.PAYIN_API_SECRET || mergedConfig.providers.sunpay.credentials.secret;
           mergedConfig.providers.sunpay.credentials.baseUrl = 
-            process.env.SUNPAY_BASE_URL || mergedConfig.providers.sunpay.credentials.baseUrl;
+            process.env.SUNPAY_BASE_URL || mergedConfig.providers.sunpay.credentials.baseUrl || 'https://sunpaytm.quest';
         }
         if (mergedConfig.providers.cryptodirect && mergedConfig.providers.cryptodirect.credentials) {
           mergedConfig.providers.cryptodirect.credentials.usdtTrc20Address = 

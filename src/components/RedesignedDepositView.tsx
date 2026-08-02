@@ -100,12 +100,23 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         })
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get('content-type') || '';
+      let data: any = {};
+      if (contentType.toLowerCase().includes('application/json')) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        console.warn("Non-JSON API response from /api/create-deposit:", text.substring(0, 200));
+        if (text.includes('Starting Server') || text.includes('<html')) {
+          throw new Error("Server is currently initializing. Please try again in a few seconds.");
+        }
+        throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
+      }
 
-      if (response.ok && data.success && data.paymentUrl) {
+      if (response.ok && data.success && data.checkout_url) {
         showToast("Redirecting to Sunpay checkout page...", "success");
-        // Immediate checkout redirect
-        window.location.href = data.paymentUrl;
+        // Immediate checkout redirect using official checkout_url
+        window.location.href = data.checkout_url;
       } else {
         throw new Error(data.error || "Failed to initialize Sunpay payment order.");
       }
@@ -311,9 +322,9 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
               </div>
             ) : (
               <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-                {userDeposits.map((dep) => (
+                {userDeposits.map((dep, idx) => (
                   <div
-                    key={dep.id || dep.depositId}
+                    key={dep.id || dep.depositId || `dep-${idx}`}
                     onClick={() => setSelectedTxForModal(dep)}
                     className="p-3 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl flex items-center justify-between gap-3 transition-all cursor-pointer"
                   >

@@ -17,17 +17,26 @@ export class SunpayProvider extends PaymentProviderInterface {
       currency: req.currency || 'INR',
       orderId: req.orderId,
       returnUrl: req.returnUrl,
-      notifyUrl: req.notifyUrl
+      notifyUrl: req.notifyUrl,
+      apiKey: this.config?.credentials?.apiKey,
+      secret: this.config?.credentials?.secret,
+      baseUrl: this.config?.credentials?.baseUrl,
+      customerName: req.customerName,
+      customerPhone: req.customerPhone,
+      customerEmail: req.customerEmail,
+      method: req.method || 'upi'
     });
 
     return {
       success: res.success,
+      error: res.error,
       paymentId: res.paymentId,
       depositId: res.depositId,
-      paymentUrl: res.paymentUrl,
+      paymentUrl: res.checkout_url || res.paymentUrl,
+      checkout_url: res.checkout_url || res.paymentUrl,
       amount: res.amount,
       currency: res.currency,
-      status: res.status || 'pending',
+      status: res.status || (res.success ? 'pending' : 'failed'),
       isMock: false
     };
   }

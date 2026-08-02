@@ -756,9 +756,9 @@ export const AdminDepositLedger = memo(function AdminDepositLedger({
                       {/* ID Column */}
                       <td className="p-4 font-mono font-semibold text-slate-300">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] uppercase text-slate-400">{d.id.substring(0, 12)}...</span>
+                          <span className="text-[10px] uppercase text-slate-400">{(d.id || '').substring(0, 12)}...</span>
                           <button
-                            onClick={() => handleCopy(d.id, `id-${d.id}`)}
+                            onClick={() => handleCopy(d.id || '', `id-${d.id}`)}
                             className="p-1 bg-white/5 hover:bg-white/10 rounded border border-white/5 text-slate-400 hover:text-white transition-colors cursor-pointer"
                             title="Copy Deposit ID"
                           >
@@ -771,7 +771,7 @@ export const AdminDepositLedger = memo(function AdminDepositLedger({
                       <td className="p-4">
                         <div className="flex flex-col">
                           <span className="font-semibold text-white">{player.name}</span>
-                          <span className="text-[10px] text-slate-500 font-mono select-all shrink-0">{d.playerId.substring(0, 8)}...</span>
+                          <span className="text-[10px] text-slate-500 font-mono select-all shrink-0">{(d.playerId || '').substring(0, 8)}...</span>
                         </div>
                       </td>
 
@@ -791,7 +791,7 @@ export const AdminDepositLedger = memo(function AdminDepositLedger({
                       <td className="p-4">
                         {d.walletAddress ? (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-slate-400 font-mono">{d.walletAddress.substring(0, 6)}...{d.walletAddress.slice(-4)}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">{(d.walletAddress || '').substring(0, 6)}...{(d.walletAddress || '').slice(-4)}</span>
                             <button
                               onClick={() => handleCopy(d.walletAddress || '', `wallet-${d.id}`)}
                               className="p-1 bg-white/5 hover:bg-white/10 rounded text-slate-400 hover:text-white border border-white/5 cursor-pointer"
@@ -809,7 +809,7 @@ export const AdminDepositLedger = memo(function AdminDepositLedger({
                       <td className="p-4">
                         {d.transactionHash ? (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-slate-400 font-mono">{d.transactionHash.substring(0, 6)}...{d.transactionHash.slice(-4)}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">{(d.transactionHash || '').substring(0, 6)}...{(d.transactionHash || '').slice(-4)}</span>
                             <button
                               onClick={() => handleCopy(d.transactionHash || '', `hash-${d.id}`)}
                               className="p-1 bg-white/5 hover:bg-white/10 rounded text-slate-400 hover:text-white border border-white/5 cursor-pointer"

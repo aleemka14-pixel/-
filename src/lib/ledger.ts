@@ -6,7 +6,9 @@ import { Transaction } from '../types';
  */
 export function generateDeterministicTxId(userId: string, type: string, referenceId: string): string {
   const cleanRef = (referenceId || '').replace(/[^a-zA-Z0-9]/g, '');
-  return `TX-${userId.substring(0, 5).toUpperCase()}-${type.toUpperCase()}-${cleanRef || Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const uId = (userId || 'user').substring(0, 5).toUpperCase();
+  const tType = (type || 'tx').toUpperCase();
+  return `TX-${uId}-${tType}-${cleanRef || Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 }
 
 interface LedgerParams {

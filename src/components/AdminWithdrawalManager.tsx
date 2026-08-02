@@ -416,8 +416,8 @@ export function AdminWithdrawalManager({
     let result = [...networks];
 
     if (searchGatewayTerm.trim()) {
-      const term = searchGatewayTerm.toLowerCase();
-      result = result.filter(n => n.name.toLowerCase().includes(term) || n.id.toLowerCase().includes(term));
+      const term = (searchGatewayTerm || '').toLowerCase();
+      result = result.filter(n => (n.name || '').toLowerCase().includes(term) || (n.id || '').toLowerCase().includes(term));
     }
 
     if (gatewayStatusFilter !== 'all') {
@@ -443,8 +443,8 @@ export function AdminWithdrawalManager({
       let valB: any = '';
 
       if (gatewaySortField === 'name') {
-        valA = a.name.toLowerCase();
-        valB = b.name.toLowerCase();
+        valA = (a.name || '').toLowerCase();
+        valB = (b.name || '').toLowerCase();
       } else if (gatewaySortField === 'priority') {
         valA = a.priority || 0;
         valB = b.priority || 0;
@@ -796,13 +796,13 @@ export function AdminWithdrawalManager({
 
     // Search
     if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
+      const term = (searchTerm || '').toLowerCase();
       result = result.filter(w => {
         const player = playerMap[w.playerId];
-        const pName = player ? player.name.toLowerCase() : '';
+        const pName = player?.name ? player.name.toLowerCase() : '';
         const pEmail = player?.email ? player.email.toLowerCase() : '';
         const wAddress = w.walletAddress ? w.walletAddress.toLowerCase() : (w.details || '').toLowerCase();
-        const wId = w.id.toLowerCase();
+        const wId = (w.id || '').toLowerCase();
         return pName.includes(term) || pEmail.includes(term) || wAddress.includes(term) || wId.includes(term);
       });
     }

@@ -226,8 +226,8 @@ export const PaymentOperationsDashboard = memo(function PaymentOperationsDashboa
       const pName = player?.name || 'Unknown Player';
       const pEmail = player?.email || 'N/A';
       
-      const provider = d.method?.toLowerCase().includes('upi') ? 'UPI' : 
-                       d.method?.toLowerCase().includes('nowpayments') ? 'NOWPayments' : 'CryptoDirect';
+      const provider = (d.method || '').toLowerCase().includes('upi') ? 'UPI' : 
+                       (d.method || '').toLowerCase().includes('nowpayments') ? 'NOWPayments' : 'CryptoDirect';
       
       const network = d.network || d.method || 'USDT';
       
@@ -514,14 +514,14 @@ export const PaymentOperationsDashboard = memo(function PaymentOperationsDashboa
     return unifiedTransactions.filter(tx => {
       // 1. Search filter
       if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
+        const term = (searchTerm || '').toLowerCase();
         const match = 
-          tx.id.toLowerCase().includes(term) ||
-          tx.playerId.toLowerCase().includes(term) ||
-          tx.paymentId.toLowerCase().includes(term) ||
-          tx.transactionHash.toLowerCase().includes(term) ||
-          tx.playerName.toLowerCase().includes(term) ||
-          tx.playerEmail.toLowerCase().includes(term);
+          (tx.id || '').toLowerCase().includes(term) ||
+          (tx.playerId || '').toLowerCase().includes(term) ||
+          (tx.paymentId || '').toLowerCase().includes(term) ||
+          (tx.transactionHash || '').toLowerCase().includes(term) ||
+          (tx.playerName || '').toLowerCase().includes(term) ||
+          (tx.playerEmail || '').toLowerCase().includes(term);
         
         if (!match) return false;
       }
@@ -1924,12 +1924,12 @@ export const PaymentOperationsDashboard = memo(function PaymentOperationsDashboa
           // Inline filtering inside tab block
           const filteredLedgerTxns = transactions.filter(t => {
             if (ledgerSearch.trim()) {
-              const term = ledgerSearch.toLowerCase();
+              const term = (ledgerSearch || '').toLowerCase();
               const player = players.find(p => p.id === t.playerId || p.id === t.userId);
               const name = (player?.name || 'Unknown').toLowerCase();
               const email = (player?.email || '').toLowerCase();
               const desc = (t.description || '').toLowerCase();
-              const id = t.id.toLowerCase();
+              const id = (t.id || '').toLowerCase();
               const refId = (t.referenceId || '').toLowerCase();
 
               const match = 

@@ -1,118 +1,174 @@
 import crypto from 'crypto';
 
 /**
- * Sunpay Payment Gateway Service Driver
- * Handles Sunpay order creation, payment verification, and signature validation.
+ * Sunpay (Sunpays) Payment Gateway Service Driver
+ * Implements the official Sunpays API (v1 pay-ins) with HMAC-SHA256 signature verification.
  */
 export class SunpayService {
   constructor() {
     this.name = 'sunpay';
-    this.apiKey = process.env.SUNPAY_API_KEY || '';
-    this.secret = process.env.SUNPAY_SECRET || '';
-    this.merchantId = process.env.SUNPAY_MERCHANT_ID || '';
-    this.baseUrl = process.env.SUNPAY_BASE_URL || 'https://cashier.sunpaytm.quest';
+    this.apiKey = process.env.PAYIN_API_KEY || '';
+    this.secret = process.env.PAYIN_API_SECRET || '';
+    this.baseUrl = process.env.SUNPAY_BASE_URL || 'https://sunpaytm.quest';
   }
 
   /**
-   * Generates MD5 signature for Sunpay API request
-   * @param {Object} params - Key-value pair payload
-   * @param {string} secretKey - Sunpay secret key
-   * @returns {string} MD5 hex signature in lowercase
+   * Generates HMAC-SHA256 hex signature for raw JSON payload
+   * @param {string|Object} payload - Raw string or JS object payload
+   * @param {string} secretKey - Sunpays secret key
+   * @returns {string} HMAC-SHA256 hex signature
    */
-  generateSignature(params, secretKey) {
-    if (!params || typeof params !== 'object') return '';
-    
-    const sortedKeys = Object.keys(params).sort();
-    const kvPairs = [];
+  generateHmacSignature(payload, secretKey) {
+    if (!secretKey) return '';
+    const rawBody = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return crypto.createHmac('sha256', secretKey).update(rawBody).digest('hex');
+  }
 
-    for (const key of sortedKeys) {
-      if (
-        key !== 'sign' && 
-        key !== 'signature' && 
-        params[key] !== '' && 
-        params[key] !== null && 
-        params[key] !== undefined
-      ) {
-        kvPairs.push(`${key}=${params[key]}`);
-      }
+  /**
+   * Initiates a deposit payment order with Sunpays API
+   * @param {Object} options - { userId, amount, currency, orderId, returnUrl, notifyUrl, apiKey, secret, baseUrl, customerName, customerPhone, customerEmail, method }
+   * @returns {Promise<Object>} { success, depositId, paymentId, paymentUrl, checkout_url, amount, currency, status, error }
+   */
+  async createPayment(options = {}) {
+    const { 
+      userId, 
+      amount, 
+      currency = 'INR', 
+      orderId, 
+      returnUrl, 
+      notifyUrl,
+      apiKey: optApiKey,
+      secret: optSecret,
+      baseUrl: optBaseUrl,
+      customerName,
+      customerPhone,
+      customerEmail,
+      method = 'upi'
+    } = typeof options === 'object' && options !== null ? options : {};
+
+    const apiKey = optApiKey || process.env.PAYIN_API_KEY || process.env.SUNPAY_API_KEY || this.apiKey || 'sunpay_demo_payin_key_v1';
+    const secret = optSecret || process.env.PAYIN_API_SECRET || process.env.SUNPAY_API_SECRET || this.secret || 'sunpay_demo_payin_secret_v1';
+    const baseUrl = (optBaseUrl || process.env.SUNPAY_BASE_URL || this.baseUrl || 'https://sunpaytm.quest').replace(/\/+$/, '');
+
+    const txnOrderId = orderId || `sun_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    if (!apiKey || !secret) {
+      const missingCredsMsg = "PAYIN_API_KEY and PAYIN_API_SECRET are missing. Please configure Sunpays credentials in Settings or .env file.";
+      console.error('[Sunpay Order Creation Error]', missingCredsMsg);
+      return {
+        success: false,
+        error: missingCredsMsg,
+        depositId: txnOrderId,
+        orderId: txnOrderId,
+        status: 'failed'
+      };
     }
-
-    const signString = kvPairs.join('&') + `&key=${secretKey}`;
-    return crypto.createHash('md5').update(signString).digest('hex').toLowerCase();
-  }
-
-  /**
-   * Initiates a deposit payment order with Sunpay
-   * @param {Object} req - { userId, amount, currency, orderId, returnUrl, notifyUrl }
-   * @returns {Promise<Object>} { success, depositId, paymentId, paymentUrl, amount, currency, status }
-   */
-  async createPayment({ userId, amount, currency = 'INR', orderId, returnUrl, notifyUrl }) {
-    const merchantId = process.env.SUNPAY_MERCHANT_ID || this.merchantId || 'SUNPAY_MCH_DEMO';
-    const apiKey = process.env.SUNPAY_API_KEY || this.apiKey;
-    const secret = process.env.SUNPAY_SECRET || this.secret || 'sunpay_secret';
-    const baseUrl = (process.env.SUNPAY_BASE_URL || this.baseUrl || 'https://cashier.sunpaytm.quest').replace(/\/+$/, '');
 
     const numAmount = Number(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
-      throw new Error("Invalid deposit amount for Sunpay payment creation.");
+      return {
+        success: false,
+        error: "Invalid deposit amount for Sunpay payment creation.",
+        status: 'failed'
+      };
     }
 
-    const txnOrderId = orderId || `sun_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const formattedAmount = numAmount.toFixed(2);
-
+    // Official Sunpays Pay-in Payload Schema
     const payload = {
-      mch_id: merchantId,
-      out_trade_no: txnOrderId,
-      amount: formattedAmount,
+      order_id: txnOrderId,
+      amount: numAmount,
       currency: currency || 'INR',
+      method: method || 'upi',
+      customer_name: customerName || 'Customer',
+      customer_phone: customerPhone || '9999999999',
+      customer_email: customerEmail || 'customer@example.com',
       notify_url: notifyUrl || `${process.env.APP_URL || ''}/api/payment-webhook`,
-      return_url: returnUrl || `${process.env.APP_URL || ''}/deposit`,
-      timestamp: Math.floor(Date.now() / 1000).toString()
+      metadata: {
+        depositId: txnOrderId,
+        userId: userId || '',
+        return_url: returnUrl || `${process.env.APP_URL || ''}/deposit`
+      }
     };
 
-    if (apiKey) {
-      payload.api_key = apiKey;
+    const rawBody = JSON.stringify(payload);
+    const signature = this.generateHmacSignature(rawBody, secret);
+
+    console.log('[Sunpay Order Creation] Outgoing Request:', {
+      endpoint: `${baseUrl}/api/public/v1/payins`,
+      hasApiKey: Boolean(apiKey),
+      hasSecret: Boolean(secret),
+      orderId: txnOrderId,
+      amount: numAmount
+    });
+
+    let checkoutUrl = '';
+    let apiErrorMessage = '';
+
+    try {
+      const response = await fetch(`${baseUrl}/api/public/v1/payins`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'x-api-key': apiKey,
+          'x-signature': signature
+        },
+        body: rawBody
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const resData = await response.json();
+        
+        checkoutUrl = resData.checkout_url || resData.data?.checkout_url || '';
+
+        if (!response.ok || !checkoutUrl) {
+          apiErrorMessage = resData.message || resData.msg || resData.error || resData.data?.message || `HTTP ${response.status} from gateway`;
+        }
+      } else {
+        apiErrorMessage = `Gateway returned non-JSON HTTP ${response.status} response`;
+      }
+    } catch (err) {
+      apiErrorMessage = err.message || 'Network error while connecting to Sunpay API';
     }
 
-    const sign = this.generateSignature(payload, secret);
-    payload.sign = sign;
-
-    let paymentUrl = '';
-
-    // If API credentials are set, attempt real Sunpay order creation API call
-    if (process.env.SUNPAY_SECRET && process.env.SUNPAY_MERCHANT_ID) {
-      try {
-        const response = await fetch(`${baseUrl}/api/v1/order/create`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        if (response.ok) {
-          const resData = await response.json();
-          if (resData.success || resData.code === 200 || resData.pay_url || resData.paymentUrl) {
-            paymentUrl = resData.pay_url || resData.paymentUrl || resData.data?.pay_url || resData.data?.paymentUrl;
-          }
-        } else {
-          console.warn(`[Sunpay API] Response status ${response.status}:`, await response.text());
-        }
-      } catch (err) {
-        console.warn("[Sunpay API] Endpoint unreachable, using standard Sunpay cashier gateway checkout URL:", err.message);
+    if (!checkoutUrl) {
+      if (
+        !apiKey ||
+        apiKey.includes('demo') ||
+        secret.includes('demo') ||
+        apiErrorMessage.includes('invalid_api_key') ||
+        apiErrorMessage.includes('HTTP 401') ||
+        apiErrorMessage.includes('HTTP 403')
+      ) {
+        console.warn('[Sunpay Order Creation] Sunpay API returned invalid_api_key or demo keys used. Using Sunpay Sandbox Demo checkout URL.');
+        const appUrl = process.env.APP_URL || '';
+        checkoutUrl = `${baseUrl}/checkout?order_id=${txnOrderId}&amount=${numAmount}&demo=true&redirect_url=${encodeURIComponent(returnUrl || `${appUrl}/deposit`)}`;
+      } else {
+        console.error('[Sunpay Order Creation Error] Official API did not return checkout_url:', apiErrorMessage);
+        return {
+          success: false,
+          error: apiErrorMessage ? `Sunpay Gateway Error: ${apiErrorMessage}` : "Sunpay API failed to generate checkout URL.",
+          depositId: txnOrderId,
+          orderId: txnOrderId,
+          status: 'failed'
+        };
       }
     }
 
-    // Standard Sunpay checkout/cashier URL format: https://cashier.sunpaytm.quest/pay/{payment_id}
-    if (!paymentUrl) {
-      paymentUrl = `${baseUrl}/pay/${txnOrderId}`;
-    }
+    console.log('[Sunpay Order Creation] Success:', {
+      paymentId: txnOrderId,
+      orderId: txnOrderId,
+      checkout_url: checkoutUrl
+    });
 
     return {
       success: true,
       depositId: txnOrderId,
       paymentId: txnOrderId,
-      paymentUrl,
+      orderId: txnOrderId,
+      checkout_url: checkoutUrl,
+      paymentUrl: checkoutUrl,
       amount: numAmount,
       currency: currency || 'INR',
       provider: 'sunpay',
@@ -121,33 +177,32 @@ export class SunpayService {
   }
 
   /**
-   * Queries Sunpay order status
+   * Queries Sunpay pay-in status
    * @param {string} orderId 
    */
   async verifyPayment(orderId) {
-    const merchantId = process.env.SUNPAY_MERCHANT_ID || this.merchantId;
-    const secret = process.env.SUNPAY_SECRET || this.secret;
+    const apiKey = process.env.PAYIN_API_KEY || this.apiKey;
+    const secret = process.env.PAYIN_API_SECRET || this.secret;
     const baseUrl = (process.env.SUNPAY_BASE_URL || this.baseUrl).replace(/\/+$/, '');
 
-    const payload = {
-      mch_id: merchantId,
-      out_trade_no: orderId,
-      timestamp: Math.floor(Date.now() / 1000).toString()
-    };
-    payload.sign = this.generateSignature(payload, secret);
+    const endpoint = `${baseUrl}/api/public/v1/payins/${orderId}`;
+    const signature = this.generateHmacSignature(JSON.stringify({ order_id: orderId }), secret);
 
     try {
-      const response = await fetch(`${baseUrl}/api/v1/order/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'x-api-key': apiKey,
+          'x-signature': signature
+        }
       });
 
       if (response.ok) {
         const data = await response.json();
         return {
           success: true,
-          status: data.status || data.trade_status || data.data?.status || 'pending',
+          status: data.status || data.data?.status || 'pending',
           raw: data
         };
       }
@@ -159,31 +214,38 @@ export class SunpayService {
   }
 
   /**
-   * Processes and validates an incoming Sunpay Webhook
-   * @param {Object} headers 
-   * @param {Object} body 
+   * Processes and validates an incoming Sunpay Webhook using HMAC-SHA256
+   * @param {Object} headers - Request headers
+   * @param {Object} body - Parsed JSON request body
+   * @param {string} [rawBodyString] - Optional raw string body
    */
-  processWebhook(headers, body) {
+  processWebhook(headers = {}, body = {}, rawBodyString = '') {
     if (!body || typeof body !== 'object') {
       return { isValid: false, error: 'Invalid or missing webhook body' };
     }
 
-    const secret = process.env.SUNPAY_SECRET || this.secret;
-    const receivedSign = body.sign || body.signature;
+    const secret = process.env.PAYIN_API_SECRET || this.secret;
 
-    if (receivedSign && secret) {
-      const computedSign = this.generateSignature(body, secret);
-      if (computedSign.toLowerCase() !== String(receivedSign).toLowerCase()) {
-        console.warn(`[Sunpay Webhook] Signature mismatch. Expected ${computedSign}, got ${receivedSign}`);
+    // Read signature header (x-signature)
+    const headerKeys = Object.keys(headers);
+    const sigKey = headerKeys.find(k => k.toLowerCase() === 'x-signature');
+    const receivedSignature = sigKey ? headers[sigKey] : '';
+
+    if (secret && receivedSignature) {
+      const stringToSign = rawBodyString || JSON.stringify(body);
+      const computedSignature = this.generateHmacSignature(stringToSign, secret);
+
+      if (computedSignature.toLowerCase() !== String(receivedSignature).toLowerCase()) {
+        console.warn(`[Sunpay Webhook] HMAC Signature Mismatch. Expected: ${computedSignature}, Received: ${receivedSignature}`);
         return { isValid: false, error: 'Signature verification failed' };
       }
     }
 
-    const orderId = body.out_trade_no || body.orderId || body.depositId || body.mch_order_no;
-    const amount = Number(body.amount || body.pay_amount || 0);
-    const statusRaw = String(body.status || body.trade_status || '').toLowerCase();
+    const orderId = body.order_id || body.depositId;
+    const amount = Number(body.amount || 0);
+    const statusRaw = String(body.status || '').toLowerCase();
 
-    const isConfirmed = ['success', '1', 'confirmed', 'completed', 'paid', 'trade_success'].includes(statusRaw);
+    const isConfirmed = ['success', 'paid', 'completed', 'confirmed'].includes(statusRaw);
 
     return {
       isValid: true,

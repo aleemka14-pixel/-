@@ -3288,7 +3288,7 @@ export default function App() {
                     
                     <button 
                       onClick={async () => {
-                        if (!adminEmails.includes(adminEmailInput.toLowerCase())) {
+                        if (!adminEmails.includes((adminEmailInput || '').toLowerCase())) {
                           alert('Authentication Failed: Unauthorized Identifier');
                           return;
                         }
@@ -5084,31 +5084,18 @@ const OldVIPView = memo(function OldVIPView({ state, currentPlayer, preferredCur
 
 
 
-const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, onDeposit, playSound, onResetGraph, preferredCurrency, rates, onSelectCurrency }: { 
-  state: AppState, 
-  currentPlayer: Player,
-  onWithdraw: (
-    amt: number, 
-    method: string, 
-    details: string,
-    blockchain?: string,
-    walletAddress?: string,
-    fee?: number,
-    finalAmount?: number,
-    preferredCurrency?: string,
-    exchangeRate?: number,
-    preferredAmount?: number
-  ) => void,
-  onDeposit: (amt: number, method: string, details: string, screenshotUrl?: string, existingId?: string, txHash?: string) => void,
-  playSound: (sound: 'CLICK' | 'WIN' | 'LOSE' | 'BET' | 'SPIN') => void,
-  onResetGraph: () => Promise<void>,
-  preferredCurrency?: string,
-  rates?: Record<string, number>,
-  onSelectCurrency: (code: string) => void
-}) {
+const WalletView = memo(function WalletView() {
+  return null;
+});
+
+const LegacyWalletView = memo(function LegacyWalletView({ state, currentPlayer, preferredCurrency, rates, onDeposit, onWithdraw, playSound, onResetGraph, onSelectCurrency }: any) {
   const [modalType, setModalType] = useState<'deposit' | 'withdraw' | null>(null);
   const [showDepositView, setShowDepositView] = useState(false);
   const [showWithdrawView, setShowWithdrawView] = useState(false);
+  const [amount, setAmount] = useState(0);
+  const [method, setMethod] = useState('');
+  const [details, setDetails] = useState('');
+  const [screenshot, setScreenshot] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (modalType === 'deposit') {
@@ -5119,10 +5106,7 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
       setModalType(null);
     }
   }, [modalType]);
-  const [amount, setAmount] = useState(0);
-  const [method, setMethod] = useState('');
-  const [details, setDetails] = useState('');
-  const [screenshot, setScreenshot] = useState<string | undefined>(undefined);
+
   
   // Custom structured Bank Account fields for withdrawals
   const [bankName, setBankName] = useState('');
@@ -5467,8 +5451,8 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
             {(state.withdrawals.filter(w => w.status === 'pending' && w.playerId === currentPlayer?.id).length > 0 || 
               state.deposits.filter(d => d.status === 'pending' && d.playerId === currentPlayer?.id).length > 0) && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {state.deposits.filter(d => d.status === 'pending' && d.playerId === currentPlayer?.id).map(req => (
-                  <div key={req.id} className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between animate-pulse">
+                {state.deposits.filter(d => d.status === 'pending' && d.playerId === currentPlayer?.id).map((req, idx) => (
+                  <div key={req.id || `pending-dep-${idx}`} className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between animate-pulse">
                     <div className="flex items-center gap-4">
                       <div className="bg-emerald-500/20 p-2 rounded-xl">
                         <Clock className="w-5 h-5 text-emerald-400" />
@@ -5481,8 +5465,8 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
                     <span className="text-[10px] text-slate-500 font-mono">Verifying...</span>
                   </div>
                 ))}
-                {state.withdrawals.filter(w => w.status === 'pending' && w.playerId === currentPlayer?.id).map(req => (
-                  <div key={req.id} className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between animate-pulse">
+                {state.withdrawals.filter(w => w.status === 'pending' && w.playerId === currentPlayer?.id).map((req, idx) => (
+                  <div key={req.id || `pending-wd-${idx}`} className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between animate-pulse">
                     <div className="flex items-center gap-4">
                       <div className="bg-amber-500/20 p-2 rounded-xl">
                         <Clock className="w-5 h-5 text-amber-400" />
@@ -5575,7 +5559,7 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
                             initial={{ opacity: 0, x: -10 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            key={txn.id} 
+                            key={txn.id || `txn-${idx}`} 
                             className="hover:bg-white/[0.02] transition-colors"
                           >
                             <td className="px-8 py-5">
@@ -5736,11 +5720,11 @@ const WalletView = memo(function WalletView({ state, currentPlayer, onWithdraw, 
               <div className="space-y-6 relative z-10 border-t border-white/5 pt-6">
                 <h4 className="text-sm font-black uppercase text-slate-500 tracking-wider">Local Fiat Currencies</h4>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-3">
-                  {Object.values(SUPPORTED_CURRENCIES).map((curr) => {
+                  {Object.values(SUPPORTED_CURRENCIES).map((curr, idx) => {
                     const isSelected = curr.code === currentCurrency;
                     return (
                       <button
-                        key={curr.code}
+                        key={curr.code || `curr-${idx}`}
                         type="button"
                         onClick={() => { onSelectCurrency(curr.code); playSound('CLICK'); }}
                         className={`flex items-center gap-3 py-2 px-1.5 transition-all text-left cursor-pointer group rounded-lg hover:bg-white/[0.03] ${

@@ -14,7 +14,8 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { paymentServiceInstance } from '../../payment/services/payment-service.js';
-import { walletService } from '../../services/wallet-service.js';
+import { walletService as ledgerWalletService } from '../../services/wallet-service.js';
+import { walletService as cryptoWalletService } from '../../wallet/wallet-service.js';
 
 /**
  * PRODUCTION-GRADE RELIABILITY LAYER & SCHEDULER
@@ -295,7 +296,7 @@ export class ReliabilityManager {
     // 2. Diagnosing Wallet Provider Connection and Liquidity Balances
     try {
       const walletStart = Date.now();
-      const walletDiag = await walletService.getHealthStatus();
+      const walletDiag = await cryptoWalletService.getHealthStatus();
       healthDiagnostics.services.walletProvider = {
         status: walletDiag.status === 'healthy' ? 'healthy' : 'degraded',
         activeProvider: walletDiag.provider || 'mock',
@@ -562,7 +563,7 @@ export class ReliabilityManager {
         } else {
           // Check actual transaction hash with active Wallet provider status if available
           if (transactionHash) {
-            const status = await walletService.getTransactionStatus(transactionHash);
+            const status = await cryptoWalletService.getTransactionStatus(transactionHash);
             if (status === 'confirmed' || status === 'completed') {
               isConfirmed = true;
             }
@@ -617,7 +618,7 @@ export class ReliabilityManager {
             });
 
             // Credit balance via Wallet Service
-            await walletService.deposit(
+            await ledgerWalletService.deposit(
               playerId,
               dbAmount,
               {
@@ -701,7 +702,7 @@ export class ReliabilityManager {
         
         try {
           // Safely execute blockchain transfer broadcast
-          const txReceipt = await walletService.sendTransaction(
+          const txReceipt = await cryptoWalletService.sendTransaction(
             w.network || 'USDT TRC20',
             w.withdrawalAddress,
             w.amount
@@ -752,7 +753,7 @@ export class ReliabilityManager {
       const w = wDoc.data();
       if (w.transactionHash && !w.blockchainVerified) {
         try {
-          const chainStatus = await walletService.getTransactionStatus(w.transactionHash);
+          const chainStatus = await cryptoWalletService.getTransactionStatus(w.transactionHash);
           if (chainStatus === 'confirmed' || chainStatus === 'completed') {
             await updateDoc(doc(this.db, 'withdrawals', w.id), {
               blockchainVerified: true,

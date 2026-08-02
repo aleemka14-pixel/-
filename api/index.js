@@ -60,34 +60,47 @@ const routes = {
  * Consolidates all backend API routes under 1 serverless function to prevent Vercel Hobby tier function limit errors.
  */
 export default async function handler(req, res) {
-  const rawUrl = req.url || '/api';
-  const urlObj = new URL(rawUrl, 'http://localhost');
-  let pathname = urlObj.pathname;
+  res.setHeader('Content-Type', 'application/json');
+  try {
+    const rawUrl = req.originalUrl || req.url || '/api';
+    const urlObj = new URL(rawUrl, 'http://localhost');
+    let pathname = urlObj.pathname;
 
-  if (pathname.length > 1 && pathname.endsWith('/')) {
-    pathname = pathname.slice(0, -1);
-  }
-  if (pathname.endsWith('.js')) {
-    pathname = pathname.slice(0, -3);
-  }
+    if (pathname.length > 1 && pathname.endsWith('/')) {
+      pathname = pathname.slice(0, -1);
+    }
+    if (pathname.endsWith('.js')) {
+      pathname = pathname.slice(0, -3);
+    }
 
-  const routeHandler = routes[pathname];
+    if (!pathname.startsWith('/api')) {
+      pathname = '/api' + (pathname.startsWith('/') ? pathname : '/' + pathname);
+    }
 
-  if (routeHandler) {
-    return await routeHandler(req, res);
-  }
+    const routeHandler = routes[pathname];
 
-  if (pathname === '/api' || pathname === '') {
-    return res.status(200).json({
-      status: 'online',
-      gateway: 'Centralized Serverless API Gateway',
-      timestamp: Date.now()
+    if (routeHandler) {
+      return await routeHandler(req, res);
+    }
+
+    if (pathname === '/api' || pathname === '') {
+      return res.status(200).json({
+        status: 'online',
+        gateway: 'Centralized Serverless API Gateway',
+        timestamp: Date.now()
+      });
+    }
+
+    return res.status(404).json({
+      success: false,
+      error: `API Route '${pathname}' not found.`,
+      errorCode: 'NOT_FOUND'
+    });
+  } catch (err) {
+    console.error('[Central API Gateway Error]:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Internal Serverless Gateway Error'
     });
   }
-
-  return res.status(404).json({
-    success: false,
-    error: `API Route '${pathname}' not found.`,
-    errorCode: 'NOT_FOUND'
-  });
 }

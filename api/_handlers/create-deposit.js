@@ -12,6 +12,7 @@ import { doc, setDoc, collection, query, where, getDocs } from 'firebase/firesto
  * Integrates Sunpay as the deposit payment gateway.
  */
 export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -21,7 +22,7 @@ export default async function handler(req, res) {
   );
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return res.status(200).json({ success: true });
   }
 
   if (req.method !== 'POST') {
@@ -33,7 +34,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { userId, playerId, amount, network, provider, currency } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch (e) {
+        body = {};
+      }
+    }
+    const { userId, playerId, amount, network, provider, currency } = body || {};
     const resolvedUserId = userId || playerId;
 
     if (!resolvedUserId) {
@@ -71,10 +80,9 @@ export default async function handler(req, res) {
           name: 'Sunpay Gateway',
           enabled: true,
           credentials: {
-            apiKey: process.env.SUNPAY_API_KEY || '',
-            secret: process.env.SUNPAY_SECRET || '',
-            merchantId: process.env.SUNPAY_MERCHANT_ID || '',
-            baseUrl: process.env.SUNPAY_BASE_URL || 'https://cashier.sunpaytm.quest'
+            apiKey: process.env.PAYIN_API_KEY || '',
+            secret: process.env.PAYIN_API_SECRET || '',
+            baseUrl: process.env.SUNPAY_BASE_URL || 'https://sunpaytm.quest'
           },
           minDeposit: 100,
           maxDeposit: 100000
@@ -150,7 +158,7 @@ export default async function handler(req, res) {
 
     const timestamp = Date.now();
     const paymentId = gatewayResponse.paymentId || gatewayResponse.depositId;
-    const paymentUrl = gatewayResponse.paymentUrl;
+    const checkout_url = gatewayResponse.checkout_url;
 
     const depositDoc = {
       depositId: paymentId,
@@ -163,7 +171,7 @@ export default async function handler(req, res) {
       method: 'Sunpay Gateway',
       provider: 'sunpay',
       status: 'pending',
-      paymentUrl: paymentUrl,
+      checkout_url: checkout_url,
       walletAddress: gatewayResponse.walletAddress || '',
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -189,7 +197,7 @@ export default async function handler(req, res) {
       amount: numAmount,
       currency: currency || 'INR',
       status: 'pending',
-      paymentUrl: paymentUrl,
+      checkout_url: checkout_url,
       createdAt: timestamp,
       updatedAt: timestamp
     });

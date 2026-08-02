@@ -21,19 +21,32 @@ async function startServer() {
   app.use("/api/admin/*", adminRateLimit);
 
   // Central Gateway router in /api/index.js
-  app.all("/api/*", async (req, res) => {
+  app.use("/api", async (req, res, next) => {
     try {
+      res.setHeader("Content-Type", "application/json");
       const fullPath = path.join(process.cwd(), "api", "index.js");
       const module = await import(`file://${fullPath}`);
       if (module.default && typeof module.default === "function") {
         await module.default(req, res);
       } else {
-        res.status(404).json({ success: false, error: `API handler for ${req.path} not found.` });
+        res.status(404).json({ success: false, error: `API handler for ${req.originalUrl || req.path} not found.` });
       }
     } catch (err: any) {
-      console.error(`Error in API handler for ${req.path}:`, err);
-      res.status(500).json({ success: false, error: err.message || "Internal Server Error" });
+      console.error(`Error in API handler for ${req.originalUrl || req.path}:`, err);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: err.message || "Internal Server Error" });
+      }
     }
+  });
+
+  // Global Express JSON Error Handler for API routes
+  app.use("/api/*", (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Express API Error caught:", err);
+    res.setHeader("Content-Type", "application/json");
+    res.status(err.status || err.statusCode || 500).json({
+      success: false,
+      error: err.message || "An internal server error occurred."
+    });
   });
 
   // Vite middleware for development

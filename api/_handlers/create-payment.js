@@ -11,6 +11,7 @@ import { doc, setDoc } from 'firebase/firestore';
  * Vercel Serverless Function Handler: create-payment
  */
 export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');

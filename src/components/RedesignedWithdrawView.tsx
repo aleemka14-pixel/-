@@ -62,7 +62,7 @@ const formatCurrencyValue = (val: number, code: string, rates: Record<string, nu
 const validateCryptoAddress = (address: string, networkId: string): boolean => {
   const addr = address.trim();
   if (!addr) return false;
-  switch (networkId.toLowerCase()) {
+  switch ((networkId || '').toLowerCase()) {
     case 'tron':
     case 'trc20':
       return /^T[a-km-zA-HJ-NP-Z1-9]{33}$/.test(addr);
@@ -540,9 +540,9 @@ export const RedesignedWithdrawView = memo(function RedesignedWithdrawView({
   const filteredHistory = useMemo(() => {
     return (withdrawalsHistory || []).filter(item => {
       // 1. Search filter
-      const searchLower = historySearch.toLowerCase();
+      const searchLower = (historySearch || '').toLowerCase();
       const matchSearch = !historySearch || 
-        item.id.toLowerCase().includes(searchLower) ||
+        (item.id || '').toLowerCase().includes(searchLower) ||
         (item.walletAddress || item.details || '').toLowerCase().includes(searchLower) ||
         (item.blockchain || item.method || '').toLowerCase().includes(searchLower);
 
@@ -1377,10 +1377,10 @@ export const RedesignedWithdrawView = memo(function RedesignedWithdrawView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60 font-medium">
-                  {filteredHistory.map((item) => {
+                  {filteredHistory.map((item, idx) => {
                     const maskedDest = formatMaskedDestination(item.details || item.walletAddress || '', item.method, item.blockchain);
                     return (
-                      <tr key={item.id} className="hover:bg-zinc-900/60 transition-colors">
+                      <tr key={item.id || `wd-hist-${idx}`} className="hover:bg-zinc-900/60 transition-colors">
                         <td className="py-2.5 px-3 text-zinc-400 whitespace-nowrap">
                           {new Date(item.timestamp || item.createdAt || Date.now()).toLocaleDateString()}
                           <span className="block text-[10px] text-zinc-500 font-mono">
