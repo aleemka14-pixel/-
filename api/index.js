@@ -20,11 +20,6 @@ import walletDepositHandler from './_handlers/wallet/deposit.js';
 import walletTransactionHandler from './_handlers/wallet/transaction.js';
 import walletWithdrawHandler from './_handlers/wallet/withdraw.js';
 
-import aviatorPlaceBetHandler from './_handlers/aviator/place-bet.js';
-import aviatorCashoutHandler from './_handlers/aviator/cashout.js';
-import aviatorCancelBetHandler from './_handlers/aviator/cancel-bet.js';
-import aviatorStateHandler from './_handlers/aviator/state.js';
-
 const routes = {
   '/api/create-deposit': createDepositHandler,
   '/api/create-payment': createPaymentHandler,
@@ -48,11 +43,6 @@ const routes = {
   '/api/wallet/deposit': walletDepositHandler,
   '/api/wallet/transaction': walletTransactionHandler,
   '/api/wallet/withdraw': walletWithdrawHandler,
-
-  '/api/aviator/place-bet': aviatorPlaceBetHandler,
-  '/api/aviator/cashout': aviatorCashoutHandler,
-  '/api/aviator/cancel-bet': aviatorCancelBetHandler,
-  '/api/aviator/state': aviatorStateHandler,
 };
 
 /**

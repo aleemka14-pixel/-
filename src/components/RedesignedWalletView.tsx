@@ -27,7 +27,15 @@ import {
   Check,
   Search,
   ChevronDown,
-  Lock
+  Lock,
+  Globe,
+  Volume2,
+  VolumeX,
+  Sparkles,
+  Cpu,
+  Zap,
+  Activity,
+  Key
 } from 'lucide-react';
 import { AppState, Player, Transaction, WithdrawalRequest, DepositRequest, DepositNetwork, WithdrawalNetwork } from '../types';
 import { RedesignedDepositView } from './RedesignedDepositView';
@@ -232,6 +240,12 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
   const [displayCryptoInFiat, setDisplayCryptoInFiat] = useState<boolean>(() => {
     return localStorage.getItem('wallet_display_crypto_in_fiat') !== 'false';
   });
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('wallet_sound_enabled') !== 'false';
+  });
+  const [ultraPerfMode, setUltraPerfMode] = useState<boolean>(() => {
+    return localStorage.getItem('wallet_ultra_perf') === 'true';
+  });
   
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -247,6 +261,14 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
   useEffect(() => {
     localStorage.setItem('wallet_display_crypto_in_fiat', displayCryptoInFiat.toString());
   }, [displayCryptoInFiat]);
+
+  useEffect(() => {
+    localStorage.setItem('wallet_sound_enabled', soundEnabled.toString());
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('wallet_ultra_perf', ultraPerfMode.toString());
+  }, [ultraPerfMode]);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -501,27 +523,33 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
 
       {/* Sub-Header bar / Mode selector */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-slate-950/40 border border-white/5 rounded-3xl backdrop-blur-md">
-        <div className="flex items-center gap-1.5 p-1 bg-black/60 rounded-2xl border border-white/5 w-full sm:w-auto">
-          <button
+        <div className="flex items-center gap-1.5 p-1 bg-black/60 rounded-2xl border border-white/10 w-full sm:w-auto">
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.95 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             onClick={() => { setActiveTab('overview'); playSound('CLICK'); }}
-            className={`flex-1 sm:flex-initial px-6 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all duration-300 ${
+            className={`flex-1 sm:flex-initial px-6 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all duration-200 cursor-pointer gpu-layer ${
               activeTab === 'overview'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-black shadow-lg shadow-emerald-500/10 font-bold'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-black shadow-lg shadow-emerald-500/20 font-black'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
             }`}
           >
             Overview
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.95 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             onClick={() => { setActiveTab('settings'); playSound('CLICK'); }}
-            className={`flex-1 sm:flex-initial px-6 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all duration-300 ${
+            className={`flex-1 sm:flex-initial px-6 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all duration-200 cursor-pointer gpu-layer ${
               activeTab === 'settings'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-black shadow-lg shadow-emerald-500/10 font-bold'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-black shadow-lg shadow-emerald-500/20 font-black'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
             }`}
           >
-            Preferences
-          </button>
+            Settings
+          </motion.button>
         </div>
 
         {/* Global actions row (Refresh rate, preferred currency, etc.) */}
@@ -590,20 +618,28 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
 
                 {/* Primary Touch-Friendly Action Buttons */}
                 <div className="relative z-10 grid grid-cols-2 gap-4 mt-4 sm:max-w-md">
-                  <button 
+                  <motion.button 
+                    whileHover={{ scale: 1.03, y: -2 }}
+                    whileTap={{ scale: 0.95 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                     onClick={() => { setShowDepositView(true); playSound('CLICK'); }}
-                    className="flex items-center justify-center gap-2.5 bg-emerald-500 text-black py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-emerald-400 active:scale-95 transition-all shadow-xl shadow-emerald-500/20 cursor-pointer text-center"
+                    className="flex items-center justify-center gap-2.5 bg-gradient-to-r from-emerald-500 to-teal-400 text-black py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest hover:brightness-110 shadow-xl shadow-emerald-500/20 cursor-pointer text-center relative overflow-hidden group border border-emerald-300/40"
                   >
                     <ArrowDownLeft className="w-4 h-4 stroke-[3px]" />
                     Deposit
-                  </button>
-                  <button 
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 pointer-events-none" />
+                  </motion.button>
+                  <motion.button 
+                    whileHover={{ scale: 1.03, y: -2 }}
+                    whileTap={{ scale: 0.95 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                     onClick={() => { setShowWithdrawView(true); playSound('CLICK'); }}
-                    className="flex items-center justify-center gap-2.5 bg-white/5 border border-white/10 text-white py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/10 active:scale-95 transition-all cursor-pointer text-center"
+                    className="flex items-center justify-center gap-2.5 bg-white/10 border border-white/20 text-white py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/15 backdrop-blur-md shadow-lg shadow-black/40 cursor-pointer text-center relative overflow-hidden group"
                   >
                     <ArrowUpRight className="w-4 h-4 stroke-[3px]" />
                     Withdraw
-                  </button>
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 pointer-events-none" />
+                  </motion.button>
                 </div>
               </div>
 
@@ -1004,115 +1040,275 @@ export const RedesignedWalletView = memo(function RedesignedWalletView({
         {activeTab === 'settings' && (
           <motion.div
             key="settings"
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            transition={{ duration: 0.2 }}
-            className="grid grid-cols-1 lg:grid-cols-3 gap-8"
+            initial={{ opacity: 0, y: 16, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -12, scale: 0.985 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="space-y-8 gpu-layer"
           >
-            {/* Left side settings: display preferences */}
-            <div className="space-y-6 lg:col-span-1">
-              <div className="p-6 sm:p-8 bg-slate-950/80 border border-white/5 rounded-[2.5rem] space-y-6">
-                <h4 className="text-sm font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-emerald-400" />
-                  Display Preferences
-                </h4>
-                
-                {/* Preference Toggle 1: Hide zero balances */}
-                <div className="flex items-center justify-between p-4 bg-white/[0.01] border border-white/5 rounded-2xl hover:border-white/10 transition-colors">
-                  <div className="max-w-[180px]">
-                    <p className="font-bold text-white text-xs">Hide Zero Balances</p>
-                    <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">Filter out empty crypto balances from Spot list view.</p>
+            {/* Settings Hero Card */}
+            <div className="relative p-6 sm:p-8 rounded-[2.5rem] bg-slate-900/40 border border-white/10 backdrop-blur-2xl shadow-2xl shadow-emerald-500/5 overflow-hidden group">
+              <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-transparent rounded-full blur-3xl pointer-events-none group-hover:scale-110 transition-transform duration-700" />
+              <div className="absolute inset-0 bg-gradient-to-b from-white/[0.04] to-transparent pointer-events-none rounded-[2.5rem]" />
+              
+              <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400">
+                      <Sliders className="w-5 h-5" />
+                    </span>
+                    <span className="text-[10px] font-mono font-bold tracking-widest text-emerald-400 uppercase bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full">
+                      FINTECH VAULT SYSTEM CONFIG
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => { setHideZeroBalances(!hideZeroBalances); playSound('CLICK'); addToast(`Hide Zero Balances ${!hideZeroBalances ? 'enabled' : 'disabled'}.`, 'info'); }}
-                    className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 cursor-pointer ${hideZeroBalances ? 'bg-emerald-500' : 'bg-slate-800'}`}
-                  >
-                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transition-transform duration-300 ${hideZeroBalances ? 'translate-x-6' : 'translate-x-0'}`} />
-                  </button>
-                </div>
-
-                {/* Preference Toggle 2: Display crypto in fiat */}
-                <div className="flex items-center justify-between p-4 bg-white/[0.01] border border-white/5 rounded-2xl hover:border-white/10 transition-colors">
-                  <div className="max-w-[180px]">
-                    <p className="font-bold text-white text-xs">Display Crypto in Fiat</p>
-                    <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">Display currency evaluations inside localized fiat figures.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { setDisplayCryptoInFiat(!displayCryptoInFiat); playSound('CLICK'); addToast(`Display in fiat ${!displayCryptoInFiat ? 'enabled' : 'disabled'}.`, 'info'); }}
-                    className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 cursor-pointer ${displayCryptoInFiat ? 'bg-emerald-500' : 'bg-slate-800'}`}
-                  >
-                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transition-transform duration-300 ${displayCryptoInFiat ? 'translate-x-6' : 'translate-x-0'}`} />
-                  </button>
-                </div>
-
-                <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex gap-3 text-left">
-                  <Shield className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <p className="text-[10px] text-emerald-300/80 leading-normal italic">
-                    Your preference settings are kept cached locally on this browser session for continuous seamless play.
+                  <h3 className="text-2xl sm:text-3xl font-display font-black text-white tracking-tight">
+                    Account Preferences & Settings
+                  </h3>
+                  <p className="text-slate-400 text-xs sm:text-sm max-w-xl leading-relaxed">
+                    Configure regional currency localization, visual performance controls, and view cryptographic vault session indicators.
                   </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-black/50 border border-white/10 rounded-2xl backdrop-blur-md">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-xs font-mono font-bold text-slate-300">Vault Session: Active</span>
+                  </div>
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl backdrop-blur-md">
+                    <Shield className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-mono font-bold text-emerald-300">256-Bit SSL Secured</span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Right side settings: Fiat currencies list */}
-            <div className="space-y-6 lg:col-span-2">
-              <div className="p-6 sm:p-8 bg-slate-950/80 border border-white/5 rounded-[2.5rem] space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <h4 className="text-sm font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                    <Settings className="w-4 h-4 text-emerald-400" />
-                    Local Fiat Currencies
-                  </h4>
+            {/* Main Grid: Preferences Cards */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              
+              {/* Column 1: Display & Performance Preferences */}
+              <div className="space-y-6 lg:col-span-1">
+                
+                {/* Card A: Visual & Sound Settings */}
+                <div className="p-6 sm:p-8 bg-slate-900/40 border border-white/10 backdrop-blur-2xl rounded-[2.5rem] shadow-xl relative overflow-hidden group space-y-6">
+                  <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+                  
+                  <div className="flex items-center justify-between pb-4 border-b border-white/5">
+                    <h4 className="text-xs font-black uppercase text-slate-300 tracking-widest flex items-center gap-2.5">
+                      <Sliders className="w-4 h-4 text-emerald-400" />
+                      Visual Preferences
+                    </h4>
+                    <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-slate-500">Live Sync</span>
+                  </div>
 
-                  {/* Local currency search filter */}
-                  <div className="relative w-full sm:w-48">
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="Search currencies..."
-                      value={currencySearch}
-                      onChange={(e) => setCurrencySearch(e.target.value)}
-                      className="bg-black/40 border border-white/5 rounded-xl pl-8 pr-4 py-1.5 text-xs w-full focus:outline-none focus:border-emerald-500/50 transition-all font-medium text-white"
-                    />
+                  <div className="space-y-4">
+                    {/* Toggle 1: Hide Zero Balances */}
+                    <div className="p-4 bg-black/40 border border-white/5 hover:border-white/15 rounded-2xl transition-all duration-200 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-white text-xs">Hide Zero Balances</p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">Filter out empty crypto balances in spot list view.</p>
+                      </div>
+                      <motion.button
+                        type="button"
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => { 
+                          setHideZeroBalances(!hideZeroBalances); 
+                          playSound('CLICK'); 
+                          addToast(`Hide Zero Balances ${!hideZeroBalances ? 'enabled' : 'disabled'}.`, 'info'); 
+                        }}
+                        className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 cursor-pointer shrink-0 ${hideZeroBalances ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-slate-800'}`}
+                      >
+                        <div className={`bg-white w-4 h-4 rounded-full shadow-md transition-transform duration-300 ${hideZeroBalances ? 'translate-x-6' : 'translate-x-0'}`} />
+                      </motion.button>
+                    </div>
+
+                    {/* Toggle 2: Display Crypto in Fiat */}
+                    <div className="p-4 bg-black/40 border border-white/5 hover:border-white/15 rounded-2xl transition-all duration-200 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-white text-xs">Display Crypto in Fiat</p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">Display assets evaluated in preferred local currency.</p>
+                      </div>
+                      <motion.button
+                        type="button"
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => { 
+                          setDisplayCryptoInFiat(!displayCryptoInFiat); 
+                          playSound('CLICK'); 
+                          addToast(`Display in fiat ${!displayCryptoInFiat ? 'enabled' : 'disabled'}.`, 'info'); 
+                        }}
+                        className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 cursor-pointer shrink-0 ${displayCryptoInFiat ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-slate-800'}`}
+                      >
+                        <div className={`bg-white w-4 h-4 rounded-full shadow-md transition-transform duration-300 ${displayCryptoInFiat ? 'translate-x-6' : 'translate-x-0'}`} />
+                      </motion.button>
+                    </div>
+
+                    {/* Toggle 3: Audio Cues */}
+                    <div className="p-4 bg-black/40 border border-white/5 hover:border-white/15 rounded-2xl transition-all duration-200 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-white text-xs flex items-center gap-1.5">
+                          Tactical Sound Effects
+                        </p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">Enable tactile audio cues on button clicks and wins.</p>
+                      </div>
+                      <motion.button
+                        type="button"
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => { 
+                          setSoundEnabled(!soundEnabled); 
+                          if (!soundEnabled) playSound('CLICK'); 
+                          addToast(`Audio effects ${!soundEnabled ? 'enabled' : 'disabled'}.`, 'info'); 
+                        }}
+                        className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 cursor-pointer shrink-0 ${soundEnabled ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-slate-800'}`}
+                      >
+                        <div className={`bg-white w-4 h-4 rounded-full shadow-md transition-transform duration-300 ${soundEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
+                      </motion.button>
+                    </div>
+
+                    {/* Toggle 4: Ultra Performance Mode (60 FPS) */}
+                    <div className="p-4 bg-black/40 border border-white/5 hover:border-white/15 rounded-2xl transition-all duration-200 flex items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-white text-xs flex items-center gap-1.5">
+                          Ultra Performance Mode
+                          <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">60 FPS</span>
+                        </p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">Optimize GPU transform layers for zero-lag mobile scroll.</p>
+                      </div>
+                      <motion.button
+                        type="button"
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => { 
+                          setUltraPerfMode(!ultraPerfMode); 
+                          playSound('CLICK'); 
+                          addToast(`60 FPS Ultra Performance ${!ultraPerfMode ? 'enabled' : 'disabled'}.`, 'success'); 
+                        }}
+                        className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 cursor-pointer shrink-0 ${ultraPerfMode ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-slate-800'}`}
+                      >
+                        <div className={`bg-white w-4 h-4 rounded-full shadow-md transition-transform duration-300 ${ultraPerfMode ? 'translate-x-6' : 'translate-x-0'}`} />
+                      </motion.button>
+                    </div>
+
                   </div>
                 </div>
 
-                {/* Grid list of fiat options */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
-                  {filteredCurrencies.map((curr, idx) => {
-                    const isSelected = curr.code === currentCurrency;
-                    return (
-                      <button
-                        key={curr.code || `curr-${idx}`}
-                        type="button"
-                        onClick={() => { onSelectCurrency(curr.code); playSound('CLICK'); addToast(`Currency set to ${curr.code} (${curr.symbol}).`, 'success'); }}
-                        className={`flex items-center gap-3 py-3 px-4 rounded-2xl transition-all text-left cursor-pointer border group hover:bg-white/[0.02] ${
-                          isSelected 
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-white' 
-                            : 'bg-black/30 border-white/5 text-slate-400 hover:text-slate-200 hover:border-white/10'
-                        }`}
-                      >
-                        {/* Selected radio marker */}
-                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all shrink-0 ${
-                          isSelected ? 'border-emerald-400 bg-emerald-400/20' : 'border-slate-800 group-hover:border-slate-600'
-                        }`}>
-                          {isSelected && <Check className="w-3 h-3 text-emerald-400" />}
-                        </div>
-                        
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-1.5 font-bold text-xs tracking-wider">
-                            <span>{curr.code}</span>
-                            <span className="text-xs">{curr.flag}</span>
+                {/* Card B: Security & Encryption Badge */}
+                <div className="p-6 sm:p-8 bg-slate-900/40 border border-white/10 backdrop-blur-2xl rounded-[2.5rem] shadow-xl space-y-4 relative overflow-hidden">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 shrink-0">
+                      <Shield className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-white text-sm">Security & Encryption</h5>
+                      <p className="text-[10px] text-slate-400">Vault cryptographic authentication protocol active.</p>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 bg-black/50 border border-white/5 rounded-2xl space-y-2 font-mono text-[10px]">
+                    <div className="flex justify-between items-center text-slate-400">
+                      <span>PROTOCOL:</span>
+                      <span className="text-emerald-400 font-bold">AES-256-GCM</span>
+                    </div>
+                    <div className="flex justify-between items-center text-slate-400">
+                      <span>SECURITY AUDIT:</span>
+                      <span className="text-emerald-400 font-bold">PASSED (0 VULN)</span>
+                    </div>
+                    <div className="flex justify-between items-center text-slate-400">
+                      <span>DEVICE ID:</span>
+                      <span className="text-slate-200 select-all font-mono">{currentPlayer?.id?.substring(0, 14)}...</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Column 2 & 3: Fiat Currency Selection & Realtime FX Rates */}
+              <div className="space-y-6 lg:col-span-2">
+                <div className="p-6 sm:p-8 bg-slate-900/40 border border-white/10 backdrop-blur-2xl rounded-[2.5rem] shadow-2xl space-y-6">
+                  
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/5">
+                    <div>
+                      <h4 className="text-sm font-black uppercase text-white tracking-widest flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-emerald-400" />
+                        Local Fiat Currencies & FX Rates
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-1">Select preferred base currency for localized deposit and wallet valuation.</p>
+                    </div>
+
+                    {/* Currency Search Input */}
+                    <div className="relative w-full sm:w-64">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="Search currencies (e.g., INR, USD)..."
+                        value={currencySearch}
+                        onChange={(e) => setCurrencySearch(e.target.value)}
+                        className="bg-black/50 border border-white/10 focus:border-emerald-500/50 rounded-2xl pl-9 pr-4 py-2 text-xs w-full focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all text-white font-medium placeholder-slate-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Active currency banner */}
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{SUPPORTED_CURRENCIES[currentCurrency]?.flag || '🌐'}</span>
+                      <div>
+                        <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-wider block">ACTIVE BASE CURRENCY</span>
+                        <p className="text-base font-bold text-white font-display">
+                          {currentCurrency} ({getCurrencySymbol(currentCurrency)}) — {SUPPORTED_CURRENCIES[currentCurrency]?.name || currentCurrency}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] text-slate-400 block font-mono">LIVE FX RATE vs USD:</span>
+                      <span className="text-sm font-mono font-bold text-emerald-300">
+                        1 USD = {getCurrencySymbol(currentCurrency)}{(currentRates[currentCurrency] || 1).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Grid list of fiat options */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 max-h-[420px] overflow-y-auto pr-2 custom-scrollbar">
+                    {filteredCurrencies.map((curr, idx) => {
+                      const isSelected = curr.code === currentCurrency;
+                      const rateVal = currentRates[curr.code] || 1;
+                      return (
+                        <motion.button
+                          key={curr.code || `curr-${idx}`}
+                          type="button"
+                          whileHover={{ scale: 1.02, y: -1 }}
+                          whileTap={{ scale: 0.97 }}
+                          transition={{ duration: 0.15 }}
+                          onClick={() => { 
+                            onSelectCurrency(curr.code); 
+                            playSound('CLICK'); 
+                            addToast(`Currency switched to ${curr.code} (${curr.symbol}).`, 'success'); 
+                          }}
+                          className={`flex items-center gap-3 p-3.5 rounded-2xl transition-all text-left cursor-pointer border relative overflow-hidden group ${
+                            isSelected 
+                              ? 'bg-gradient-to-br from-emerald-500/15 to-teal-500/10 border-emerald-500/40 text-white shadow-lg shadow-emerald-500/10' 
+                              : 'bg-black/40 border-white/5 text-slate-400 hover:text-white hover:border-white/15 hover:bg-white/[0.03]'
+                          }`}
+                        >
+                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all shrink-0 ${
+                            isSelected ? 'border-emerald-400 bg-emerald-400/20 text-emerald-400' : 'border-slate-700 group-hover:border-slate-500'
+                          }`}>
+                            {isSelected ? <Check className="w-3.5 h-3.5" /> : null}
                           </div>
-                          <span className="text-[9px] text-slate-500 font-medium truncate max-w-[100px] mt-0.5">{curr.name}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                          
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1 font-bold text-xs">
+                              <span className={isSelected ? 'text-emerald-400 font-black' : 'text-slate-200'}>{curr.code}</span>
+                              <span className="text-sm">{curr.flag}</span>
+                            </div>
+                            <span className="text-[9px] text-slate-400 truncate mt-0.5">{curr.name}</span>
+                            <span className="text-[9px] font-mono text-slate-500 mt-1">1 USD = {curr.symbol}{rateVal.toFixed(2)}</span>
+                          </div>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+
                 </div>
               </div>
+
             </div>
           </motion.div>
         )}
