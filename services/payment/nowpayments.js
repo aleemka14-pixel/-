@@ -7,8 +7,8 @@
 
 export class NowPaymentsService {
   constructor() {
-    this.apiKey = process.env.NOWPAYMENTS_API_KEY || '';
-    this.ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET || '';
+    this.apiKey = (process.env.NOWPAYMENTS_API_KEY || '').trim();
+    this.ipnSecret = (process.env.NOWPAYMENTS_IPN_SECRET || '').trim();
     this.baseUrl = 'https://api.nowpayments.io/v1';
   }
 
@@ -30,43 +30,47 @@ export class NowPaymentsService {
       return { success: false, error: 'Invalid payment amount' };
     }
 
-    if (!this.apiKey) {
-      console.warn('[NowPaymentsService] Missing NOWPAYMENTS_API_KEY in process.env. Operating in simulated flow mode.');
+    const currentApiKey = (this.apiKey || process.env.NOWPAYMENTS_API_KEY || '').trim();
+
+    console.log(`NOWPAYMENTS_API_KEY exists: ${Boolean(currentApiKey)}`);
+    console.log(`NOWPAYMENTS_API_KEY length: ${currentApiKey ? currentApiKey.length : 0}`);
+
+    if (!currentApiKey) {
+      console.error('[NowPaymentsService] Missing NOWPAYMENTS_API_KEY in environment variables.');
       return {
-        success: true,
-        paymentId: `np_sim_${orderId}`,
-        orderId,
-        payAddress: 'TXYZ1234567890TRONSimulatedAddress',
-        payAmount: Number(amount),
-        payCurrency,
-        paymentUrl: `https://nowpayments.io/payment/?iid=sim_${orderId}`,
-        status: 'waiting',
-        isSimulated: true,
+        success: false,
+        error: 'NOWPayments API key is missing or invalid. Please set NOWPAYMENTS_API_KEY in environment variables.',
         gateway: 'NOWPayments'
       };
     }
 
+    const endpoint = 'https://api.nowpayments.io/v1/invoice';
+
+    const requestPayload = {
+      price_amount: Number(amount),
+      price_currency: priceCurrency.toLowerCase(),
+      pay_currency: payCurrency.toLowerCase(),
+      ipn_callback_url: ipnCallbackUrl,
+      order_id: orderId,
+      order_description: orderDescription
+    };
+
     try {
-      const response = await fetch(`${this.baseUrl}/invoice`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': this.apiKey
+          'x-api-key': currentApiKey
         },
-        body: JSON.stringify({
-          price_amount: Number(amount),
-          price_currency: priceCurrency.toLowerCase(),
-          pay_currency: payCurrency.toLowerCase(),
-          ipn_callback_url: ipnCallbackUrl,
-          order_id: orderId,
-          order_description: orderDescription
-        })
+        body: JSON.stringify(requestPayload)
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data = {};
+      try { data = JSON.parse(text); } catch (e) {}
 
-      if (!response.ok) {
-        throw new Error(data.message || 'NOWPayments invoice creation failed');
+      if (!response.ok || !data.invoice_url) {
+        throw new Error(data.message || data.error || `NOWPayments invoice creation failed (HTTP ${response.status})`);
       }
 
       const chkUrl = data.invoice_url;

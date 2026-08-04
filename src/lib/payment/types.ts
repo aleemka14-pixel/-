@@ -85,11 +85,14 @@ export interface CreatePaymentRequest {
 
 export interface CreatePaymentResponse {
   success: boolean;
-  paymentId: string;
-  walletAddress: string;
-  amount: number;
-  qrData: string;
-  qrCodeUrl: string;
-  status: string;
-  isMock: boolean;
+  paymentId?: string;
+  walletAddress?: string;
+  amount?: number;
+  qrData?: string;
+  qrCodeUrl?: string;
+  checkout_url?: string;
+  paymentUrl?: string;
+  status?: string;
+  isMock?: boolean;
+  error?: string;
 }

@@ -112,8 +112,18 @@ export class NowPaymentsAdapter implements PaymentAdapter {
   }
 
   async createPayment(req: CreatePaymentRequest): Promise<CreatePaymentResponse> {
-    const apiKey = process.env.NOWPAYMENTS_API_KEY || this.config.credentials.apiKey;
-    const isSandbox = this.config.mode === 'test';
+    const apiKey = (process.env.NOWPAYMENTS_API_KEY || this.config.credentials.apiKey || '').trim();
+
+    console.log(`NOWPAYMENTS_API_KEY exists: ${Boolean(apiKey)}`);
+    console.log(`NOWPAYMENTS_API_KEY length: ${apiKey ? apiKey.length : 0}`);
+
+    if (!apiKey) {
+      return {
+        success: false,
+        error: 'NOWPayments API key missing or invalid in environment settings.',
+        status: 'failed'
+      };
+    }
 
     // Map selected network to respective pay currency
     let payCurrency = 'usdt';
@@ -145,66 +155,61 @@ export class NowPaymentsAdapter implements PaymentAdapter {
         payCurrency = 'usdt';
     }
 
-    // Try live gateway API call if credentials exist
-    if (apiKey) {
-      try {
-        const endpoint = isSandbox 
-          ? 'https://api-sandbox.nowpayments.io/v1/invoice' 
-          : 'https://api.nowpayments.io/v1/invoice';
+    try {
+      const endpoint = 'https://api.nowpayments.io/v1/invoice';
 
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            price_amount: req.amount,
-            price_currency: req.currency?.toLowerCase() || 'usd',
-            pay_currency: payCurrency,
-            ipn_callback_url: process.env.APP_URL ? `${process.env.APP_URL}/api/webhook` : undefined,
-            order_id: `NOW-${Date.now()}-${req.userId}`
-          })
-        });
+      const bodyPayload = {
+        price_amount: req.amount,
+        price_currency: req.currency?.toLowerCase() || 'usd',
+        pay_currency: payCurrency,
+        ipn_callback_url: process.env.APP_URL ? `${process.env.APP_URL}/api/webhook` : undefined,
+        order_id: `NOW-${Date.now()}-${req.userId}`
+      };
 
-        if (response.ok) {
-          const data = await response.json();
-          const chkUrl = data.invoice_url;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(bodyPayload)
+      });
 
-          return {
-            success: true,
-            paymentId: String(data.id || data.payment_id || `NOW-${Date.now()}`),
-            walletAddress: data.pay_address || '',
-            amount: data.pay_amount || req.amount,
-            qrData: chkUrl,
-            qrCodeUrl: '',
-            status: data.payment_status || 'waiting',
-            isMock: false
-          };
-        } else {
-          console.error('[NOWPayments API Error response]', await response.text());
-        }
-      } catch (err) {
-        console.error('[NOWPayments API Exception]', err);
+      const text = await response.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch (e) {}
+
+      if (response.ok && data.invoice_url) {
+        const chkUrl = data.invoice_url;
+
+        return {
+          success: true,
+          paymentId: String(data.id || data.payment_id || `NOW-${Date.now()}`),
+          walletAddress: data.pay_address || '',
+          amount: data.pay_amount || req.amount,
+          qrData: chkUrl,
+          qrCodeUrl: '',
+          checkout_url: chkUrl,
+          paymentUrl: chkUrl,
+          status: data.payment_status || 'waiting',
+          isMock: false
+        };
+      } else {
+        const apiErr = data.message || data.error || `HTTP ${response.status}: ${text}`;
+        return {
+          success: false,
+          error: `NOWPayments API Error: ${apiErr}`,
+          status: 'failed'
+        };
       }
+    } catch (err: any) {
+      console.error('[NOWPayments API Exception]', err);
+      return {
+        success: false,
+        error: `NOWPayments Exception: ${err.message}`,
+        status: 'failed'
+      };
     }
-
-    // fallback simulation
-    const randomBytes = crypto.randomBytes(8).toString('hex');
-    const paymentId = `PAY-${randomBytes.toUpperCase()}`;
-    const qrData = baseAddress;
-    const qrCodeUrl = '';
-
-    return {
-      success: true,
-      paymentId,
-      walletAddress: baseAddress,
-      amount: req.amount,
-      qrData,
-      qrCodeUrl,
-      status: 'waiting',
-      isMock: true
-    };
   }
 
   verifyWebhook(headers: Record<string, string>, body: any): boolean {

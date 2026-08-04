@@ -44,6 +44,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
   const [upiAmount, setUpiAmount] = useState<string>('500');
   const [cryptoAmount, setCryptoAmount] = useState<string>('50');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [pendingCheckoutUrl, setPendingCheckoutUrl] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const [selectedTxForModal, setSelectedTxForModal] = useState<DepositRequest | null>(null);
 
@@ -90,8 +91,16 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
       return;
     }
 
+    let popupWin: Window | null = null;
+    try {
+      popupWin = window.open('about:blank', '_blank');
+    } catch (winErr) {
+      console.warn("Could not pre-open popup window:", winErr);
+    }
+
     setIsSubmitting(true);
     playSound('CLICK');
+    setPendingCheckoutUrl(null);
 
     try {
       const response = await fetch('/api/create-deposit', {
@@ -119,21 +128,41 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
       }
 
+      console.log("DEPOSIT RESPONSE", data);
+
       const redirectUrl = data.checkout_url || data.payment_url || data.paymentUrl || data.invoice_url;
 
       if (response.ok && data.success && redirectUrl) {
         showToast("Redirecting to UPI checkout page...", "success");
-        console.log("[UPI Deposit] Redirecting to checkout URL:", redirectUrl);
+        console.log("FINAL REDIRECT URL", redirectUrl);
+        setPendingCheckoutUrl(redirectUrl);
+
+        if (popupWin && !popupWin.closed) {
+          try { popupWin.location.href = redirectUrl; } catch (err) { console.warn("Setting popupWin location failed:", err); }
+        } else {
+          try { window.open(redirectUrl, '_blank', 'noopener,noreferrer'); } catch (err) { console.warn("window.open failed:", err); }
+        }
+
         try {
-          window.location.assign(redirectUrl);
+          if (window.self !== window.top) {
+            try { window.top!.location.href = redirectUrl; } catch (err) { window.location.assign(redirectUrl); }
+          } else {
+            window.location.assign(redirectUrl);
+          }
         } catch (e) {
           window.location.href = redirectUrl;
         }
+
+        setTimeout(() => {
+          setIsSubmitting(false);
+        }, 3000);
       } else {
+        if (popupWin && !popupWin.closed) popupWin.close();
         console.error("[UPI Deposit] Order creation failed:", data);
         throw new Error(data.error || "Failed to initialize UPI payment order.");
       }
     } catch (err: any) {
+      if (popupWin && !popupWin.closed) popupWin.close();
       console.error("UPI payment initiation failed:", err);
       showToast(err.message || "Unable to initiate UPI payment. Please try again.", "error");
       setIsSubmitting(false);
@@ -145,7 +174,11 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
     if (e) e.preventDefault();
 
     const numAmt = Number(cryptoAmount);
-    if (!cryptoAmount || isNaN(numAmt) || numAmt < 5) {
+    if (!cryptoAmount || isNaN(numAmt) || numAmt <= 0) {
+      showToast("Deposit amount must be greater than $0 USD.", "error");
+      return;
+    }
+    if (numAmt < 5) {
       showToast("Minimum crypto deposit amount is $5 USD.", "error");
       return;
     }
@@ -154,8 +187,16 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
       return;
     }
 
+    let popupWin: Window | null = null;
+    try {
+      popupWin = window.open('about:blank', '_blank');
+    } catch (winErr) {
+      console.warn("Could not pre-open popup window:", winErr);
+    }
+
     setIsSubmitting(true);
     playSound('CLICK');
+    setPendingCheckoutUrl(null);
 
     console.log("[Crypto Deposit] Requesting NOWPayments order for amount:", numAmt, "USD");
 
@@ -185,23 +226,41 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
       }
 
-      console.log("[Crypto Deposit] API Response received:", data);
+      console.log("DEPOSIT RESPONSE", data);
 
       const redirectUrl = data.checkout_url || data.payment_url || data.paymentUrl || data.invoice_url;
 
       if (response.ok && data.success && redirectUrl) {
         showToast("Redirecting to NOWPayments crypto checkout page...", "success");
-        console.log("[Crypto Deposit] Redirecting to checkout URL:", redirectUrl);
+        console.log("FINAL REDIRECT URL", redirectUrl);
+        setPendingCheckoutUrl(redirectUrl);
+
+        if (popupWin && !popupWin.closed) {
+          try { popupWin.location.href = redirectUrl; } catch (err) { console.warn("Setting popupWin location failed:", err); }
+        } else {
+          try { window.open(redirectUrl, '_blank', 'noopener,noreferrer'); } catch (err) { console.warn("window.open failed:", err); }
+        }
+
         try {
-          window.location.assign(redirectUrl);
+          if (window.self !== window.top) {
+            try { window.top!.location.href = redirectUrl; } catch (err) { window.location.assign(redirectUrl); }
+          } else {
+            window.location.assign(redirectUrl);
+          }
         } catch (e) {
           window.location.href = redirectUrl;
         }
+
+        setTimeout(() => {
+          setIsSubmitting(false);
+        }, 3000);
       } else {
+        if (popupWin && !popupWin.closed) popupWin.close();
         console.error("[Crypto Deposit] Order creation failed:", data);
         throw new Error(data.error || "Failed to initialize NOWPayments crypto checkout page.");
       }
     } catch (err: any) {
+      if (popupWin && !popupWin.closed) popupWin.close();
       console.error("Crypto payment initiation failed:", err);
       showToast(err.message || "Unable to initiate crypto payment with NOWPayments. Please try again.", "error");
       setIsSubmitting(false);
@@ -506,6 +565,26 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                   <li>Your balance will be credited instantly after network verification.</li>
                 </ul>
               </div>
+
+              {/* Pending Checkout Active Banner (Fallback if automatic tab/frame redirect blocked) */}
+              {pendingCheckoutUrl && (
+                <div className="bg-emerald-950/90 border-2 border-emerald-400 rounded-xl p-4 text-center space-y-3 shadow-2xl animate-pulse">
+                  <div className="flex items-center justify-center gap-2 text-emerald-300 font-mono font-bold text-xs uppercase tracking-wider">
+                    <ExternalLink className="w-4 h-4 text-emerald-400" />
+                    NOWPayments Checkout Ready
+                  </div>
+                  <a
+                    href={pendingCheckoutUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => playSound('CLICK')}
+                    className="w-full py-3.5 px-4 rounded-xl font-mono text-xs font-black uppercase tracking-wider bg-emerald-400 hover:bg-emerald-300 text-slate-950 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    OPEN NOWPAYMENTS CHECKOUT PAGE NOW
+                  </a>
+                </div>
+              )}
 
               {/* Submit / PROCEED Button */}
               <button

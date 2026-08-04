@@ -545,7 +545,8 @@ export class ReliabilityManager {
 
     console.log(`[ReliabilityManager] Found ${snap.size} pending deposits to verify.`);
     for (const dDoc of snap.docs) {
-      const dep = dDoc.data();
+      const dep = { id: dDoc.id, ...dDoc.data() };
+      const depId = String(dep.id || dDoc.id || '');
       
       // Verification logic supporting adapters or auto-recovery
       let isConfirmed = false;
@@ -553,7 +554,7 @@ export class ReliabilityManager {
 
       // Secure payment adapter query fallback
       try {
-        if (dep.isMock || dep.id.startsWith('mock_')) {
+        if (dep.isMock || depId.startsWith('mock_')) {
           // Mock verification logic: auto confirm pending deposits with screenshots or mock signatures after 1 minute
           const ageSec = (Date.now() - dep.timestamp) / 1000;
           if (ageSec > 60 || dep.screenshotUrl) {
@@ -660,7 +661,7 @@ export class ReliabilityManager {
     if (snap.empty) return;
 
     for (const docSnap of snap.docs) {
-      const dep = docSnap.data();
+      const dep = { id: docSnap.id, ...docSnap.data() };
       // Re-evaluate deposits with uploaded verification screenshot receipts
       const ageHours = (Date.now() - dep.timestamp) / (1000 * 60 * 60);
       if (ageHours > 0.1) { // 6 minutes older
@@ -696,7 +697,7 @@ export class ReliabilityManager {
     if (snap.empty) return;
 
     for (const wDoc of snap.docs) {
-      const w = wDoc.data();
+      const w = { id: wDoc.id, ...wDoc.data() };
       if (w.updatedAt && w.updatedAt < stuckThreshold) {
         console.log(`[ReliabilityManager] Stuck withdrawal found: ${w.id}. Status: PROCESSING. Re-broadcasting transaction...`);
         
@@ -750,7 +751,7 @@ export class ReliabilityManager {
     if (snap.empty) return;
 
     for (const wDoc of snap.docs) {
-      const w = wDoc.data();
+      const w = { id: wDoc.id, ...wDoc.data() };
       if (w.transactionHash && !w.blockchainVerified) {
         try {
           const chainStatus = await cryptoWalletService.getTransactionStatus(w.transactionHash);

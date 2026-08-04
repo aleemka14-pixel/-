@@ -88,14 +88,19 @@ export default async function handler(req, res) {
           maxDeposit: 100000
         };
       } else if (selectedProviderKey === 'nowpayments') {
+        const apiKey = (process.env.NOWPAYMENTS_API_KEY || '').trim();
+
+        console.log(`NOWPAYMENTS_API_KEY exists: ${Boolean(apiKey)}`);
+        console.log(`NOWPAYMENTS_API_KEY length: ${apiKey ? apiKey.length : 0}`);
+
         providerConfig = {
           id: 'nowpayments',
           name: 'NOWPayments Gateway',
           enabled: true,
-          mode: process.env.NOWPAYMENTS_SANDBOX === 'true' ? 'test' : 'live',
+          mode: 'live',
           credentials: {
-            apiKey: process.env.NOWPAYMENTS_API_KEY || '',
-            ipnSecret: process.env.NOWPAYMENTS_IPN_SECRET || ''
+            apiKey: apiKey,
+            ipnSecret: (process.env.NOWPAYMENTS_IPN_SECRET || '').trim()
           },
           minDeposit: 5,
           maxDeposit: 50000
