@@ -18,14 +18,14 @@ interface AdminPaymentGatewaySettingsProps {
 const DEFAULT_GATEWAYS: PaymentGatewayMethod[] = [
   {
     id: 'sunpay',
-    gatewayName: 'Sunpay (UPI)',
+    gatewayName: 'UPI Gateway',
     gatewayType: 'fiat',
     status: 'active',
     depositEnabled: true,
     withdrawalEnabled: true,
-    maintenanceMessage: 'Sunpay UPI service is currently under maintenance.',
+    maintenanceMessage: 'UPI service is currently under maintenance.',
     providerCode: 'sunpay',
-    description: 'Fiat UPI Deposit and Withdrawal gateway via Sunpay.'
+    description: 'Fiat UPI Deposit and Withdrawal gateway.'
   },
   {
     id: 'watchpay',

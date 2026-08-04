@@ -149,8 +149,8 @@ export class NowPaymentsAdapter implements PaymentAdapter {
     if (apiKey) {
       try {
         const endpoint = isSandbox 
-          ? 'https://api-sandbox.nowpayments.io/v1/payment' 
-          : 'https://api.nowpayments.io/v1/payment';
+          ? 'https://api-sandbox.nowpayments.io/v1/invoice' 
+          : 'https://api.nowpayments.io/v1/invoice';
 
         const response = await fetch(endpoint, {
           method: 'POST',
@@ -169,17 +169,15 @@ export class NowPaymentsAdapter implements PaymentAdapter {
 
         if (response.ok) {
           const data = await response.json();
-          const walletAddress = data.pay_address || '';
-          const qrData = walletAddress;
-          const qrCodeUrl = '';
+          const chkUrl = data.invoice_url;
 
           return {
             success: true,
-            paymentId: data.payment_id || `NOW-${Date.now()}`,
-            walletAddress,
+            paymentId: String(data.id || data.payment_id || `NOW-${Date.now()}`),
+            walletAddress: data.pay_address || '',
             amount: data.pay_amount || req.amount,
-            qrData,
-            qrCodeUrl,
+            qrData: chkUrl,
+            qrCodeUrl: '',
             status: data.payment_status || 'waiting',
             isMock: false
           };

@@ -77,7 +77,7 @@ export default async function handler(req, res) {
       if (selectedProviderKey === 'sunpay') {
         providerConfig = {
           id: 'sunpay',
-          name: 'Sunpay Gateway',
+          name: 'UPI Gateway',
           enabled: true,
           credentials: {
             apiKey: process.env.PAYIN_API_KEY || '',
@@ -86,6 +86,19 @@ export default async function handler(req, res) {
           },
           minDeposit: 100,
           maxDeposit: 100000
+        };
+      } else if (selectedProviderKey === 'nowpayments') {
+        providerConfig = {
+          id: 'nowpayments',
+          name: 'NOWPayments Gateway',
+          enabled: true,
+          mode: process.env.NOWPAYMENTS_SANDBOX === 'true' ? 'test' : 'live',
+          credentials: {
+            apiKey: process.env.NOWPAYMENTS_API_KEY || '',
+            ipnSecret: process.env.NOWPAYMENTS_IPN_SECRET || ''
+          },
+          minDeposit: 5,
+          maxDeposit: 50000
         };
       } else {
         return res.status(400).json({
@@ -97,14 +110,16 @@ export default async function handler(req, res) {
 
     const adapter = getProviderAdapter(providerConfig);
 
-    const minRequired = providerConfig.minDeposit || 100;
-    const maxRequired = providerConfig.maxDeposit || 100000;
+    const isCrypto = selectedProviderKey === 'nowpayments' || (currency && currency.toUpperCase() === 'USD');
+    const minRequired = providerConfig.minDeposit || (isCrypto ? 5 : 100);
+    const maxRequired = providerConfig.maxDeposit || (isCrypto ? 50000 : 100000);
     const cooldownSeconds = providerConfig.depositCooldown || 15;
+    const currencySymbol = isCrypto ? '$' : '₹';
 
     if (numAmount < minRequired || numAmount > maxRequired) {
       return res.status(400).json({
         success: false,
-        error: `Deposit amount of ₹${numAmount} is outside allowed limits [Min: ₹${minRequired}, Max: ₹${maxRequired}].`
+        error: `Deposit amount of ${currencySymbol}${numAmount} is outside allowed limits [Min: ${currencySymbol}${minRequired}, Max: ${currencySymbol}${maxRequired}].`
       });
     }
 
@@ -136,29 +151,40 @@ export default async function handler(req, res) {
     }
 
     const returnUrl = `${origin}/deposit`;
-    const notifyUrl = `${origin}/api/payment-webhook`;
+    const notifyUrl = selectedProviderKey === 'nowpayments' ? `${origin}/api/webhook` : `${origin}/api/payment-webhook`;
+
+    console.log(`[create-deposit] Calling ${selectedProviderKey} adapter. Amount: ${numAmount}, Currency: ${currency || (isCrypto ? 'USD' : 'INR')}`);
 
     const gatewayResponse = await adapter.createPayment({
       amount: numAmount,
-      currency: currency || 'INR',
+      currency: currency || (isCrypto ? 'USD' : 'INR'),
       network: selectedNetwork,
-      orderId: `sun_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      orderId: `dep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       userId: resolvedUserId,
       returnUrl,
       notifyUrl
     });
 
     if (!gatewayResponse || !gatewayResponse.success) {
-      await recordProviderFailure(selectedProviderKey, gatewayResponse.error || 'Failed to initialize payment gateway.');
+      await recordProviderFailure(selectedProviderKey, gatewayResponse?.error || 'Failed to initialize payment gateway.');
       return res.status(502).json({
         success: false,
-        error: gatewayResponse.error || "Payment gateway creation failed."
+        error: gatewayResponse?.error || "Payment gateway creation failed."
       });
     }
 
     const timestamp = Date.now();
     const paymentId = gatewayResponse.paymentId || gatewayResponse.depositId;
-    const checkout_url = gatewayResponse.checkout_url;
+    const checkout_url = gatewayResponse.checkout_url || gatewayResponse.paymentUrl || gatewayResponse.payment_url || gatewayResponse.invoice_url;
+    const providerName = selectedProviderKey === 'nowpayments' ? 'NOWPayments (Crypto)' : 'UPI Gateway';
+
+    if (!checkout_url) {
+      console.error(`[create-deposit] Payment gateway ${selectedProviderKey} succeeded but returned no checkout URL.`);
+      return res.status(502).json({
+        success: false,
+        error: "Payment gateway failed to return a valid checkout URL."
+      });
+    }
 
     const depositDoc = {
       depositId: paymentId,
@@ -166,17 +192,20 @@ export default async function handler(req, res) {
       userId: resolvedUserId,
       playerId: resolvedUserId,
       amount: numAmount,
-      currency: currency || 'INR',
+      currency: currency || (isCrypto ? 'USD' : 'INR'),
       network: selectedNetwork,
-      method: 'Sunpay Gateway',
-      provider: 'sunpay',
+      method: providerName,
+      provider: selectedProviderKey,
       status: 'pending',
       checkout_url: checkout_url,
+      payment_url: checkout_url,
+      paymentUrl: checkout_url,
       walletAddress: gatewayResponse.walletAddress || '',
+      qrCodeUrl: gatewayResponse.qrCodeUrl || '',
       createdAt: timestamp,
       updatedAt: timestamp,
       timestamp: timestamp,
-      details: `Sunpay Deposit: ₹${numAmount}`
+      details: `${providerName} Deposit: ${currencySymbol}${numAmount} (${selectedNetwork})`
     };
 
     const depositRef = doc(db, 'deposits', paymentId);
@@ -184,8 +213,8 @@ export default async function handler(req, res) {
 
     await addPaymentLog(
       'info',
-      'sunpay',
-      `Deposit request generated: ${paymentId} for ₹${numAmount} via Sunpay`,
+      selectedProviderKey,
+      `Deposit request generated: ${paymentId} for ${currencySymbol}${numAmount} via ${providerName}`,
       `Player: ${resolvedUserId}`
     );
 
@@ -195,9 +224,12 @@ export default async function handler(req, res) {
       paymentId: paymentId,
       userId: resolvedUserId,
       amount: numAmount,
-      currency: currency || 'INR',
+      currency: currency || (isCrypto ? 'USD' : 'INR'),
       status: 'pending',
       checkout_url: checkout_url,
+      payment_url: checkout_url,
+      paymentUrl: checkout_url,
+      invoice_url: checkout_url,
       createdAt: timestamp,
       updatedAt: timestamp
     });

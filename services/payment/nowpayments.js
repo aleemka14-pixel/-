@@ -47,7 +47,7 @@ export class NowPaymentsService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/payment`, {
+      const response = await fetch(`${this.baseUrl}/invoice`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -66,17 +66,19 @@ export class NowPaymentsService {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.message || 'NOWPayments order creation failed');
+        throw new Error(data.message || 'NOWPayments invoice creation failed');
       }
+
+      const chkUrl = data.invoice_url;
 
       return {
         success: true,
-        paymentId: String(data.payment_id),
-        orderId: data.order_id,
-        payAddress: data.pay_address,
-        payAmount: data.pay_amount,
-        payCurrency: data.pay_currency,
-        status: data.payment_status,
+        paymentId: String(data.id || data.payment_id || orderId),
+        orderId: data.order_id || orderId,
+        checkout_url: chkUrl,
+        paymentUrl: chkUrl,
+        payment_url: chkUrl,
+        status: 'waiting',
         gateway: 'NOWPayments'
       };
     } catch (err) {

@@ -5,7 +5,7 @@ import {
   CheckCircle2, Shield, HelpCircle, RefreshCw,
   Wallet, ArrowUpRight, ExternalLink, Info,
   ShieldAlert, X, DollarSign, CheckCircle,
-  CreditCard, Smartphone, ShieldCheck
+  CreditCard, Smartphone, ShieldCheck, Coins
 } from 'lucide-react';
 import { DepositRequest, Player, PaymentSettings } from '../types.ts';
 
@@ -40,13 +40,18 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
   playSound
 }: RedesignedDepositViewProps) {
 
-  const [sunpayAmount, setSunpayAmount] = useState<string>('500');
-  const [isCreatingSunpay, setIsCreatingSunpay] = useState<boolean>(false);
+  const [activeMethod, setActiveMethod] = useState<'upi' | 'crypto'>('upi');
+  const [upiAmount, setUpiAmount] = useState<string>('500');
+  const [cryptoAmount, setCryptoAmount] = useState<string>('50');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const [selectedTxForModal, setSelectedTxForModal] = useState<DepositRequest | null>(null);
 
-  // Quick Amount Presets in INR
-  const presets = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000];
+  // Quick Amount Presets in INR for UPI
+  const upiPresets = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000];
+
+  // Quick Amount Presets in USD for Crypto
+  const cryptoPresets = [10, 25, 50, 100, 250, 500, 1000, 2500];
 
   // Toast Notification Handler
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -71,12 +76,12 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
     ).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }, [deposits, currentPlayer]);
 
-  // Initiate Sunpay Payment Order & Immediate Checkout Redirect
-  const handlePayWithSunpay = async (e?: React.FormEvent) => {
+  // Initiate UPI Payment Order
+  const handlePayWithUpi = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
-    const numAmt = Number(sunpayAmount);
-    if (!sunpayAmount || isNaN(numAmt) || numAmt < 100) {
+    const numAmt = Number(upiAmount);
+    if (!upiAmount || isNaN(numAmt) || numAmt < 100) {
       showToast("Minimum deposit amount is ₹100.", "error");
       return;
     }
@@ -85,7 +90,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
       return;
     }
 
-    setIsCreatingSunpay(true);
+    setIsSubmitting(true);
     playSound('CLICK');
 
     try {
@@ -96,6 +101,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
           userId: currentPlayer?.id || 'guest',
           amount: numAmt,
           currency: 'INR',
+          network: 'UPI',
           provider: 'sunpay'
         })
       });
@@ -113,17 +119,92 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
       }
 
-      if (response.ok && data.success && data.checkout_url) {
-        showToast("Redirecting to Sunpay checkout page...", "success");
-        // Immediate checkout redirect using official checkout_url
-        window.location.href = data.checkout_url;
+      const redirectUrl = data.checkout_url || data.payment_url || data.paymentUrl || data.invoice_url;
+
+      if (response.ok && data.success && redirectUrl) {
+        showToast("Redirecting to UPI checkout page...", "success");
+        console.log("[UPI Deposit] Redirecting to checkout URL:", redirectUrl);
+        try {
+          window.location.assign(redirectUrl);
+        } catch (e) {
+          window.location.href = redirectUrl;
+        }
       } else {
-        throw new Error(data.error || "Failed to initialize Sunpay payment order.");
+        console.error("[UPI Deposit] Order creation failed:", data);
+        throw new Error(data.error || "Failed to initialize UPI payment order.");
       }
     } catch (err: any) {
-      console.error("Sunpay payment initiation failed:", err);
-      showToast(err.message || "Unable to initiate payment with Sunpay. Please try again.", "error");
-      setIsCreatingSunpay(false);
+      console.error("UPI payment initiation failed:", err);
+      showToast(err.message || "Unable to initiate UPI payment. Please try again.", "error");
+      setIsSubmitting(false);
+    }
+  };
+
+  // Initiate NOWPayments Crypto Payment Order (USDT TRC20)
+  const handlePayWithCrypto = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    const numAmt = Number(cryptoAmount);
+    if (!cryptoAmount || isNaN(numAmt) || numAmt < 5) {
+      showToast("Minimum crypto deposit amount is $5 USD.", "error");
+      return;
+    }
+    if (numAmt > 50000) {
+      showToast("Maximum crypto deposit amount per transaction is $50,000 USD.", "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    playSound('CLICK');
+
+    console.log("[Crypto Deposit] Requesting NOWPayments order for amount:", numAmt, "USD");
+
+    try {
+      const response = await fetch('/api/create-deposit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentPlayer?.id || 'guest',
+          amount: numAmt,
+          currency: 'USD',
+          network: 'TRC20',
+          provider: 'nowpayments'
+        })
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      let data: any = {};
+      if (contentType.toLowerCase().includes('application/json')) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        console.warn("Non-JSON API response from /api/create-deposit:", text.substring(0, 200));
+        if (text.includes('Starting Server') || text.includes('<html')) {
+          throw new Error("Server is currently initializing. Please try again in a few seconds.");
+        }
+        throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
+      }
+
+      console.log("[Crypto Deposit] API Response received:", data);
+
+      const redirectUrl = data.checkout_url || data.payment_url || data.paymentUrl || data.invoice_url;
+
+      if (response.ok && data.success && redirectUrl) {
+        showToast("Redirecting to NOWPayments crypto checkout page...", "success");
+        console.log("[Crypto Deposit] Redirecting to checkout URL:", redirectUrl);
+        try {
+          window.location.assign(redirectUrl);
+        } catch (e) {
+          window.location.href = redirectUrl;
+        }
+      } else {
+        console.error("[Crypto Deposit] Order creation failed:", data);
+        throw new Error(data.error || "Failed to initialize NOWPayments crypto checkout page.");
+      }
+    } catch (err: any) {
+      console.error("Crypto payment initiation failed:", err);
+      showToast(err.message || "Unable to initiate crypto payment with NOWPayments. Please try again.", "error");
+      setIsSubmitting(false);
     }
   };
 
@@ -181,7 +262,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 Deposit Funds
               </h1>
               <p className="text-xs text-slate-400">
-                Instant payment gateway powered by Sunpay.
+                Instant UPI & Crypto Payment Gateway
               </p>
             </div>
           </div>
@@ -204,103 +285,249 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
       {/* MAIN CONTAINER */}
       <div id="deposit-grid-layout" className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start w-full">
         
-        {/* LEFT COLUMN: SUNPAY CHECKOUT FORM */}
-        <div id="deposit-left-column" className="lg:col-span-8 space-y-8 w-full">
+        {/* LEFT COLUMN: PAYMENT METHOD SELECTOR & FORM */}
+        <div id="deposit-left-column" className="lg:col-span-8 space-y-6 w-full">
           
-          <form onSubmit={handlePayWithSunpay} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
-            
-            {/* Header / Gateway Badge */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <div>
-                <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono block">INSTANT PAYMENT GATEWAY</span>
-                <h3 className="text-lg font-display font-black text-white tracking-tight flex items-center gap-2">
-                  <Smartphone className="w-5 h-5 text-emerald-400" />
-                  Sunpay Deposit
-                </h3>
-              </div>
-              <span className="text-[9px] font-mono font-black text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 uppercase flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                ACTIVE GATEWAY
-              </span>
-            </div>
-
-            {/* Presets Grid */}
-            <div className="space-y-2.5">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
-                Select Deposit Amount (INR)
-              </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {presets.map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => { setSunpayAmount(String(preset)); playSound('CLICK'); }}
-                    className={`py-3 px-2 rounded-xl text-xs font-mono font-black border transition-all cursor-pointer ${
-                      Number(sunpayAmount) === preset
-                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20 scale-[1.02]'
-                        : 'bg-slate-950/80 hover:bg-slate-800 text-slate-300 border-slate-800'
-                    }`}
-                  >
-                    ₹{preset.toLocaleString('en-IN')}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Amount Input Field */}
-            <div className="space-y-2">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
-                Custom Amount (₹100 - ₹1,00,000)
-              </label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 font-mono font-black text-emerald-400 text-xl">
-                  ₹
-                </span>
-                <input
-                  type="number"
-                  min="100"
-                  max="100000"
-                  placeholder="Enter amount (e.g. 500)"
-                  value={sunpayAmount}
-                  onChange={(e) => setSunpayAmount(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 rounded-xl pl-10 pr-4 py-3.5 text-xl font-mono font-black text-white focus:outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            {/* Info / Instructions Box */}
-            <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 text-xs font-mono text-slate-400 space-y-1.5">
-              <div className="flex items-center gap-2 text-white font-bold">
-                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                How Sunpay Checkout Works:
-              </div>
-              <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-400">
-                <li>Clicking PAY will open the official Sunpay checkout page.</li>
-                <li>Complete your payment using UPI, NetBanking, or QR code.</li>
-                <li>Your wallet balance will be credited automatically once confirmed.</li>
-              </ul>
-            </div>
-
-            {/* Submit / PAY Button */}
+          {/* DEPOSIT METHOD TABS (UPI OR CRYPTO) */}
+          <div className="grid grid-cols-2 gap-3 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
             <button
-              type="submit"
-              disabled={isCreatingSunpay}
-              className="w-full py-4 rounded-xl font-mono text-sm font-black uppercase tracking-wider bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 shadow-xl shadow-emerald-500/20 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="button"
+              onClick={() => { setActiveMethod('upi'); playSound('CLICK'); }}
+              className={`py-3.5 px-4 rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer font-mono font-black text-xs uppercase tracking-wider ${
+                activeMethod === 'upi'
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
             >
-              {isCreatingSunpay ? (
-                <>
-                  <RefreshCw className="w-5 h-5 animate-spin text-slate-950" />
-                  Generating Sunpay Order...
-                </>
-              ) : (
-                <>
-                  <ExternalLink className="w-5 h-5" />
-                  PAY ₹{Number(sunpayAmount || 0).toLocaleString('en-IN')} NOW
-                </>
-              )}
+              <Smartphone className="w-4 h-4" />
+              <span>UPI Option</span>
             </button>
 
-          </form>
+            <button
+              type="button"
+              onClick={() => { setActiveMethod('crypto'); playSound('CLICK'); }}
+              className={`py-3.5 px-4 rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer font-mono font-black text-xs uppercase tracking-wider ${
+                activeMethod === 'crypto'
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Coins className="w-4 h-4" />
+              <span>Crypto Option (TRC20)</span>
+            </button>
+          </div>
+
+          {/* UPI FORM */}
+          {activeMethod === 'upi' && (
+            <form onSubmit={handlePayWithUpi} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
+              
+              {/* Header / Gateway Badge */}
+              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                <div>
+                  <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono block">INSTANT UPI GATEWAY</span>
+                  <h3 className="text-lg font-display font-black text-white tracking-tight flex items-center gap-2">
+                    <Smartphone className="w-5 h-5 text-emerald-400" />
+                    UPI Deposit
+                  </h3>
+                </div>
+                <span className="text-[9px] font-mono font-black text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 uppercase flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  ACTIVE GATEWAY
+                </span>
+              </div>
+
+              {/* Presets Grid */}
+              <div className="space-y-2.5">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
+                  Select Deposit Amount (INR)
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {upiPresets.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => { setUpiAmount(String(preset)); playSound('CLICK'); }}
+                      className={`py-3 px-2 rounded-xl text-xs font-mono font-black border transition-all cursor-pointer ${
+                        Number(upiAmount) === preset
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20 scale-[1.02]'
+                          : 'bg-slate-950/80 hover:bg-slate-800 text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      ₹{preset.toLocaleString('en-IN')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Amount Input Field */}
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
+                  Custom Amount (₹100 - ₹1,00,000)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-mono font-black text-emerald-400 text-xl">
+                    ₹
+                  </span>
+                  <input
+                    type="number"
+                    min="100"
+                    max="100000"
+                    placeholder="Enter amount (e.g. 500)"
+                    value={upiAmount}
+                    onChange={(e) => setUpiAmount(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 rounded-xl pl-10 pr-4 py-3.5 text-xl font-mono font-black text-white focus:outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Info / Instructions Box */}
+              <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 text-xs font-mono text-slate-400 space-y-1.5">
+                <div className="flex items-center gap-2 text-white font-bold">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  How UPI Checkout Works:
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-400">
+                  <li>Clicking PAY will open the official UPI checkout page.</li>
+                  <li>Complete your payment using UPI, NetBanking, or QR code.</li>
+                  <li>Your wallet balance will be credited automatically once confirmed.</li>
+                </ul>
+              </div>
+
+              {/* Submit / PAY Button */}
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-4 rounded-xl font-mono text-sm font-black uppercase tracking-wider bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 shadow-xl shadow-emerald-500/20 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin text-slate-950" />
+                    Generating UPI Order...
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="w-5 h-5" />
+                    PAY ₹{Number(upiAmount || 0).toLocaleString('en-IN')} NOW
+                  </>
+                )}
+              </button>
+
+            </form>
+          )}
+
+          {/* CRYPTO FORM (TRC20 NOWPAYMENTS) */}
+          {activeMethod === 'crypto' && (
+            <form onSubmit={handlePayWithCrypto} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
+              
+              {/* Header / Gateway Badge */}
+              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                <div>
+                  <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono block">NOWPAYMENTS CRYPTO GATEWAY</span>
+                  <h3 className="text-lg font-display font-black text-white tracking-tight flex items-center gap-2">
+                    <Coins className="w-5 h-5 text-emerald-400" />
+                    Crypto Deposit (TRC20)
+                  </h3>
+                </div>
+                <span className="text-[9px] font-mono font-black text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 uppercase flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  TRC20 NETWORK ACTIVE
+                </span>
+              </div>
+
+              {/* Selected Crypto Option Badge */}
+              <div className="bg-slate-950 border border-emerald-500/30 rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center font-mono font-black text-sm">
+                    TRC20
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-mono font-black text-white">USDT (TRC20 Network)</h4>
+                    <p className="text-[11px] text-slate-400 font-mono">TRON Network • Fast & Low Fees</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 px-2.5 py-1 rounded-lg border border-emerald-500/30 uppercase">
+                  Selected
+                </span>
+              </div>
+
+              {/* Presets Grid in USD */}
+              <div className="space-y-2.5">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
+                  Select Deposit Amount (USD $)
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {cryptoPresets.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => { setCryptoAmount(String(preset)); playSound('CLICK'); }}
+                      className={`py-3 px-2 rounded-xl text-xs font-mono font-black border transition-all cursor-pointer ${
+                        Number(cryptoAmount) === preset
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20 scale-[1.02]'
+                          : 'bg-slate-950/80 hover:bg-slate-800 text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      ${preset.toLocaleString('en-US')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Amount Input Field in USD */}
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
+                  Custom Amount ($5 - $50,000 USD)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-mono font-black text-emerald-400 text-xl">
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    min="5"
+                    max="50000"
+                    placeholder="Enter amount in USD (e.g. 50)"
+                    value={cryptoAmount}
+                    onChange={(e) => setCryptoAmount(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 rounded-xl pl-10 pr-4 py-3.5 text-xl font-mono font-black text-white focus:outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Info / Instructions Box */}
+              <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 text-xs font-mono text-slate-400 space-y-1.5">
+                <div className="flex items-center gap-2 text-white font-bold">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  How NOWPayments Crypto Checkout Works:
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-400">
+                  <li>Clicking PROCEED will open the official NOWPayments payment page.</li>
+                  <li>Send exact USDT amount on TRC20 (TRON) network.</li>
+                  <li>Your balance will be credited instantly after network verification.</li>
+                </ul>
+              </div>
+
+              {/* Submit / PROCEED Button */}
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-4 rounded-xl font-mono text-sm font-black uppercase tracking-wider bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 shadow-xl shadow-emerald-500/20 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin text-slate-950" />
+                    Generating NOWPayments Order...
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="w-5 h-5" />
+                    PROCEED TO NOWPAYMENTS (${Number(cryptoAmount || 0).toLocaleString('en-US')} USD)
+                  </>
+                )}
+              </button>
+
+            </form>
+          )}
 
         </div>
 
@@ -331,14 +558,14 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                     <div className="space-y-0.5 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-                          Sunpay
+                          {dep.provider === 'nowpayments' ? 'NOWPayments' : 'UPI'}
                         </span>
                         <span className="text-[10px] text-slate-400 font-mono">
                           {new Date(dep.timestamp || Date.now()).toLocaleDateString()}
                         </span>
                       </div>
                       <p className="text-xs font-mono font-bold text-white truncate">
-                        ₹{dep.amount.toLocaleString('en-IN')}
+                        {dep.currency === 'USD' ? '$' : '₹'}{dep.amount.toLocaleString(dep.currency === 'USD' ? 'en-US' : 'en-IN')}
                       </p>
                     </div>
 
@@ -361,10 +588,10 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
           <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-2 text-emerald-400 text-xs font-mono font-bold">
               <ShieldCheck className="w-4 h-4" />
-              Sunpay Secure Gateway
+              Secure Payment Infrastructure
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              All transactions are encrypted and processed through Sunpay's secure checkout infrastructure with real-time automated ledger synchronization.
+              All transactions are encrypted and processed through verified payment checkout infrastructure with real-time automated ledger synchronization.
             </p>
           </div>
 
@@ -404,11 +631,15 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-800/60">
                   <span className="text-slate-500">Provider:</span>
-                  <span className="text-emerald-400 font-bold">Sunpay</span>
+                  <span className="text-emerald-400 font-bold">
+                    {selectedTxForModal.provider === 'nowpayments' ? 'NOWPayments (Crypto)' : 'UPI Gateway'}
+                  </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-800/60">
                   <span className="text-slate-500">Amount:</span>
-                  <span className="text-white font-bold">₹{selectedTxForModal.amount.toLocaleString('en-IN')}</span>
+                  <span className="text-white font-bold">
+                    {selectedTxForModal.currency === 'USD' ? '$' : '₹'}{selectedTxForModal.amount.toLocaleString(selectedTxForModal.currency === 'USD' ? 'en-US' : 'en-IN')}
+                  </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-800/60">
                   <span className="text-slate-500">Status:</span>
@@ -417,7 +648,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 <div className="space-y-1 pt-1">
                   <span className="text-slate-500 block">Description:</span>
                   <p className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-300 break-all leading-relaxed">
-                    {selectedTxForModal.details || `Sunpay Deposit Order: ₹${selectedTxForModal.amount}`}
+                    {selectedTxForModal.details || `Deposit Order: ${selectedTxForModal.currency === 'USD' ? '$' : '₹'}${selectedTxForModal.amount}`}
                   </p>
                 </div>
               </div>

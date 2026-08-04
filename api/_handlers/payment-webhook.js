@@ -129,7 +129,7 @@ export default async function handler(req, res) {
         depositId,
         provider: 'sunpay',
         currency: depositData.currency || 'INR',
-        description: `Sunpay Deposit: ₹${creditedAmount}`
+        description: `UPI Deposit: ₹${creditedAmount}`
       },
       `dep_${depositId}`,
       db
@@ -146,7 +146,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: "Sunpay payment successfully verified and credited.",
+      message: "UPI payment successfully verified and credited.",
       depositId,
       playerId,
       creditedAmount,

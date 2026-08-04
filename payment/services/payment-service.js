@@ -12,7 +12,7 @@ const DEFAULT_PAYMENT_CONFIG = {
   providers: {
     sunpay: {
       id: 'sunpay',
-      name: 'Sunpay Gateway',
+      name: 'UPI Gateway',
       enabled: true,
       mode: 'live',
       credentials: {
