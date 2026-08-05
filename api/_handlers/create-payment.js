@@ -81,7 +81,7 @@ export default async function handler(req, res) {
 
     if (!gatewayResponse || !gatewayResponse.success) {
       await recordProviderFailure(provider, gatewayResponse.error || 'Gateway initialization failure.');
-      return res.status(502).json({
+      return res.status(400).json({
         success: false,
         error: gatewayResponse.error || "Payment gateway processing failed."
       });

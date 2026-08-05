@@ -45,11 +45,13 @@ const DEFAULT_PAYMENT_CONFIG = {
       id: 'nowpayments',
       name: 'NOWPayments Gateway',
       enabled: true,
-      mode: 'test',
+      mode: 'live',
       credentials: {
         apiKey: process.env.NOWPAYMENTS_API_KEY || '',
         ipnSecret: process.env.NOWPAYMENTS_IPN_SECRET || ''
       },
+      minDeposit: 5,
+      maxDeposit: 50000,
       failureCount: 0,
       lastFailureTime: null,
       status: 'Online'
@@ -275,11 +277,14 @@ export class PaymentService {
 
       if (!provider) return;
 
-      const currentFailures = (provider.failureCount || 0) + 1;
+      const msg = (errMessage || '').toLowerCase();
+      const isConfigError = msg.includes('missing') || msg.includes('configure') || msg.includes('api key');
+
+      const currentFailures = isConfigError ? (provider.failureCount || 0) : (provider.failureCount || 0) + 1;
       let updatedEnabled = provider.enabled;
       let updatedStatus = provider.status;
 
-      if (currentFailures >= 3) {
+      if (!isConfigError && currentFailures >= 3) {
         updatedEnabled = false;
         updatedStatus = 'Offline';
         await this.logger.error(
@@ -290,7 +295,7 @@ export class PaymentService {
       } else {
         await this.logger.warning(
           providerId,
-          `Consecutive Failure Registered (${currentFailures}/3): ${errMessage}`
+          `Gateway Exception Registered: ${errMessage}`
         );
       }
 

@@ -42,7 +42,7 @@ export default async function handler(req, res) {
         body = {};
       }
     }
-    const { userId, playerId, amount, network, provider, currency } = body || {};
+    const { userId, playerId, amount, network, asset, provider, currency } = body || {};
     const resolvedUserId = userId || playerId;
 
     if (!resolvedUserId) {
@@ -69,41 +69,39 @@ export default async function handler(req, res) {
       });
     }
 
-    const selectedNetwork = (network || 'UPI').toUpperCase();
+    const selectedNetwork = (network || 'TRC20').toUpperCase();
     const selectedProviderKey = provider || 'sunpay';
 
     let providerConfig = settings.providers[selectedProviderKey];
-    if (!providerConfig || !providerConfig.enabled) {
+    if (selectedProviderKey === 'nowpayments') {
+      const activeApiKey = (process.env.NOWPAYMENTS_API_KEY || providerConfig?.credentials?.apiKey || '').trim();
+      const activeIpnSecret = (process.env.NOWPAYMENTS_IPN_SECRET || providerConfig?.credentials?.ipnSecret || '').trim();
+      
+      providerConfig = {
+        id: 'nowpayments',
+        name: 'NOWPayments Gateway',
+        enabled: true,
+        mode: 'live',
+        credentials: {
+          apiKey: activeApiKey,
+          ipnSecret: activeIpnSecret
+        },
+        minDeposit: providerConfig?.minDeposit || 5,
+        maxDeposit: providerConfig?.maxDeposit || 50000
+      };
+    } else if (!providerConfig || !providerConfig.enabled) {
       if (selectedProviderKey === 'sunpay') {
         providerConfig = {
           id: 'sunpay',
           name: 'UPI Gateway',
           enabled: true,
           credentials: {
-            apiKey: process.env.PAYIN_API_KEY || '',
-            secret: process.env.PAYIN_API_SECRET || '',
-            baseUrl: process.env.SUNPAY_BASE_URL || 'https://sunpaytm.quest'
+            apiKey: process.env.PAYIN_API_KEY || providerConfig?.credentials?.apiKey || '',
+            secret: process.env.PAYIN_API_SECRET || providerConfig?.credentials?.secret || '',
+            baseUrl: process.env.SUNPAY_BASE_URL || providerConfig?.credentials?.baseUrl || 'https://sunpaytm.quest'
           },
           minDeposit: 100,
           maxDeposit: 100000
-        };
-      } else if (selectedProviderKey === 'nowpayments') {
-        const apiKey = (process.env.NOWPAYMENTS_API_KEY || '').trim();
-
-        console.log(`NOWPAYMENTS_API_KEY exists: ${Boolean(apiKey)}`);
-        console.log(`NOWPAYMENTS_API_KEY length: ${apiKey ? apiKey.length : 0}`);
-
-        providerConfig = {
-          id: 'nowpayments',
-          name: 'NOWPayments Gateway',
-          enabled: true,
-          mode: 'live',
-          credentials: {
-            apiKey: apiKey,
-            ipnSecret: (process.env.NOWPAYMENTS_IPN_SECRET || '').trim()
-          },
-          minDeposit: 5,
-          maxDeposit: 50000
         };
       } else {
         return res.status(400).json({
@@ -158,12 +156,13 @@ export default async function handler(req, res) {
     const returnUrl = `${origin}/deposit`;
     const notifyUrl = selectedProviderKey === 'nowpayments' ? `${origin}/api/webhook` : `${origin}/api/payment-webhook`;
 
-    console.log(`[create-deposit] Calling ${selectedProviderKey} adapter. Amount: ${numAmount}, Currency: ${currency || (isCrypto ? 'USD' : 'INR')}`);
+    console.log(`[create-deposit] Calling ${selectedProviderKey} adapter. Amount: ${numAmount}, Currency: ${currency || 'INR'}`);
 
     const gatewayResponse = await adapter.createPayment({
       amount: numAmount,
       currency: currency || (isCrypto ? 'USD' : 'INR'),
       network: selectedNetwork,
+      asset: asset || 'USDT',
       orderId: `dep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       userId: resolvedUserId,
       returnUrl,
@@ -172,7 +171,7 @@ export default async function handler(req, res) {
 
     if (!gatewayResponse || !gatewayResponse.success) {
       await recordProviderFailure(selectedProviderKey, gatewayResponse?.error || 'Failed to initialize payment gateway.');
-      return res.status(502).json({
+      return res.status(400).json({
         success: false,
         error: gatewayResponse?.error || "Payment gateway creation failed."
       });
@@ -185,7 +184,7 @@ export default async function handler(req, res) {
 
     if (!checkout_url) {
       console.error(`[create-deposit] Payment gateway ${selectedProviderKey} succeeded but returned no checkout URL.`);
-      return res.status(502).json({
+      return res.status(400).json({
         success: false,
         error: "Payment gateway failed to return a valid checkout URL."
       });

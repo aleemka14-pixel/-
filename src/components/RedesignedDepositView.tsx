@@ -121,11 +121,14 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         data = await response.json();
       } else {
         const text = await response.text();
-        console.warn("Non-JSON API response from /api/create-deposit:", text.substring(0, 200));
-        if (text.includes('Starting Server') || text.includes('<html')) {
-          throw new Error("Server is currently initializing. Please try again in a few seconds.");
+        try {
+          data = JSON.parse(text);
+        } catch {
+          if (text.includes('Starting Server')) {
+            throw new Error("Server is currently initializing. Please try again in a few seconds.");
+          }
+          throw new Error(`Server returned error (HTTP ${response.status}). Please try again.`);
         }
-        throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
       }
 
       console.log("DEPOSIT RESPONSE", data);
@@ -208,6 +211,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
           userId: currentPlayer?.id || 'guest',
           amount: numAmt,
           currency: 'USD',
+          asset: 'USDT',
           network: 'TRC20',
           provider: 'nowpayments'
         })
@@ -219,11 +223,14 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
         data = await response.json();
       } else {
         const text = await response.text();
-        console.warn("Non-JSON API response from /api/create-deposit:", text.substring(0, 200));
-        if (text.includes('Starting Server') || text.includes('<html')) {
-          throw new Error("Server is currently initializing. Please try again in a few seconds.");
+        try {
+          data = JSON.parse(text);
+        } catch {
+          if (text.includes('Starting Server')) {
+            throw new Error("Server is currently initializing. Please try again in a few seconds.");
+          }
+          throw new Error(`Server returned error (HTTP ${response.status}). Please try again.`);
         }
-        throw new Error(`Server returned non-JSON response (HTTP ${response.status}). Please try again.`);
       }
 
       console.log("DEPOSIT RESPONSE", data);
@@ -321,7 +328,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 Deposit Funds
               </h1>
               <p className="text-xs text-slate-400">
-                Instant UPI & Crypto Payment Gateway
+                Instant UPI Payment Gateway
               </p>
             </div>
           </div>
@@ -566,7 +573,7 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
                 </ul>
               </div>
 
-              {/* Pending Checkout Active Banner (Fallback if automatic tab/frame redirect blocked) */}
+              {/* Pending Checkout Active Banner */}
               {pendingCheckoutUrl && (
                 <div className="bg-emerald-950/90 border-2 border-emerald-400 rounded-xl p-4 text-center space-y-3 shadow-2xl animate-pulse">
                   <div className="flex items-center justify-center gap-2 text-emerald-300 font-mono font-bold text-xs uppercase tracking-wider">
