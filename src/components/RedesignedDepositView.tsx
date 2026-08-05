@@ -146,19 +146,9 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
           try { window.open(redirectUrl, '_blank', 'noopener,noreferrer'); } catch (err) { console.warn("window.open failed:", err); }
         }
 
-        try {
-          if (window.self !== window.top) {
-            try { window.top!.location.href = redirectUrl; } catch (err) { window.location.assign(redirectUrl); }
-          } else {
-            window.location.assign(redirectUrl);
-          }
-        } catch (e) {
-          window.location.href = redirectUrl;
-        }
-
         setTimeout(() => {
           setIsSubmitting(false);
-        }, 3000);
+        }, 1500);
       } else {
         if (popupWin && !popupWin.closed) popupWin.close();
         console.error("[UPI Deposit] Order creation failed:", data);
@@ -248,19 +238,9 @@ export const RedesignedDepositView = memo(function RedesignedDepositView({
           try { window.open(redirectUrl, '_blank', 'noopener,noreferrer'); } catch (err) { console.warn("window.open failed:", err); }
         }
 
-        try {
-          if (window.self !== window.top) {
-            try { window.top!.location.href = redirectUrl; } catch (err) { window.location.assign(redirectUrl); }
-          } else {
-            window.location.assign(redirectUrl);
-          }
-        } catch (e) {
-          window.location.href = redirectUrl;
-        }
-
         setTimeout(() => {
           setIsSubmitting(false);
-        }, 3000);
+        }, 1500);
       } else {
         if (popupWin && !popupWin.closed) popupWin.close();
         console.error("[Crypto Deposit] Order creation failed:", data);

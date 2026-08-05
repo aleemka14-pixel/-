@@ -151,7 +151,7 @@ export class NowpaymentsService {
       };
     }
 
-    // Validation 3: Check API Key (fallback to sandbox demo mode if missing)
+    // Validation 3: Check API Key (Fallback to Sandbox/Demo checkout if not configured)
     if (!apiKey) {
       console.warn("[NOWPayments Service] NOWPAYMENTS_API_KEY is missing. Generating Sandbox/Demo Checkout Order.");
       const demoCheckoutUrl = `https://nowpayments.io/payment/?iid=${orderId}&payCurrency=${payCurrency}`;
